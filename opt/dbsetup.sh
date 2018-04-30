@@ -6,6 +6,7 @@ fi
 echo "$ABS_PATH"
 
 SQL="${ABS_PATH}/../sql/"
+RESOURCES="${ABS_PATH}/../resources/"
 
 if [ -z $1 ]; then
     PORT=5423
@@ -20,15 +21,15 @@ else
 fi
 
 # postgres setup
-psql -U postgres -h localhost -p $PORT -d postgres  -f $SQL/postgres.sql -v database=$DATABASE
-psql -U postgres -h localhost -p $PORT -d $DATABASE -f $SQL/extensions.sql
+psql -U postgres -h localhost -p $PORT -d postgres  -f "${SQL}/postgres.sql" -v database=$DATABASE
+psql -U postgres -h localhost -p $PORT -d $DATABASE -f "${SQL}/extensions.sql"
 
 # interlex-admin setup
 psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/schemas.sql"
 psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/groups.sql"
 psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/triples.sql"
 psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/user-uris.sql"
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/inserts.sql"
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/inserts.sql" -v resources=${RESOURCES} 
 psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/permissions.sql" -v database=$DATABASE
 
 # tests

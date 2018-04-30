@@ -76,6 +76,7 @@ INSERT INTO groups (own_role, groupname)
 
 
 -- https://github.com/shouldbee/reserved-usernames/blob/master/reserved-usernames.txt
+\cd :resources
 \copy groups (groupname, own_role) FROM './reserved-usernames-len-gt-4.txt' ( FORMAT CSV, DELIMITER('|') );
 
 ALTER TABLE groups ENABLE TRIGGER groupname_length_check;
