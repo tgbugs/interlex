@@ -98,7 +98,7 @@ class uri(types.UserDefinedType):
 
 def bnodes(ts): return set(e for t in ts for e in t if isinstance(e, rdflib.BNode))
 
-def dbUri(user='interlex-user', host='localhost', port=5432, db='interlex_test2'):
+def dbUri(user='interlex-user', host='localhost', port=5432, db='interlex_test'):
     if socket.gethostname() != 'orpheus':
         port = 54321
     if hasattr(sys, 'pypy_version_info'):
