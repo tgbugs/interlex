@@ -20,18 +20,18 @@ else
 fi
 
 # postgres setup
-psql -U postgres -h localhost -p $PORT -d postgres  -f $SQL/ilx-setup-postgres-postgres.sql -v database=$DATABASE
-psql -U postgres -h localhost -p $PORT -d $DATABASE -f $SQL/ilx-setup-postgres-interlex.sql
+psql -U postgres -h localhost -p $PORT -d postgres  -f $SQL/postgres.sql -v database=$DATABASE
+psql -U postgres -h localhost -p $PORT -d $DATABASE -f $SQL/extensions.sql
 
 # interlex-admin setup
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f $SQL/ilx-schema-interlex.sql
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f $SQL/ilx-schema-groups.sql
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f $SQL/ilx-schema-triple-tables.sql
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f $SQL/ilx-schema-uri-mapping-tables.sql
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f $SQL/ilx-schema-inserts.sql
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f $SQL/ilx-schema-permissions.sql -v database=$DATABASE
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/schemas.sql"
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/groups.sql"
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/triples.sql"
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/user-uris.sql"
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/inserts.sql"
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/permissions.sql" -v database=$DATABASE
 
 # tests
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f $SQL/ilx-schema-test.sql
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f $SQL/ilx-schema-test-fail.sql
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/test.sql"
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/test-fail.sql"
 
