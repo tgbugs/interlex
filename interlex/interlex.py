@@ -150,7 +150,7 @@ class FakeSession:
         if len(sql) < 2000:
             print(sql)
         rv = self.current_return_value
-        self.current_return_value = None
+        self.current_return_value = (_ for _ in range(0))
         return rv
 
     def commit(self):
@@ -160,8 +160,10 @@ class FakeSession:
         printD('Fake rollback')
 
 class TripleLoader:
+    reference_host = None
+    _cache_names = set() # FIXME make sure that reference hosts don't get crossed up
+    _cache_identities = set()
     def __init__(self, session, cypher=hashlib.sha256, encoding='utf-8'):
-        self.identities = tuple()  # TODO
         self.process_type = self.__class__.__name__
         self.session = session
         self.execute = session.execute
@@ -181,6 +183,7 @@ class TripleLoader:
 
         self._name = None
         self._reference_name = None
+        self._reference_name_in_db = None
         self._expected_bound_name = None  # TODO multiple bound names can occure eg via versionIRI?
 
         self._extension = None
@@ -196,13 +199,16 @@ class TripleLoader:
         # the anon subgraphs are bound by identity to their data_identity
         self._curies = None
         self._bound_name = None
-        self._metadata = None
-        self._data = None
-        self._metadata_blank = None
-        self._data_blank = None
+        #self._metadata = None  # not actually used
+        self._metadata_named = None
+        self._metadata_unnamed = None
+        #self._data = None  # not actually used
+        self._data_named = None
+        self._data_unnamed = None
 
         self._serialization_identity = None  # ALA representation_identity
-        #self._subgraph_identities = None
+        self._curies_identity = None
+        #self._subgraph_identities = None  # not used
         self._linked_subgraph_identities = None
         self._free_subgraph_identities = None
         self._bound_name_identity = None
@@ -217,39 +223,105 @@ class TripleLoader:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        # TODO rollback on >= 400? no, should all be handled locally
         self.__enter__(True)  # the paranoia is real
         self._safe = False
         printD('exit')
 
-    def __call__(self, group, user, reference_name, name=None, expected_bound_name=None):
+    def __call__(self, group, user, reference_name, name, expected_bound_name=None):
+        printD(group, user, reference_name, name, expected_bound_name)
+        # FIXME this is a synchronous interface
+        # if we want it to be async it will require
+        # more work
+        # perhaps a POST to add with a response covering permissions etc
+        # followed by a second post asking to ingest from remote?
+        # how do we deal with the issue of names?
         if not self._safe:
             raise RuntimeError(f'{self} is not in safe mode, did you call it using \'with\'?')
-
-        # self.name = name  # TODO this is not quite ready yet, loading from arbitrary uris/filenames needs one more level
         self.group = group
         self.user = user
-        self.reference_name = reference_name
-        output = ''
-        if expected_bound_name is not None:  # implicit new or attempt at new
-            # TODO various failure messages
-            # TODO sometimes you can't get an ontology from its bound name >_<
-            try:
-                self.expected_bound_name = expected_bound_name
-            except sa.exc.IntegrityError:
-                self.session.rollback()
-                if expected_bound_name != self.expected_bound_name:
-                    return (f'Existing expected bound name {self.expected_bound_name} '
-                            f'!= {expected_bound_name}'), 400
-                else:
-                    output += (f'WARNING: Existing expected bound name {self.expected_bound_name} '
-                               f'already exists for reference name {self.reference_name}.\n')
 
-        # FIXME TODO this is still not right or complete
-        if name is not None:
-            self.name = name
-        else:
-            self.name = self.expected_bound_name
-            
+        # expected_bound_name should only be supplied if it differes from name for the inital load
+        # self.name = name  # TODO this is not quite ready yet, loading from arbitrary uris/filenames needs one more level
+
+        if name == reference_name:
+            # NOTE for direct user contributions name should be their orcid
+            # or the interface/api endpoint they were using if we want to track that?
+            return 'you cannot load an ontology into itself from itself unless you are interlex itself', 400
+        elif self.reference_host in name:
+            # TODO provide an alternative
+            return 'you cannot copy content from one reference name to another in this way', 400
+
+        # TODO logic when bound_name = reference_name, seems to be handled below correctly...
+        if expected_bound_name is None:
+            expected_bound_name
+
+        self.name = name
+        self.reference_name = reference_name
+        # in any case where this function is called name should not equal reference name
+        # it should either be a filename or something like that
+
+
+        def ___n(value): return value is None
+        def NOTN(value): return value is not None
+        def make_switch(switch_spec):
+            def match(test, case):
+                return all(f(v) for f, v in zip(test, case))
+
+            def switch(*case):
+                for test, dispatch, *args in switch_spec:
+                    if match(test, case):
+                        return dispatch(case, *args)
+
+            return switch
+
+        nbn_base = f'No bound name found in {self.name}! '
+        def pairs(case, message):
+            a, b = (a for a in case if a is not None)
+            if a != b:
+                return message + '\n{a} {b}'
+            elif not self.reference_name_in_db:
+                self.expected_bound_name = self.bound_name
+
+        def bn_none(case, value, *message):
+            b, d, e = case
+            if value is None and message:
+                if d != e:
+                    return nbn_base + ('In addition existing expected and new '
+                                       'expected bound name do not match\n{d} != {e}')
+                else:
+                    value = d
+
+            return nbn_base + 'Expected {value}', 400
+
+        def all_nn(case):
+            b, d, e = case
+            if not b == d == e:
+                return 'Bound names do not match! {b} {d} {e}', 400
+
+        def all_none(case):
+            if self.reference_name != 'https://{self.reference_host}/{self.group}/upload':
+                return 'No bound name, please use your upload endpoint', 400
+
+        def set_d(case):
+            self.expected_bound_name = self.bound_name
+
+        bde_switch = make_switch((
+            ((NOTN, NOTN, NOTN), all_nn),
+            ((___n, ___n, ___n), all_none),  # fail if not on
+            ((NOTN, ___n, ___n), set_d),  # OK bn as ebn
+            ((___n, NOTN, ___n), bn_none, self.expected_bound_name),
+            ((___n, ___n, NOTN), bn_none, expected_bound_name),
+            ((___n, NOTN, NOTN), bn_none, None, 'existing expected bound name exists and does not match new'),
+            ((NOTN, ___n, NOTN), pairs, 'bound name does not match new expected bound name'),
+            ((NOTN, NOTN, ___n), pairs, 'bound name does not match existing expected bound name'),
+            ))
+
+        stop = bde_switch(self.bound_name, self.expected_bound_name, expected_bound_name)
+        if stop is not None:
+            return stop
+        
+        output = ''
         try:
             output += self.load_event()
             self.session.commit()
@@ -264,238 +336,123 @@ class TripleLoader:
             output += 'ERROR ' + str(e)
             return output, 500
 
-        #self.expected_bound_name
-
-        #self.serialization = None
-        #self.graph = None
-        #self.bound_name = None
-        #self.metadata = None
-        #self.data = None
-
-        #self.serialization_identity = None  # ALA representation_identity
-        #self.bound_name_identity = None
-        #self.metadata_identity = None
-        #self.data_identity = None
-
-    def digest(self, type_name):
-        iter_type = getattr(self, 'iter_' + type_name)
-        return self.orderInvariantHash(iter_type)
-
-    @property
-    def iter_curies(self):
-        yield from self.curies
-
-    @property
-    def iter_metadata(self):
-        # TODO order invariant
-        yield from self.metadata
-        yield from self.metadata_blank
-
-    @property
-    def iter_data(self):
-        yield from self.data
-        yield from self.data_blank
-
-    def get_identity(self, type_name):
-        real_name = '_' + type_name + '_identity'
-        real_value = getattr(self, real_name)
-        if real_value is None:
-            real_value = self.digest(type_name)
-            setattr(self, real_name, real_value)
-
-        return real_value
-
-    def records(self, mi, di):
-        # TODO resursive on type?
-        # s, s_blank, p, o, o_lit, datatype, language, subgraph_identity
-        if not mi:
-            mt = m, mcols = [], 's, p, o'
-            mlt = ml, mlcols = [], 's, p, o_lit, datatype, language'
-            for p, o in self.metadata:
-                p = str(p)
-                if isinstance(o, rdflib.URIRef):
-                    m.append((self.bound_name, p, str(o)))
-                else:
-                    ml.append((self.bound_name, p, str(o), str(o.datatype), o.language))
-
-            mbt = mb, mbcols = [], 's, p, o_blank, subgraph_identity'
-            for p, subgraph_identity in self.metadata_blank:
-                p = str(p)
-                mb.append((self.bound_name, p, 0, subgraph_identity))
-
-        if not di:
-            dt = d, dcols = [], 's, p, o'
-            dlt = dl, dlcols = [], 's, p, o_lit, datatype, language'
-            for s, p, o in self.data:
-                s, p = str(s), str(p)
-                if isinstance(o, rdflib.URIRef):
-                    d.append((s, p, str(o)))
-                else:
-                    dl.append((s, p, str(o), str(o.datatype), o.language))
-
-            dbt = db, dbcols = [], 's, p, o_blank, subgraph_identity'
-            for s, p, subgraph_identity in self.data_blank:
-                s, p = str(s), str(p)
-                db.append((s, p, 0, subgraph_identity))
-
-            sgt = sg, sgcols = [], 's_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity'
-            for subgraph_identity, subgraph in self.subgraph_identities.items():
-                for s, p, o in subgraph:
-                    p = str(p)
-                    if isinstance(o, rdflib.URIRef):
-                        sg.append((s, p, str(o), None, None, None, subgraph_identity))
-                    elif isinstance(o, int):
-                        sg.append((s, p, None, None, None, o, subgraph_identity))
-                    else:  # FIXME not clear we ever have these Literal cases...
-                        sg.append((s, p, None, str(o), str(o.datatype), o.language, None, subgraph_identity))
-
-        return mt, mlt, mbt, dt, dlt, dbt, sgt
- 
-    def load_event(self):
-        # FIXME only insert on success...
-        si = self.serialization_identity
-
-        if si in self.identities:
-            # TODO give the user options to say yes i want this explicitly in my graph
-            #self.execute(sql_prov, params)
-            return 'already in\n'
-
-        # TODO need a way to pass in si
-
-        # TODO always insert metadata first so that in-database integrity checks
-        # can run afterward and verify roundtrip identity
-        ni = self.bound_name_identity in self.identities  # self.identities_add?
-        mi = self.metadata_identity in self.identities
-        di = self.data_identity in self.identities
-        sgi = {k:v in self.identities for k, v in self.subgraph_identities.items()}
-
-        # (:s, 'hasPart', :o)
-        # FIXME only insert the anon subgraphs and definitely better
-        # not to use identities on annotations
-        # also pretty sure that the linked subgraphs don't go in the idents table
-        # FIXME I need to know which subgraphs need to be parented ser
-        sql_ident_base = 'INSERT INTO identities (reference_name, identity, type, triples_count) VALUES '
-        types_idents = (('serialization', self.serialization_identity),  # TODO abstract... type + ident
-                        ('bound_name', self.bound_name_identity),
-                        ('metadata', self.metadata_identity),
-                        ('data', self.data_identity),
-                        ('subgraph', *self.free_subgraph_identities))
-        values = ((i, type, self.identity_triple_count(i))
-                  for type, *identities in types_idents
-                  for i in identities)
-        vt, params_i = makeParamsValues(values, constants=(':rn',))
-        params_i['rn'] = self.reference_name
-        sql_ident = sql_ident_base + vt
-        self.session.execute(sql_ident, params_i)
-
-        sql_ident_rel_base = 'INSERT INTO identity_relations (p, s, o) VALUES '
-        values_ident_rel = ((self.serialization_identity, part)
-                            for part in identities[1:])
-        vt, params_ir = makeParamsValues(values_ident_rel, constants=(':p',))
-        params_ir['p'] = 'hasPart'
-        sql_rel_ident = sql_ident_rel_base + vt
-        self.session.execute(sql_rel_ident, params_ir)
-
-        # 'INSERT INTO qualifiers (identity, group_id)'
-        # FIXME this should happen automatically in the database
-        # we just need to get the value back out
-
-        params_le = dict(si=si, g=self.group, u=self.user)
-        sql_le = ('INSERT INTO load_events (serialization_identity, group_id, user_id) '
-                  'VALUES (:si, idFromGroupname(:g), idFromGroupname(:u))')
-        self.session.execute(sql_le, params_le)
-
-        # TODO get the qualifier id so that it can be 
-
-        sql_base = 'INSERT INTO triples'
-        suffix = ' ON CONFLICT DO NOTHING'
-        sqls = []
-        for values, sql_columns in self.records(mi, di):
-            if values:
-                values_template, params = makeParamsValues(values)
-                sql = sql_base + f' ({sql_columns}) VALUES ' + values_template + suffix
-                #sqls.append(sql)
-                self.execute(sql, params)
-
-        #sql = ';'.join(sqls)  # FIXME this doesn't work because values overlap
-
-        return 'TODO\n'
         """
-        sql_base_metadata = 'INSERT INTO triples (s, p, o) VALUES '
-        values = []
-        for s, p, o in self.data:
-            values.append((s, p, o))
-
-        vt, p = makeParamsValues(values)
-        sql_metadata = sql_base_metadata + vt
-
-        sql_base_metadata_blank = 'INSERT INTO triples (s, p, o_blank) VALUES '
-        values = []
-        for s, p, o_blank in self.metadata_blank:
-            values.append((s, p, o))
-
-        vt, p = makeParamsValues(values)
-        sql_metadata_blank = sql_base_metadata_blank + vt
-
-
-        sql_base_data = 'INSERT INTO triples (s, p, o) VALUES '
-        values = []
-        for s, p, o in self.data:
-            values.append((s, p, o))
-
-        vt, p = makeParamsValues(values)
-        sql_data = sql_base_data + vt
-
-        sql_base_data_blank = 'INSERT INTO triples (s, p, o_blank) VALUES '
-        values = []
-        for s, p, o_blank in self.data_blank:
-            values.append((s, p, o))
-
-        vt, p = makeParamsValues(values)
-        sql_data_blank = sql_base_data_blank + vt
-
-        values = []
-        # FIXME we currently do not consider cases where a literal can be an object...
-        for i, (s, p, o) in self.subgraph_identities.items():
-            if isinstance(o, rdflib.Literal): raise TypeError
-            if isinstance(s, int):
-                s_blank = s
-                s = None
-            else:
-                s_blank = None
-
-            if isinstance(o, int):
-                o_blank = o
-                o = None
-            else:
-                o_blank = None
-
-            values.append(i, s_blank, p, o, o_blank)  # FIXME o_lit could occur here
-        values_template, params = makeParamsValues(values)
-
-        sql_base = ('INSERT INTO triples (s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity) '
-                    'VALUES ')
-        sql_base_data = 'INSERT INTO core (s, p, o) VALUES '
-            
-        return 'TODO\n'
+        if expected_bound_name is not None:  # implicit new or attempt at new
+            # TODO various failure messages
+            # TODO sometimes you can't get an ontology from its bound name >_<
+            try:
+                self.expected_bound_name = expected_bound_name
+            except sa.exc.IntegrityError:
+                self.session.rollback()
+                if expected_bound_name != self.expected_bound_name:
+                    return (f'Existing expected bound name {self.expected_bound_name} '
+                            f'!= {expected_bound_name}'), 400
+                else:
+                    output += (f'WARNING: Existing expected bound name {self.expected_bound_name} '
+                               f'already exists for reference name {self.reference_name}.\n')
         """
+
+
+
+    # names
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        # TODO
+        if value not in self._cache_names:
+            try:
+                sql = 'INSERT INTO names VALUES (:name)'
+                self.session.execute(sql, dict(name=value))
+            except sa.exc.IntegrityError:
+                # name was already in but not cached
+                self.session.rollback()
+
+            self._cache_names.add(value)
+            self._name = value
+
+    @property
+    def reference_name(self):
+        return self._reference_name
+
+    @reference_name.setter
+    def reference_name(self, value):
+        if self._reference_name is None:
+            self._reference_name = value
+            sql = 'SELECT name, expected_bound_name FROM reference_names WHERE name = :name'
+            try:
+                res = next(self.session.execute(sql, dict(name=self._reference_name)))
+                self._expected_bound_name = res.expected_bound_name
+                self._reference_name_in_db = True
+            except StopIteration:
+                # set it by setting self.expected_bound_name = something (including None)
+                self._reference_name_in_db = False
+                print('WARNING reference name has not been created yet!\n')
+        elif self._reference_name != value:
+            raise ValueError('cannot change reference names')
+
+    @property
+    def reference_name_in_db(self):
+        self._reference_name_in_db = True
 
     @property
     def expected_bound_name(self):
         if self._expected_bound_name is None:
-            sql = 'SELECT expected_bound_name FROM reference_names WHERE name = :name'
-            r = next(self.execute(sql, dict(name=self.reference_name)))
-            self._expected_bound_name = r.expected_bound_name
+            if self.reference_name_in_db is None:
+                self.reference_name
+            #sql = 'SELECT expected_bound_name FROM reference_names WHERE name = :name'
+            #r = next(self.execute(sql, dict(name=self.reference_name)))
+            #self._expected_bound_name = r.expected_bound_name
 
         return self._expected_bound_name
     
     @expected_bound_name.setter
     def expected_bound_name(self, value):
-        sql = ('INSERT INTO reference_names (name, expected_bound_name, group_id) '
-               'VALUES (:r, :e, idFromGroupname(:g))')
-        self.execute(sql, dict(r=self.reference_name, e=value, g=self.group))
-        self._expected_bound_name = value
-       
+        if self.expected_bound_name is not None:
+            # NOTE this is also enforced in the database
+            raise ValueError('Cannot change expected bound names once they have been set!')
+        elif self.expected_bound_name == value:
+            printD('WARNING: trying to set expected bound name again!')
+        else:
+            if self.reference_name_in_db:
+                sql = ('UPDATE reference_names SET expected_bound_name = :e WHERE name = :r')
+            else:
+                sql = ('INSERT INTO reference_names (name, expected_bound_name, group_id) '
+                       'VALUES (:r, :e, idFromGroupname(:g))')
+
+            # FIXME this is not wrapped with a rollback because...
+            # that shouldn't happen? are we sure?
+            self.execute(sql, dict(r=self.reference_name, e=value, g=self.group))
+            self._expected_bound_name = value
+
+    # serialization type
+    @property
+    def extension(self): return self._extension
+
+    @extension.setter
+    def extension(self, value):
+        """ Used for cases where the name itself does not specify the type. """
+        self._extension = value
+
+    @property
+    def mimetype(self): return self._mimetype
+
+    @property
+    def format(self):
+        if self._format is None:
+            if self.extension not in formats and self.mimetype not in formats:
+                # TODO use ttlfmt parser attempter
+                raise TypeError(f"Don't know how to parse either {extension} or {mimetype}")
+            elif self.extension not in formats:
+                self._format = formats[self.mimetype]
+            else:
+                self._format = formats[self.extension]
+
+        return self._format
+
+    # identities
     @property
     def serialization_identity(self):
         if self._serialization_identity is None:
@@ -532,10 +489,21 @@ class TripleLoader:
 
     @property
     def linked_subgraph_identities(self):
-        if self._linked_subgraph_identities is None:
+        return {**self.metadata_linked_subgraph_identities, **self.data_linked_subgraph_identities}
+
+    @property
+    def metadata_linked_subgraph_identities(self):
+        if self._metadata_linked_subgraph_identities is None:
             self.process_graph()
 
-        return self._linked_subgraph_identities
+        return self._metadata_linked_subgraph_identities
+
+    @property
+    def data_linked_subgraph_identities(self):
+        if self._data_linked_subgraph_identities is None:
+            self.process_graph()
+
+        return self._data_linked_subgraph_identities
 
     @property
     def free_subgraph_identities(self):
@@ -544,51 +512,39 @@ class TripleLoader:
 
         return self._free_subgraph_identities
 
-    def identity_triple_count(self, identity):
-        """ Note: these are unique triple counts on normalized subgraphs """
-        if self._identity_triple_count is None:
-            bntc = 0
-            mtc = len(self.metadata)
-            dtc = len(self.data)
-            lsgtcs = {i:len(sg) for i, sg in self.linked_subgraph_identities.items()}
-            fsgtcs = {i:len(sg) for i, sg in self.free_subgraph_identities.items()}
-            stc = bntc + mtc + dtc + sum(lsgtcs.values()) + sum(fsgtcs.values())
-            itc = {self.serialization_identity:stc,
-                   self.bound_name_identity:bntc,
-                   self.metadata_identity:mtc,
-                   self.data_identity:dtc,
-                   **lsgtcs,
-                   **fsgtcs}
-            self._identity_triple_count = itc
-
-        return self._identity_triple_count[identity]  # this should never key error
-        #if identity in self._identity_triple_count:
-        #else:
-            #return None
+    # the things themselves
+    @property
+    def serialization(self): raise NotImplementedError('Implement this in the subclass')
 
     @property
-    def extension(self): return self._extension
+    def curies(self):
+        """ Could be abstracted to 'local naming conventions' """
+        # NOTE that locally unique prefixes can match full names as well
+        # TODO these are only associated with one ore more serialization identifiers
+        # we will keep them around only so that we can reproduce the original convetions
+        # exactly
+        if self._curies is None:
+            self._curies = tuple(sorted(
+                #(locally_unique_prefix, globally_unique_prefix)
+                (curie_prefix, iri_prefix)
+                for curie_prefix, iri_prefix in self.graph.namespaces()
+            ))  # FIXME uniqueness :/
 
-    @extension.setter
-    def extension(self, value):
-        """ Used for cases where the name itself does not specify the type. """
-        self._extension = value
+        return self._curies
 
     @property
-    def mimetype(self): return self._mimetype
+    def bound_name(self):
+        if self._bound_name is None:
+            subjects = self.graph[:rdf.type:owl.Ontology]
+            self._bound_name = next(subjects)
+            try:
+                extra = next(subjects)
+                raise ValueError('More than one owl:Ontology in this file!\n'
+                                 '{self.ontology_iri}\n{extra}\n')
+            except StopIteration:
+                pass
 
-    @property
-    def format(self):
-        if self._format is None:
-            if self.extension not in formats and self.mimetype not in formats:
-                # TODO use ttlfmt parser attempter
-                raise TypeError(f"Don't know how to parse either {extension} or {mimetype}")
-            elif self.extension not in formats:
-                self._format = formats[self.mimetype]
-            else:
-                self._format = formats[self.extension]
-
-        return self._format
+        return self._bound_name
 
     @property
     def graph(self):
@@ -598,33 +554,102 @@ class TripleLoader:
 
         return self._graph
 
-    def no_bnodes_subgraph(self):
-        yield from (t for t in self.graph
-                    if not any(isinstance(e, rdflib.BNode) for e in t))
-    
-    def bnodes_subgraph(self):
-        yield from (t for t in self.graph
-                    if any(isinstance(e, rdflib.BNode) for e in t))
-    
-    #@property
-    #def subgraphs(self):
+    @property
+    def metadata(self):
+        yield from self.metadata_named
+        yield from self.metadata_unnamed
+
+    @property
+    def metadata_named(self):
+        if self._metadata_named is None:
+            self.process_graph()
+        return self._metadata_named
+
+    @property
+    def metadata_unnamed(self):
+        if self._metadata_unnamed is None:
+            self.process_graph()
+        return self._metadata_unnamed
+
+    @property
+    def data(self):
+        yield from self.data_named
+        yield from self.data_unnamed
+
+    @property
+    def data_named(self):
+        if self._data_named is None:
+            self.process_graph()
+        return self._data_named
+
+    @property
+    def data_unnamed(self):
+        if self._data_unnamed is None:
+            self.process_graph()
+        return self._data_unnamed
+
+    @property
+    def subgraphs(self):
         # TODO axioms and annotations as special kinds of subgraphs?
-        #yield from self.linked_subgraphs
-        #yield from self.free_subgraphs
+        yield from self.subgraph_identities.values()
 
-    #@property
-    #def linked_subgraphs(self):
-        #if self._linked_subgraphs is None or:
-            #self.process_graph()
+    @property
+    def linked_subgraphs(self):
+        yield from self.metadata_linked_subgraphs
+        yield from self.data_linked_subgraphs
 
-        #return self._linked_subgraphs
+    @property
+    def metadata_linked_subgraphs(self):
+        yield from self.metadata_linked_subgraph_identities.values()
 
-    #@property
-    #def free_subgraphs(self):
-        #if self._free_subgraphs is None or:
-            #self.process_graph()
+    @property
+    def data_linked_subgraphs(self):
+        yield from self.data_linked_subgraph_identities.values()
 
-        #return self._free_subgraphs
+    @property
+    def free_subgraphs(self):
+        yield from self.free_subgraph_identities.values()
+
+    # functions
+    def get_identity(self, type_name):
+        real_name = '_' + type_name + '_identity'
+        real_value = getattr(self, real_name)
+        if real_value is None:
+            real_value = self.digest(type_name)
+            setattr(self, real_name, real_value)
+
+        return real_value
+
+    def digest(self, type_name):
+        value = getattr(self, type_name)
+        return self.orderInvariantHash(value)
+
+    def identity_triple_count(self, identity):
+        """ Note: these are unique triple counts on normalized subgraphs """
+        if self._identity_triple_count is None:
+            # we should be able to abstrac this using
+            # data + structure of data + decoupling rules + identity function on data
+            # eg bound_name is raw bytes + rdf:type owl:Ontology as subset rule
+            bound_name_count = 0
+            curies_count = len(self.curies)
+            mtc = len(list(self.metadata))
+            m_linked_counts = {i:len(sg) for i, sg in self.metadata_linked_subgraph_identities.items()}
+            metadata_count = mtc + sum(m_linked_counts.values())
+            dtc = len(list(self.data))
+            d_linked_counts = {i:len(sg) for i, sg in self.data_linked_subgraph_identities.items()}
+            data_count = dtc + sum(d_linked_counts.values())
+            linked_counts = {**m_linked_counts, **d_linked_counts}
+            free_counts = {i:len(sg) for i, sg in self.free_subgraph_identities.items()}
+            itc = {self.serialization_identity:data_count,
+                   self.curies_identity:curies_count,
+                   self.bound_name_identity:bound_name_count,
+                   self.metadata_identity:metadata_count,
+                   self.data_identity:data_count,
+                   **linked_counts,
+                   **free_counts}
+            self._identity_triple_count = itc
+
+        return self._identity_triple_count[identity]  # this should never key error
 
     def process_graph(self):
         printD('processing graph')
@@ -660,25 +685,17 @@ class TripleLoader:
         subgraph_mapping = {}
         subgraphs = []
 
-        metadata = []
-        data = []  # no uri uri blank triples
+        metadata_named = []
+        data_named = []  # no uri uri blank triples
         # sorted means that I always see the subject first ?
         for t in sorted(self.graph, key=sortkey):
             s, p, o = t
             if not any(isinstance(e, rdflib.BNode) for e in t):
                 if s == self.bound_name:
-                    metadata.append((p, o))
+                    metadata_named.append((p, o))
                 else:
-                    data.append(t)
+                    data_named.append(t)
             else:
-                # dealt with later and more efficiently
-                #if not isinstance(s, rdflib.BNode):
-                    #continue
-                    #if s == self.bound_name:
-                        #metadata.append(o)
-                    #else:
-                        #data.append(o)
-
                 if s in subgraph_mapping:
                     ss = subgraph_mapping[s]
                 else:
@@ -733,11 +750,11 @@ class TripleLoader:
                     if isinstance(s, rdflib.BNode):
                         subgraph_mapping[s] = os
 
-        #subgraph_identities = {}  # identity subgraph
-        linked_subgraph_identities = {}
+        metadata_linked_subgraph_identities = {}
+        data_linked_subgraph_identities = {}
         free_subgraph_identities = {}
-        metadata_blank = []
-        data_blank = []
+        metadata_unnamed = []
+        data_unnamed = []
         #normalized = []
         #bnode_to_identity = {}
         #wat = {}
@@ -757,308 +774,149 @@ class TripleLoader:
 
             normalized = tuple(sorted(normalized, key=intlast))
             identity = self.orderInvariantHash(normalized)  # FIXME intlast... sort may be needed to be passed in?
-            #subgraph_identities[identity] = normalized  # (identity,) + 
-            #wat[identity] = g
-
             if start:
-                linked_subgraph_identities[identity] = normalized  # (identity,) + 
                 if fs == self.bound_name:
-                    metadata_blank.append((fp, identity))
+                    metadata_unnamed.append((fp, identity))
+                    metadata_linked_subgraph_identities[identity] = normalized
                 else:
-                    data_blank.append((fs, fp, identity))
-                #bnode_to_identity[fo] = fs, fp, identity
+                    data_unnamed.append((fs, fp, identity))
+                    data_linked_subgraph_identities[identity] = normalized
             else:
                 free_subgraph_identities[identity] = normalized  # (identity,) + 
                 
-        assert not [k for k, v in linked_subgraph_identities.items() if not v], 'HRM'
+        assert not [k for k, v in metadata_linked_subgraph_identities.items() if not v], 'HRM'
+        assert not [k for k, v in data_linked_subgraph_identities.items() if not v], 'HRM'
         assert not [k for k, v in free_subgraph_identities.items() if not v], 'HRM'
 
             #normalized.append(tuple(sorted(subgraph, key=intlast)))  # FIXME do we really need to sort?
 
-        self._data = data #tuple(bnode_to_identity[t] if isinstance(t, rdflib.BNode) else t for t in data)
-        self._metadata = metadata #tuple(bnode_to_identity[t] if isinstance(t, rdflib.BNode) else t for t in metadata)
-        self._data_blank = data_blank
-        self._metadata_blank = metadata_blank
-        self._linked_subgraph_identities = linked_subgraph_identities
+        # TODO dedupe metadata and data code so any bound data can be supported
+        self._metadata_named = metadata_named
+        self._metadata_unnamed = metadata_unnamed
+        self._data_named = data_named
+        self._data_unnamed = data_unnamed
+        self._metadata_linked_subgraph_identities = metadata_linked_subgraph_identities
+        self._data_linked_subgraph_identities = data_linked_subgraph_identities
         self._free_subgraph_identities = free_subgraph_identities
         return
-        embed()
 
-        for s, p, o in tuple(): #temp_graph:
-            if all(isinstance(e, rdflib.URIRef) for e in (s, p)):
-                #ranks = tuple(sorted((tuple(normalize(t))
-                                        #for t in yield_recursive(s, p, o, temp_graph)), key=sortkey))
-                subgraph = []
-                existing = {}
-                cmax = -1
-                for t in sorted((t for t in yield_recursive(s, p, o, temp_graph)), key=sortkey):
-                    #temp_graph.delete(t)
-                    s, p, o, cmax = normalize(cmax, t, existing)
-                    subgraph.append((s, p, o))
-
-                subgraphs.append(tuple(sorted(subgraph, key=intslast)))
-
-        #subgraphs = tuple(sorted(subgraphs))
-        #subgraphs = tuple(subgraphs)
-        #subgraphs = tuple(normalized)
-        #complex = [g for g in subgraphs
-                    #if any(e > 0
-                            #for t in g
-                            #for e in t
-                            #if isinstance(e, int))]
-
-        # TODO remove the named s, p, triple and then replace it with
-        # the (s, p, subgraph_identity) triple...
-
-        #self._linked_subgraph_mappings = {}  # TODO
-        #self._subgraphs = subgraphs
-        #embed()
-
-    @property
-    def curies(self):
-        """ Could be abstracted to 'local naming conventions' """
-        # NOTE that locally unique prefixes can match full names as well
-        # TODO these are only associated with one ore more serialization identifiers
-        # we will keep them around only so that we can reproduce the original convetions
-        # exactly
-        if self._curies is None:
-            self._curies = sorted(
-                #(locally_unique_prefix, globally_unique_prefix)
-                (curie_prefix, iri_prefix)
-                for curie_prefix, iri_prefix in self.graph.namespaces()
-            )  # FIXME uniqueness :/
-
-        return self._curies
-
-    @property
-    def bound_name(self):
-        if self._bound_name is None:
-            subjects = self.graph[:rdf.type:owl.Ontology]
-            self._bound_name = next(subjects)
-            try:
-                extra = next(subjects)
-                raise ValueError('More than one owl:Ontology in this file!\n'
-                                 '{self.ontology_iri}\n{extra}\n')
-            except StopIteration:
-                pass
-
-        return self._bound_name
-
-    @property
-    def metadata(self):
-        if self._metadata is None:
-            self.process_graph()
-        return self._metadata
-
-    @property
-    def data(self):
-        if self._data is None:
-            self.process_graph()
-        return self._data
-
-    @property
-    def metadata_blank(self):
-        if self._metadata_blank is None:
-            self.process_graph()
-        return self._metadata_blank
-
-    @property
-    def data_blank(self):
-        if self._data_blank is None:
-            self.process_graph()
-        return self._data_blank
-
-
-class oldTrippleLoader:
-    def __old(self):
-        # external names
-        if self.new:
-            sql = ''
-            params = dict(owner_group_id = self.user,
-                          interlex_source_path = self.ont_path,
-                          external_external_source_iri = self.source_iri)
-            self.session.execute(sql, params)
-
-        self.graph_preload()
-
-        # external hash
-        params = dict(source_serialization_hash = self.source_serialization_hash,)
-
-        self.graph_load()
-
-        # internal name
-        params = dict(internal_external_source_iri = self.ontology_iri,)
-
-        self.triples_preload()
-
-        # internal hash
-        params = dict(source_triples_hash = self.source_triples_hash,)
-        return self.triples_load()
-
-    #@property
-    #def reference_name(self):
-        #'SELECT * FROM '
-
-    #@reference_name.setter
-    #def reference_name(self, name):
-        # when we get a new one
-        #pass
-
-    def graph_preload(self):
-        if isinstance(self.source, bytes):
-            m = self.cypher()
-            m.update(self.source)
-            self.source_serialization_hash = m.digest()
-            'INSERT INTO source'
-        elif isinstance(self.source, tuple) or isinstance(self.source, rdflib.Graph):
-            self.source_serialization_hash = self.source_triples_hash = self.orderInvariantHash(self.source)
-        else:
-            raise TypeError(f'Dont know how to hash {type(self.source)}')
-
-    def graph_load(self):
-        if isinstance(self.source, rdflib.Graph):
-            self.graph = self.source
-        else:
-            self.graph = rdflib.Graph()
-            if isinstance(self.source, tuple):
-                [self.graph.add(t) for t in self.source]
-            else:
-                self.graph.parse(data=self.source, format=self.format)
-                ont_type_trips = self.graph[:rdf.type:owl.Ontology]
-                self.ontology_iri = next(ont_type_trips)  # TODO warn on > 1
-                try:
-                    extra = next(ont_type_trips)
-                    raise ValueError('More than one owl:Ontology in this file!\n'
-                                     '{self.ontology_iri}\n{extra}\n')
-                except StopIteration:
-                    pass
-
-    def triples_preload(self):
-        if self.source_triples_hash is None:
-            self.source_triples_hash = self.orderInvariantHash(self.graph)
-
-    def _triples_make_load(self):
-        #graph, src_qual):
-        """
-        urirefs = set(tuple(str(e) for e in t) + (src_qual, 0)
-                        for t in graph
-                        if all(isinstance(e, rdflib.URIRef) for e in t))
-        literals = set(tuple(str(e) for e in t) + (t[2].datatype, src_qual,)
-                        for t in graph
-                        if not any(isinstance(e, rdflib.BNode) for e in t)
-                        and isinstance(t[2], rdflib.Literal))
-        # this one is a bit more complex
-        HEAD = 0  # TODO
-        unlifted = set(tuple(str(e) for e in t) + (t[2].__class__.__name__, HEAD, src_qual)
-                        # TODO type info since these can be all 3
-                        # class name only covers high level, we also need to accomodate literal types :/
-                        for t in graph
-                        if any(isinstance(e, rdflib.BNode) for e in t))
-
-        uri_template, uri_params = makeParamsValues(urirefs)
-        uri_sql_base = 'INSERT INTO triples_uri (s, p, o) VALUES '
-        uri_sql = uri_sql_base + uri_template
-        lit_template, lit_params = makeParamsValues(literals)
-        lit_sql_base = 'INSERT INTO triples_literal (s, p, o, datatype, lang) VALUES '
-        lit_sql = lit_sql_base + lit_template
-        unlifted_template, unlifted_params = makeParamsValues(unlifted)
-        unlifted_sql_base = 'INSERT INTO triples_unlifted (s, p, o, o_type, head_node, qualifier_id) VALUES '
-        unlifted_sql = unlifted_sql_base + unlifted_template
-        """
-
-        suffix = ' ON CONFLICT (s, p, o) DO NOTHING'
-        sqls = (
-            'INSERT INTO triples_uri      (s, p, o) VALUES ',
-            'INSERT INTO triples_literal  (s, p, o, datatype, lang) VALUES ',
-            # 'INSERT INTO triples_blank    (s, p, o) VALUES ',  # TODO
-            # 'INSERT INTO triples_subgraph (s, p, o, o_type, head_node, qualifier_id) VALUES ',  # TODO
-        )
-
-        trips = triples_uri, triples_literal, triples_blank, triples_subgraph = tuple(set() for _ in range(4))
-        printD(len(self.graph))
-        for s, p, o in self.graph:
-            t = s, p, o
-            if all(isinstance(e, rdflib.URIRef) for e in t):
-                triples_uri.add(t)
-            if isinstance(s, rdflib.BNode):
-                triples_subgraph.add(t)
-            if isinstance(o, rdflib.BNode):
-                triples_blank.add(t)
-            else:
+    def make_load_records(self, mi, di):
+        # TODO resursive on type?
+        # s, s_blank, p, o, o_lit, datatype, language, subgraph_identity
+        if not mi:
+            mt = m, mcols = [], 's, p, o'
+            mlt = ml, mlcols = [], 's, p, o_lit, datatype, language'
+            for p, o in self.metadata_named:
+                p = str(p)
                 if isinstance(o, rdflib.URIRef):
-                    datatype = rdflib.XSD.anyURI
-                    lang = None
+                    m.append((self.bound_name, p, str(o)))
                 else:
-                    datatype = o.datatype
-                    lang = o.language
-                triples_literal.add((s, p, o, datatype, lang))
+                    ml.append((self.bound_name, p, str(o), str(o.datatype), o.language))
 
-        def make_sql_params(triples, sql_base):
-            triples = (tuple(str(e) for e in t) for t in triples)  # FIXME ANNOYING
-            template, params = makeParamsValues(triples)
-            sql = sql_base + template + suffix
-            return sql, params
+            mbt = mb, mbcols = [], 's, p, o_blank, subgraph_identity'
+            for p, subgraph_identity in self.metadata_unnamed:
+                p = str(p)
+                mb.append((self.bound_name, p, 0, subgraph_identity))
 
-        # TODO complex triples that _have_ been lifted
-
-        for triples, sql_base in zip(trips, sqls):
-            yield make_sql_params(triples, sql_base)
-
-    def triples_make_load(self):
-
-        sufixes = (' ON CONFLICT (s, p, o) DO NOTHING',
-                   ' ON CONFLICT (s, p, o_list, datatype, language) DO NOTHING')
-        sqls = (
-            'INSERT INTO triples (s, p, o) VALUES ',
-            'INSERT INTO triples (s, p, o_lit, datatype, lang) VALUES ',
-            # 'INSERT INTO triples (s, p, o_blank) VALUES ',  # TODO
-            # 'INSERT INTO triples_subgraph (s, p, o, o_type, head_node, qualifier_id) VALUES ',  # TODO
-        )
-
-        trips = triples_uri, triples_literal, triples_blank, triples_subgraph = tuple(set() for _ in range(4))
-        printD(len(self.graph))
-        for s, p, o in self.graph:
-            t = s, p, o
-            if all(isinstance(e, rdflib.URIRef) for e in t):
-                triples_uri.add(t)
-            if isinstance(s, rdflib.BNode):
-                triples_subgraph.add(t)
-            if isinstance(o, rdflib.BNode):
-                triples_blank.add(t)
-            else:
+        if not di:
+            dt = d, dcols = [], 's, p, o'
+            dlt = dl, dlcols = [], 's, p, o_lit, datatype, language'
+            for s, p, o in self.data_named:
+                s, p = str(s), str(p)
                 if isinstance(o, rdflib.URIRef):
-                    datatype = rdflib.XSD.anyURI  # FIXME
-                    lang = None
+                    d.append((s, p, str(o)))
                 else:
-                    datatype = o.datatype
-                    lang = o.language
-                triples_literal.add((s, p, o, datatype, lang))
+                    dl.append((s, p, str(o), str(o.datatype), o.language))
 
-        def make_sql_params(triples, sql_base, suffix):
-            triples = (tuple(str(e) for e in t) for t in triples)  # FIXME ANNOYING double entry issues
-            template, params = makeParamsValues(triples)
-            sql = sql_base + template + suffix
-            return sql, params
+            dbt = db, dbcols = [], 's, p, o_blank, subgraph_identity'
+            for s, p, subgraph_identity in self.data_unnamed:
+                s, p = str(s), str(p)
+                db.append((s, p, 0, subgraph_identity))
 
-        # TODO complex triples that _have_ been lifted
+            sgt = sg, sgcols = [], 's_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity'
+            for subgraph_identity, subgraph in self.subgraph_identities.items():
+                for s, p, o in subgraph:
+                    p = str(p)
+                    if isinstance(o, rdflib.URIRef):
+                        sg.append((s, p, str(o), None, None, None, None, subgraph_identity))
+                    elif isinstance(o, int):
+                        sg.append((s, p, None, None, None, None, o, subgraph_identity))
+                    else:  # FIXME not clear we ever have these Literal cases...
+                        sg.append((s, p, None, str(o), str(o.datatype), o.language, None, subgraph_identity))
 
-        for triples, sql_base, suffix in zip(trips, sqls, suffixes):
-            yield make_sql_params(triples, sql_base, suffix)
+        return mt, mlt, mbt, dt, dlt, dbt, sgt
+ 
+    def load_event(self):
+        # FIXME only insert on success...
+        si = self.serialization_identity
 
-    def triples_load(self):#, sql, params):
-        for sql, params in self.triples_make_load():
-            try:
-                self.session.execute(sql, params)
-                self.session.commit()
-                # TODO stats
-                return 'ok\n'
-            except BaseException as e:
-                self.session.rollback()
-                printD(e.orig.pgerror)
-                return e.orig.pgerror
-        else:
-            return 'No triples were loaded!?', 400
-                
+        if si in self._cache_identities:
+            # TODO give the user options to say yes i want this explicitly in my graph
+            #self.execute(sql_prov, params)
+            return 'already in\n'
+
+        # TODO need a way to pass in si
+
+        # TODO always insert metadata first so that in-database integrity checks
+        # can run afterward and verify roundtrip identity
+        ni = self.bound_name_identity in self._cache_identities  # self.identities_add?
+        mi = self.metadata_identity in self._cache_identities
+        di = self.data_identity in self._cache_identities
+        sgi = {k:v in self._cache_identities for k, v in self.subgraph_identities.items()}
+
+        # (:s, 'hasPart', :o)
+        # FIXME only insert the anon subgraphs and definitely better
+        # not to use identities on annotations
+        # also pretty sure that the linked subgraphs don't go in the idents table
+        # FIXME I need to know which subgraphs need to be parented ser
+        sql_ident_base = 'INSERT INTO identities (reference_name, identity, type, triples_count) VALUES '
+        types_idents = (('serialization', self.serialization_identity),  # TODO abstract... type + ident
+                        ('local_naming_conventions', self.curies_identity),
+                        ('bound_name', self.bound_name_identity),
+                        ('metadata', self.metadata_identity),
+                        ('data', self.data_identity),
+                        ('subgraph', *self.free_subgraph_identities))
+        values = ((i, type, self.identity_triple_count(i))
+                  for type, *identities in types_idents
+                  for i in identities)
+        vt, params_i = makeParamsValues(values, constants=(':rn',))
+        params_i['rn'] = self.reference_name
+        sql_ident = sql_ident_base + vt
+        self.session.execute(sql_ident, params_i)
+
+        sql_ident_rel_base = 'INSERT INTO identity_relations (p, s, o) VALUES '
+        values_ident_rel = ((self.serialization_identity, part_ident)
+                            for _, *part_idents in types_idents[1:]
+                            for part_ident in part_idents)
+        # TODO dereferencedTo for name -> identity
+        vt, params_ir = makeParamsValues(values_ident_rel, constants=(':p',))
+        params_ir['p'] = 'hasPart'
+        sql_rel_ident = sql_ident_rel_base + vt
+        self.session.execute(sql_rel_ident, params_ir)
+
+        # 'INSERT INTO qualifiers (identity, group_id)'
+        # FIXME this should happen automatically in the database
+        # we just need to get the value back out
+
+        params_le = dict(si=si, g=self.group, u=self.user)
+        sql_le = ('INSERT INTO load_events (serialization_identity, group_id, user_id) '
+                  'VALUES (:si, idFromGroupname(:g), idFromGroupname(:u))')
+        self.session.execute(sql_le, params_le)
+
+        # TODO get the qualifier id so that it can be 
+
+        sql_base = 'INSERT INTO triples'
+        suffix = ' ON CONFLICT DO NOTHING'
+        sqls = []
+        for values, sql_columns in self.make_load_records(mi, di):
+            if values:
+                values_template, params = makeParamsValues(values)
+                sql = sql_base + f' ({sql_columns}) VALUES ' + values_template + suffix
+                self.execute(sql, params)
+
+        return 'TODO\n'
+
+
 
 class InterLex(TripleLoader):
     def __call__(self, user, triples):
@@ -1078,6 +936,7 @@ class FileFromBase(TripleLoader):
 
 class FileFromFile(FileFromBase):
     def __call__(self, name, group='tgbugs', user='tgbugs', reference_name=None):
+        self.reference_host = 'uri.interlex.org'
         self.path = Path(name).resolve().absolute()
         name = self.path.as_uri()
         if reference_name is None:
@@ -1085,6 +944,7 @@ class FileFromFile(FileFromBase):
             # sure that users/groups match the reference_name?
             reference_name = f'http://uri.interlex.org/{group}/upload/test'
         super().__call__(group, user, reference_name, name)
+        self.reference_host = None
         self.path = None  # avoid poluting the class namespace
 
     @property
@@ -1817,14 +1677,20 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                         printD(request.files)
                     if request.json is not None:  # jsonld u r no fun
                         printD(request.json)
-                        if 'external-iri' in request.json:
-                            expected_bound_name = request.json['external-iri']  # FIXME not quite right?
-                            if match_path not in expected_bound_name:
+                        if 'name' in request.json:
+                            name = request.json['name']  # FIXME not quite right?
+                            if 'bound-name' in request.json:
+                                expected_bound_name = request.json['bound-name']
+                            else:
+                                expected_bound_name = None
+
+                            # FIXME this should be handled elsewhere for user
+                            if match_path not in name and match_path not in expected_bound_name:
                                 return f'No common name between {expected_bound_name} and {reference_name}', 400
                             with self.filefromiri as f:
                                 # TODO get actual user from the api key
                                 #print()
-                                out = f(group, user, reference_name, expected_bound_name)
+                                out = f(group, user, reference_name, name, expected_bound_name)
                                 # out = f(user, filepath, ontology_iri, new=True)
                                 #embed()
                                 printD('should be done running?')
@@ -1973,6 +1839,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
     @app.before_first_request
     def runonce():
         # FIXME this is a reasonably safe way to make sure that we have a db connection
+        TripleLoader.reference_host = next(db.session.execute('SELECT reference_host()'))[0]
         Endpoints.reference_host = next(db.session.execute('SELECT reference_host()'))[0]
         printD(Endpoints.reference_host)
 
@@ -2096,10 +1963,10 @@ def main():
             resp = requests.post(url, json=uPREFIXES)
             printD(resp.text)
         elif args['ontology']:
-            j = {'external-iri':'http://purl.obolibrary.org/obo/uberon.owl'}
+            j = {'name':'http://purl.obolibrary.org/obo/uberon.owl'}
             ontology_iri = 'http://ontology.neuinfo.org/NIF/ttl/NIF-GrossAnatomy.ttl'
             u = urlparse(ontology_iri)
-            j = {'external-iri':ontology_iri}
+            j = {'name':ontology_iri}
             url = f'{scheme}://{host}/{user}/ontologies/' + u.path[1:]
             resp = requests.post(url, json=j)
             printD(resp.text)
