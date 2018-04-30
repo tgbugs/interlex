@@ -15,8 +15,12 @@ CREATE TABLE existing_iris(
        ilx_id char(7) NOT NULL,
        iri uri NOT NULL CHECK (uri_host(iri) NOT LIKE '%interlex.org'),
        group_id integer NOT NULL,
-       CONSTRAINT fk__existing_iris__ilx_id__interlex_ids FOREIGN key (ilx_id) REFERENCES interlex_ids (id) match simple,
-       CONSTRAINT fk__existing_iris__group_id__group FOREIGN key (group_id) REFERENCES groups (id) match simple,
+       CONSTRAINT fk__existing_iris__ilx_id__interlex_ids
+                  FOREIGN key (ilx_id)
+                  REFERENCES interlex_ids (id) match simple,
+       CONSTRAINT fk__existing_iris__group_id__group
+                  FOREIGN key (group_id)
+                  REFERENCES groups (id) match simple,
        CONSTRAINT pk__existing_iris PRIMARY KEY (iri, group_id)
 );
 
@@ -35,6 +39,226 @@ CREATE TYPE source_process AS ENUM ('FileFromIRI',  -- transitive closure be imp
                                     'InterLex'
                                     );
 
+-- NOTE 'names' referred to here are 'graph names' or 'triple set names'
+/* -- EXPLAINIATION
+   incompatible defs
+   source = data + bound name + metadata
+   source - data = metadata
+   source - name = ??
+   source - metadata = ??
+   source = data
+   source = metadata + data
+   source = metadata + data + name
+
+   THIS IS NOT CORRECT
+   name and metadata are NOT subsets of data in more precise nomenclature
+   The system developed here is based on invariance under an identity function
+   to changes in defined/distinct subsets of data.
+
+   Ident(name1) -> 0
+   Ident(name2) -> 0
+   =>
+   name1 = name2
+   
+   Ident(data1) -> 1
+   Ident(data2) -> 1
+   =>
+   data1 = data2
+
+   =>
+   data1 != name1
+   
+   Ident(data3) -> 0
+   =>
+   data3 = name1
+   
+   In this implementation the identity function is a hash function, currently SHA256.
+   Names are any subset of data that are unique for a given identity function.
+   In this context case sensitive string matching or bytestring equality also work.
+   
+   Invariants are then considered only over 2 levels, data and its complement.
+   We call the invariant data a name and the part that can vary data.
+   
+   Names are always invariant to changes in data because by definition they are the thing that does not change.
+   The function Data is completely unconstrained when applied to a name.
+   Data(data1) -> data2
+   data1 = data2
+   data1 != data2
+
+   Thus it is no surprise that
+   Data(name1) -> data1
+   Data(name2) -> data2
+   data1 != data2
+   happens routinely
+
+   Pointing of names to data means that the identity of the data is invariant to changes in the name.
+   Name(data) -> name1
+   Name(data) -> name2
+   =/> name1 = name2
+   
+   Name(data) -> name1
+   Name(data) -> name2
+   Name(data) -> name3
+   name1 != name2 != name3
+
+   Binding of names to data means that the name is embedded in the data
+   so that the data is no longer invariant to changes in the name.
+
+   BoundName(data) -> name1
+   BoundName(data) -> name2
+   name1 != name2
+   =>
+   data1 != data2
+   
+   BoundName(data1) -> name1
+   BoundName(data2) -> name2
+   name1 != name2
+
+   Means that I can implement
+
+   Data(name) -> data
+   BoundName(data) = name
+   Data(name2) -> data
+   BoundName(data) != name2
+
+   and solves the Name(data) issue
+
+
+   However there is one additional criteria that is required.
+   There must be a function that can distinguish between changes in
+   the identity of the data where the name has not change and
+   changes in the identity of the data where the name has changed.
+   
+   data1 != data2
+   NameChanged(data1, data2) -> True
+   =>
+   BoundName(data1) != BoundName(data2)
+
+   data1 != data2
+   NameChanged(data1, data2) -> False
+   =>
+   BoundName(data1) = BoundName(data2)
+
+   The NameChanged function actually gives us something more powerful.
+   It gives us bound metadata* (hencforth referred to just as metadata).
+   A bound name can be considered to be the minimal subset of the data
+   that has a useful identity function. This could be as complex as
+   urls that resolve differently or a simple as the first byte of a file.
+   The number of things that can be named using the first byte of a file
+   is quite small, so we usually pick identity functions that are a bit
+   larger.
+   
+   data1 != data2
+   BoundData(data1) = data3
+   BoundData(data2) = data4
+   data3 = data4
+   data3 != data4
+
+   SubsetChanged(data1, data2) -> True
+   SubsetChanged(data1, data2) -> False
+
+   The generalized SubsetChanged function implies that
+   there is some subset of the data that we can treat as
+   distinct from the data and that subset can have as many
+   subsets as our identity function can support.
+   
+   The trick is to use a common subset as a name.
+   We usually break this out into name, metadata, and data.
+   Where the name is a subset of both, and the metadata is
+   a subset of the data. We are then left with the 'real'
+   data that can change identity independent of the name
+   and the metadata without loosing its identity.
+
+   A bound name is the minimal subset of the data that satisfies the
+   desired Ident function and NameWithCorrectness(name) -> data
+
+   * Unbound metadata is not really a useful idea because technically
+   any other data bound to a name could be considered as metadata and
+   thus open to interpretation and convention.
+     
+   # backwards definitions
+   IdentName(name) -> 1
+   IdentName(name) -> 2
+   1 != 2
+   =>
+   {name | IdentName(name) -> 1} != {name | IdentName(name) -> 2}
+   shorthand name1 name2
+
+   DataIdent(data) -> 1
+   DataIdent(data) -> 2
+   1 != 2
+   => 
+   {data | IdentData(data) -> 1} != {data | IdentData(data) -> 2}
+   shorthand data1 data2
+   
+   IdentName does not have to be the same as IdentData, though they can be
+   
+   BoundName(data) => name
+   
+   Note: data and name can have the same type if 
+
+   NameChanged({data | IdentData(data) -> 1}, {data | IdentData(data) -> 2}) -> True
+   =>
+   BoundName({data | IdentData(data) -> 1}) != BoundName({data | IdentData(data) -> 2})
+   => 
+   name
+
+   NameChanged({data | IdentData(data) -> 1}, {data | IdentData(data) -> 2}) -> False
+   
+
+*/
+CREATE TABLE names(
+       -- any uri that has ever pointed to a bound name, the set of these is quite large
+       -- even those that no longer resolve but are bound names
+       -- NOTE that security/validity/trust is not managed at this level
+       -- it is managed at the level of qualifiers, anyone can claim to be uberon
+       -- the validity of the claim is orthogonal to the claim itself, these tables deal with the claims
+       -- the best way to identify invalid claims is the enumerate them an mark them as such
+       -- NOTE this table can be extended to track the current state of the resolution of a name
+       name uri PRIMARY KEY,
+       bound_name uri NOT NULL
+);
+
+CREATE TABLE bound_names(
+       name uri PRIMARY KEY,
+       -- names explicitly occuring in conjuction with a set of triples
+);
+
+CREATE TABLE reference_names(
+       -- the set of interlex uris that we use internally to track all bound names
+       -- one or the other of these names SHALL be the bound name
+       -- note that I'm implementing this with uris, but really it could be anything
+       name uri PRIMARY KEY CHECK (uri_host(name) = reference_host()),  -- change this to match your system
+       bound_name uri UNIQUE,  -- default name, but can be updated to a single external external name
+       CHECK (uri_host(bound_name) = reference_host() AND bound_name = name OR uri_host(bound_name) <> reference_host()),
+       group_id integer NOT NULL -- TODO where names are actually uris check that the group name matches
+);
+
+CREATE FUNCTION user_reference_name() RETURNS trigger AS $$
+       BEGIN
+           INSERT INTO reference_names (name, group_id) VALUES
+                  -- this tracks the source that is the user's interlex
+                  -- contributions that have no additional artifact
+                  -- uploads are tied to bound name of the file
+                  -- and can be tracked and computed separately
+                  ('https://' || reference_host() || (SELECT groupname FROM groups WHERE id = NEW.id) || '/contributions'),
+                  NEW.id)
+           RETURN NULL;
+       END;
+$$ language plpgsql;
+
+CREATE TRIGGER user_reference_name AFTER INSERT ON users FOR EACH ROW EXECUTE PROCEDURE user_reference_name();
+
+CREATE TABLE metadata_identities(
+       -- hashes of owl:Ontology sections aka metadata identity naming doesn't quite make sense atm
+       identity bytea PRIMARY KEY,
+       -- the minimal value here is the name or the hash of the name + a type to distinguish it from
+       -- the data
+       -- minimal metadata in this case is thus identical the bound_name + type
+       bound_name uri NOT NULL
+);
+
+/*
 CREATE TABLE sources(
        -- aka files NOT ontologies
        -- sources do not tell you whether they are loading to or from, they are independent of that
@@ -42,14 +266,15 @@ CREATE TABLE sources(
        id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
        owner_group_id integer NOT NULL,
        interlex_source_path text NOT NULL, -- this is user + ontpath
-       external_source_iri uri UNIQUE,
+       external_source_iri uri UNIQUE, -- this is what should appear internally in source_metadata
        -- CONSTRAINT pk__sources PRIMARY KEY (owner_group_id, interlex_source_path),
        CONSTRAINT un__sources UNIQUE (owner_group_id, interlex_source_path),
-       CONSTRAINT fk__sources__owner_group_id__groups FOREIGN key (owner_group_id) REFERENCES groups (id) match simple
+       CONSTRAINT fk__sources__owner_group_id__groups
+                  FOREIGN key (owner_group_id)
+                  REFERENCES groups (id) match simple
 );
 
-INSERT INTO sources (id, owner_group_id, interlex_source_path, external_source_iri) VALUES
-       (0, 0, '/interlex.ttl', 'https://uri.interlex.org/base/interlex.ttl');  -- FIXME we really need an agnostic suffix :/ owl is too xml
+-- TODO renaming?
 
 CREATE FUNCTION create_user_source() RETURNS trigger AS $$
        BEGIN
@@ -61,23 +286,64 @@ $$ language plpgsql;
 
 CREATE TRIGGER create_user_source AFTER INSERT ON users FOR EACH ROW EXECUTE PROCEDURE create_user_source();
 
+CREATE TABLE source_metadata(
+       source_id integer NOT NULL,
+       metadata_triples_hash bytea NOT NULL,
+       -- and suddenly self describing document structure makes sense
+);
+*/
+
+-- graph_subsets, graphs, subgraphs... HRM content_sets, ie the actual ontology content
+/*
 CREATE TABLE source_triples(
+       -- BIG NOTE: triples included for hash computation should be split into into
+       -- those attached to an owl:Ontology typed subject and everything else
+       -- because the owl:Ontology section 'names' the rest of the graph but
+       -- the hash of the content should be invariant to changes in the name
+       -- they are literally the same
+       -- if there is not an owl:Ontology typed subject then the containing source
+       -- certain other rdf:type predicates may also fall into the metadata naming section
+       -- if changes to them do not affect the view...
+
        source_triples_hash bytea PRIMARY KEY,
        triples_count integer NOT NULL,
        source_id integer NOT NULL,
-       CONSTRAINT fk__source_triples__source_id__sources FOREIGN key (source_id) REFERENCES sources (id) match simple
+       CONSTRAINT fk__source_triples__source_id__sources
+                  FOREIGN key (source_id)
+                  REFERENCES sources (id) match simple
 );
-INSERT INTO source_triples VALUES (E'\\x00', 0, 0);
+*/
+
+CREATE TABLE data_identities(
+       identity bytea PRIMARY KEY,
+       triples_count integer NOT NULL CHECK (triples_count > 0),
+       source_id integer NOT NULL,
+       CONSTRAINT fk__source_triples__source_id__sources
+                  FOREIGN key (source_id)
+                  REFERENCES sources (id) match simple
+);
+
+CREATE TABLE bound_name_()
+
+CREATE TABLE qualifiers(
+             -- qualifiers are source triple hashes with an ordering rule
+             -- but those orderings are also 'qualified' per group
+             -- with the note that source triples hashes can only have 
+             id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+             source_triples_hash,
+             previous_qualifier_id integer
+             -- CONSTRAINT pk__qualifiers PRIMARY KEY (source_triples_hash, group_id)
+)
 
 CREATE TABLE source_serialization(
        -- prov
        source_serialization_hash bytea PRIMARY KEY,
        source_triples_hash bytea NOT NULL,
-       CONSTRAINT fk__source_ser__source_triples_hash__source_triples FOREIGN key (source_triples_hash)
+       CONSTRAINT fk__source_ser__source_triples_hash__source_triples
+                  FOREIGN key (source_triples_hash)
                   REFERENCES source_triples (source_triples_hash) match simple
        -- group_id integer NOT NULL,
 );
-INSERT INTO source_serialization VALUES (E'\\x00', E'\\x00');
 
 CREATE TYPE transform_rule AS enum ('EquivClassIntersection', 'EquivClassUnion', 'RestrictionSome', 'RestrictionAll', 'List');
 
@@ -97,35 +363,42 @@ CREATE TABLE load_processes(
        -- TODO more forieng keys here
 );
 
-CREATE TABLE qualifiers(
+CREATE TABLE old_qualifiers(
        -- ordering of source_triples_hash for a given source id in time by group
        -- there are some use cases where dissociation from temporal order may be useful
        id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
        source_id integer NOT NULL,  -- can get this from the load_process_id, but may be tricky to validate previous_q_id...
-       source_triples_hash bytea, -- NOT NULL,
-       -- group_id integer NOT NULL, -- redundant
-       datetime timestamp DEFAULT CURRENT_TIMESTAMP, -- this also here for speed to avoid dealing with joins? or we leave date out of lopr?
-       previous_qualifier_id integer NOT NULL CHECK (previous_qualifier_id <= id),  -- do we even need this anymore? no?
+       load_process_id integer CHECK (load_process_id IS NOT NULL OR (load_process_id IS NULL AND equivalent_qualifier_id IS NOT NULL)),
 
+       group_id integer NOT NULL, -- redundant
+       datetime timestamp DEFAULT CURRENT_TIMESTAMP, -- this also here for speed to avoid dealing with joins? or we leave date out of lopr?
+       source_serialization_hash bytea NOT NULL,
+       source_triples_hash bytea, -- NOT NULL,
+       previous_qualifier_id integer NOT NULL CHECK (previous_qualifier_id <= id),  -- do we even need this anymore? no?
        equivalent_qualifier_id integer,  -- useful for exact duplicate loads by different users and quick rollbacks
 
        -- basically load process id + time, load processes are not sequential, but are treated as time invariant
        -- this allows us to do REALLY fast rollbacks by simply adding an equivalent qulaifier id to the old version
        -- and then setting previous qualifier as usual
        -- source_triples_hash could go in for completeness
-       load_process_id integer CHECK (load_process_id IS NOT NULL OR (load_process_id IS NULL AND equivalent_qualifier_id IS NOT NULL)),
-       source_serialization_hash bytea NOT NULL,
        -- useful for just completely ignoring a set of changes and starting back from the past in terms of content
        -- TODO need a check on previous qualifier_id to make sure its source_process_id matches
        -- but that is a super advanced feature
 
-       CONSTRAINT fk__qualifiers__source_id__source_processes FOREIGN key (source_id) REFERENCES sources (id) match simple,
+       CONSTRAINT fk__qualifiers__source_id__source_processes
+                  FOREIGN key (source_id)
+                  REFERENCES sources (id) match simple,
        CONSTRAINT fk__qualifiers__source_serialization_hash__source_serialization
-                  FOREIGN key (source_serialization_hash) REFERENCES source_serialization (source_serialization_hash) match simple,
-       CONSTRAINT fk__qualifiers__load_process_id__load_processes FOREIGN key (load_process_id) REFERENCES load_processes (id) match simple,
-       -- CONSTRAINT fk__qualifiers__source_qualifier__qualifiers FOREIGN key (source_qualifier_id)
+                  FOREIGN key (source_serialization_hash)
+                  REFERENCES source_serialization (source_serialization_hash) match simple,
+       CONSTRAINT fk__qualifiers__load_process_id__load_processes
+                  FOREIGN key (load_process_id)
+                  REFERENCES load_processes (id) match simple,
+       -- CONSTRAINT fk__qualifiers__source_qualifier__qualifiers
+                  -- FOREIGN key (source_qualifier_id)
                   -- REFERENCES qualifiers (id) match simple,
-       CONSTRAINT fk__qualifiers__previous_qualifier__qualifiers FOREIGN key (previous_qualifier_id)
+       CONSTRAINT fk__qualifiers__previous_qualifier__qualifiers
+                  FOREIGN key (previous_qualifier_id)
                   REFERENCES qualifiers (id) match simple
 );
 
@@ -134,8 +407,12 @@ CREATE TABLE qualifiers_current(
        id integer NOT NULL,
        previous_ids integer[] NOT NULL,  -- no FK here, 'enforced' via population via trigger
        -- TODO CHECK qualifiers previous_qualifier_id = OLD.id aka previous_ids head? in trigger?
-       CONSTRAINT fk__qualifiers__source_id__source_processes FOREIGN key (source_id) REFERENCES sources (id) match simple,
-       CONSTRAINT fk__qualifiers_current__id__qualifiers FOREIGN key (id) REFERENCES qualifiers (id) match simple
+       CONSTRAINT fk__qualifiers__source_id__source_processes
+                  FOREIGN key (source_id)
+                  REFERENCES sources (id) match simple,
+       CONSTRAINT fk__qualifiers_current__id__qualifiers
+                  FOREIGN key (id)
+                  REFERENCES qualifiers (id) match simple
 );
 
 CREATE FUNCTION qualifiers_to_current() RETURNS trigger AS $$
@@ -181,7 +458,12 @@ CREATE FUNCTION create_source_qualifier() RETURNS trigger AS $$
                 -- TODO figure out the proper group to derive previous from maybe latest? or is it curated?
                 -- SELECT id INTO STRICT prev_qual FROM qualifiers_current as q WHERE q.group_id = 1 AND;
                 -- load processes are where we will need to actually look up the previous qualifier id
-           INSERT INTO qualifiers (source_id, source_triples_hash, group_id, equivalent_qualifier_id, previous_qualifier_id)
+           INSERT INTO qualifiers
+                  (source_id,
+                   group_id,
+                   source_triples_hash,
+                   equivalent_qualifier_id,
+                   previous_qualifier_id)
            source_id, source_triples_hash, group_id, -- datetime
            previous_qualifier_id, equivalent_qualifier_id, load_process_id, source_serialization_hash
            VALUES (NEW.id, NEW.id, 0);
@@ -254,134 +536,54 @@ CREATE TABLE triples(
 -- what about (?? null ?? owl:onProperty null null BFO:0000050 null null ???)
 -- we cannot reuse subgraph triples, we can reuse entire subgraphs starting from (s, p, o_blank)
 
-/*
-CREATE sequence if NOT exists triples_all_id_seq;
-
-CREATE TABLE triples_uri(
-       -- lifted by default
-       id integer PRIMARY KEY DEFAULT nextval('triples_all_id_seq'),
-       s uri NOT NULL,
-       p uri NOT NULL,
-       o uri NOT NULL,
-       CONSTRAINT un__triples_uri__s_p_o UNIQUE (s, p, o)
-       -- CONSTRAINT pk__triples_uri PRIMARY key (s, p, o, qualifier_id),  -- TODO need transform id too?
-       -- CONSTRAINT fk__triples_uri__qualifier_id__qualifiers FOREIGN key (qualifier_id) REFERENCES qualifiers (id) match simple
-);
-
-CREATE TABLE triples_literal(
-       -- lifted by default
-       id integer PRIMARY KEY DEFAULT nextval('triples_all_id_seq'),
-       s uri NOT NULL,
-       p uri NOT NULL,
-       o text NOT NULL,
-       datatype uri NOT NULL,
-       language varchar(10),
-       CONSTRAINT un__triples_literal__s_p_o UNIQUE (s, p, o)  -- TODO need transform id too?
-       -- CONSTRAINT fk__triples_literal__qualifier_id__qualifiers FOREIGN key (qualifier_id) REFERENCES qualifiers (id) match simple
-);
-
-CREATE TABLE blank_to_subgraph(
-       id integer PRIMARY KEY DEFAULT nextval('triples_all_id_seq'),
-       subgraph_hash bytea UNIQUE NOT NULL
-);
-
-CREATE TABLE triples_subgraph(
-       -- NOTE this is how we store unlifted, the lifted store will look different
-       -- TODO seriously consider using arrays for lists? well, these fellows are unlifted
-       subgraph_hash bytea NOT NULL, -- TODO need deterministic way to do this (woo ttl)
-       s integer NOT NULL,  -- start bnodes as zero for each subgraph hash
-       p uri NOT NULL,
-       o uri,
-       o_lit text,
-       o_blank integer,
-       datatype uri CHECK (o_lit IS NULL OR o_lit IS NOT NULL AND datatype IS NOT NULL),
-       language varchar(10),
-       CHECK ((o IS NOT NULL AND o_lit IS NULL AND o_blank IS NULL) OR
-              (o IS NULL AND o_lit IS NOT NULL AND o_blank IS NULL) OR
-              (o IS NULL AND o_lit IS NULL AND o_blank IS NOT NULL)),
-       -- CONSTRAINT ch__triples_subgraph__some_o CHECK
-                  -- ((o_uri NOT NULL AND o_lit IS NULL AND o_blank IS NULL) OR
-                   -- (o_uri IS NULL AND o_lit NOT NULL AND o_blank IS NULL) OR
-                   -- (o_uri IS NULL AND o_lit IS NULL AND o_blank NOT NULL)),
-       CONSTRAINT pk__triples_subgraph PRIMARY KEY (subgraph_hash, s),
-       CONSTRAINT un__triples_subgraph__sh_s_p_o UNIQUE (subgraph_hash, s, p, o, o_lit, o_blank, datatype, language)
-       -- CONSTRAINT triples_subgraph__subgraph_hash__fk__blank_to_subgraph FOREIGN KEY (subgraph_hash) REFERENCES blank_to_subgraph (subgraph_hash) match simple
-       -- CONSTRAINT fk__triples_subgraph__subgraph_hash__triples FOREIGN KEY (subgraph_hash) REFERENCES triples (o_blank) match simple
-       -- FIXME not clear if there is a way to enable this fk...
-);
-
-CREATE FUNCTION insert_subgraph() RETURNS trigger AS $$
-       BEGIN
-           INSERT INTO blank_to_subgraph (subgraph_hash) VALUES (NEW.subgraph_hash);
-           -- FIXME probably will break due to FOR EACH STATEMENT
-           -- TODO I have no idea what the right way is to do this
-           -- when I have a complete subgraph with random bnodes
-           RETURN NULL;
-       END;
-$$ language plpgsql;
-
-CREATE TRIGGER insert_subgraph AFTER INSERT ON triples_subgraph FOR EACH STATEMENT EXECUTE PROCEDURE insert_subgraph();
-
-CREATE TABLE triples_blank(
-       id integer PRIMARY KEY DEFAULT nextval('triples_all_id_seq'),
-       s uri NOT NULL,
-       p uri NOT NULL,
-       blank_id integer NOT NULL,
-       CONSTRAINT fk__triples_blank__blank_id__qualifiers FOREIGN key (blank_id) REFERENCES blank_to_subgraph (id) match simple
-);
-
-*/
-
-
-/* -- these are all handled using the qualifiers on the source
-
-CREATE TABLE triples_lifted_uri(
-       -- lifted qualifier?
-       id integer NOT NULL,
-       s uri NOT NULL,
-       p uri NOT NULL,
-       o uri NOT NULL,
-       CONSTRAINT fk__triples_lifted_uri__id__triples_subgraph FOREIGN key (id) REFERENCES triples_blank (id) match simple
-);
-
-
-CREATE TABLE triples_lifted_literal(
-       -- FIXME not clear we need this?
-       id integer NOT NULL,
-       s uri NOT NULL,
-       p uri NOT NULL,
-       o text NOT NULL,
-       CONSTRAINT fk__triples_lifted_literal__id__triples_subgraph FOREIGN key (id) REFERENCES triples_blank (id) match simple
-);
-
-CREATE TABLE triples_lifted_complex(
-       id integer NOT NULL,
-       type transform_rule NOT NULL,
-       CONSTRAINT fk__triples_lifted_complex__id__triples_subgraph FOREIGN key (id) REFERENCES triples_blank (id) match simple
-       -- there are 2 ways this could be done, either as uri, uri, blank -> triples_blank or blank, *, * -> blank_to_subgraph
-       -- I think that uri, uri, blank is a better place to anchor even though the transform rule might switch out the predicate
-);
-*/
-
 CREATE TABLE triple_qualifiers(
        triple_id integer NOT NULL,
        qualifier_id integer NOT NULL,
-       CONSTRAINT fk__triple_qualifiers__qualifier_id__qualifiers FOREIGN key (qualifier_id) REFERENCES qualifiers (id) match simple
+       CONSTRAINT fk__triple_qualifiers__triple_id__triples
+                  FOREIGN KEY (triple_id)
+                  REFERENCES triples (id),
+       CONSTRAINT fk__triple_qualifiers__qualifier_id__qualifiers
+                  FOREIGN key (qualifier_id)
+                  REFERENCES qualifiers (id) match simple
 );
 
 CREATE TABLE deletions(
        triple_id integer NOT NULL,
        qualifier_id integer NOT NULL,  -- gone here
-       previous_qualifier_id integer NOT NULL CHECK (qualifier_id > previous_qualifier_id),  -- present here
-       -- how to handle cases of open world where user never added triples themselves? zap at origin?
-       -- have to zap based on the user's ranking at that point in time
+       previous_qualifier_id integer NOT NULL, -- present or unspecified here
+       CHECK (qualifier_id > previous_qualifier_id),
+       -- QUESTION: how to handle cases of open world where user never added triples themselves?
+       -- zap at origin? have to zap based on the user's ranking at that point in time
        -- if you change the ranking then you can change the meaning of qualifiers
-       CONSTRAINT fk__triple_qualifiers__qualifier_id__qualifiers FOREIGN key (qualifier_id) REFERENCES qualifiers (id) match simple,
-       CONSTRAINT fk__triple_qualifiers__previous_qualifier_id__qualifiers FOREIGN key (qualifier_id) REFERENCES qualifiers (id) match simple
+       -- ANSWER: we implicitly 'include' things in the triples table but it is also
+       -- entirely valid for someone to explicitly _exclude_ triples from their world view (graph)
+       -- by default even if they were never explicitly or implicitly included in the first place
+       -- 'these are triples that could exist and I DO NOT WANT THEM thank you very much'
+
+       -- one additional feature that could be implemented here is 'banning' triples
+       -- permanently, saying 'never ask me to include this again' even if others do
+       -- that could be computed in software or another table, or it could go here
+       -- using one of the builting utility qualifiers... HRM would have to be negative ids
+       -- essentially 'maximum delete qualifier'
+
+       CONSTRAINT fk__deletions__triple_id__triples
+                  FOREIGN KEY (triple_id)
+                  REFERENCES triples (id),
+       CONSTRAINT fk__triple_qualifiers__qualifier_id__qualifiers
+                  FOREIGN key (qualifier_id)
+                  REFERENCES qualifiers (id) match simple,
+       CONSTRAINT fk__triple_qualifiers__previous_qualifier_id__qualifiers
+                  FOREIGN key (previous_qualifier_id)
+                  REFERENCES qualifiers (id) match simple
 );
 
 CREATE TABLE annotations(
        triple_id integer NOT NULL,  -- ah, and now we see the problem with having 3 tables
        annotation_triple_id integer NOT NULL,
-       fk__
+       CONSTRAINT fk__annotations__triple_id__triples
+                  FOREIGN KEY (triple_id)
+                  REFERENCES triples (id),
+       CONSTRAINT fk__annotations__annotation_triple_id__triples
+                  FOREIGN KEY (annotation_triple_id)
+                  REFERENCES triples (id)
 );
