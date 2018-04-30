@@ -164,7 +164,9 @@ CREATE TABLE identities(
        triples_count integer NOT NULL, -- ok to be zero for bound_name
        reference_name uri,
        type named_type NOT NULL,
-       CHECK (reference_name IS NULL AND type = 'subgraph' OR type <> 'subgraph'),
+       CHECK (reference_name IS NULL AND type = 'subgraph' OR
+              reference_name IS NOT NULL AND type = 'subgraph' OR
+              type <> 'subgraph'),
        -- FIXME serialization from interlex needs to differ from triples?? name
        -- also n3 format might collide?
        CONSTRAINT fk__identities__reference_name__reference_names
