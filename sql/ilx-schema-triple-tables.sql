@@ -13,7 +13,7 @@ CREATE TABLE existing_iris(
        -- do we need exclude rules? latest + original user will always be inserted
        -- but do we really even need latest to be explicit here?
        ilx_id char(7) NOT NULL,
-       iri uri NOT NULL CHECK (uri_host(iri) NOT LIKE '%interlex.org'),
+       iri uri UNIQUE NOT NULL CHECK (uri_host(iri) NOT LIKE '%interlex.org'),
        group_id integer NOT NULL,
        CONSTRAINT fk__existing_iris__ilx_id__interlex_ids
                   FOREIGN key (ilx_id)
@@ -24,8 +24,164 @@ CREATE TABLE existing_iris(
        CONSTRAINT pk__existing_iris PRIMARY KEY (iri, group_id)
 );
 
+-- NOTE 'names' referred to here are 'graph names' or 'triple set names'
+/* DOCS
+   see v3 for some early thinking
+   0. binding
+      +
+      when one identified piece of data is stuck to another one
+      either explicitly or implicitly
+      implicitly as in a file or as in 'i got this data using this name but the name is not in the data'
+      invariant -> name
+      bound invariant -> bound name
+      co-named variable -> just some other data (metadata)
+      bound co-named variable -> bound metadata
+      1. strong binding relation
+         in the same file
+         trusted 3rd party source that provides identity of the bound pair with a method to reproduce
+      2. pointing aka weak binding relations
+         data resolved to using url
+         filename for data
+         data pointed to by name
+   1. identity
+      source -> data OR data + name OR data + metadata + name
+      name
+      metadata
+      data
+      name + data
+      name + metadata
+      (or metadata - name if you implicitly included the name in the metadata)
+   2. name independent identity
+   3. co-named data
+      also co-bound-name data
+   4. source subset rule
+      name -> points to relation, or 'should be pointed to by'
+      metadata -> about
+      ---
+      basically any way that you can split up the source
+      metadata is just a name we give to a particular subset of a source
+      you can split stuff up as much as you want, the question is
+      whether there is a part of it that is or can be used for identity
+      so ignore htis and focus on name independent identity
+   5. metadata
+      in some sense this ends up being data 'about' the name, not the 'named' data
+      and it is the aboutness relationship that we subset on for the subset rule
+      BUT the aboutness is context dependent and that is still data
+      there are other subsetting rules that could be used as well
+
+*/
+CREATE TABLE names(
+       -- any uri that has ever pointed to a bound name, the set of these is quite large
+       -- even those that no longer resolve but are bound names
+       -- NOTE that security/validity/trust is not managed at this level
+       -- it is managed at the level of qualifiers, anyone can claim to be uberon
+       -- the validity of the claim is orthogonal to the claim itself, these tables deal with the claims
+       -- the best way to identify invalid claims is the enumerate them an mark them as such
+       -- NOTE this table can be extended to track the current state of the resolution of a name
+       name uri PRIMARY KEY
+       -- should not be a reference name?
+);
+
+CREATE TABLE bound_names(
+       name uri PRIMARY KEY
+       -- may be a name or a reference_name
+       -- names explicitly occuring in conjuction with a set of triples
+);
+
+CREATE TABLE reference_names(
+       -- the set of interlex uris that we use internally to track all bound names
+       -- one or the other of these names SHALL be the bound name
+       -- note that I'm implementing this with uris, but really it could be anything
+       name uri PRIMARY KEY CHECK (uri_host(name) = reference_host()),  -- change this to match your system
+       -- external_name uri UNIQUE, -- this doesn't go here
+       expected_bound_name uri UNIQUE,  -- default name, but can be updated to a single external external name
+       -- FIXME what happens in cases where an external source looses control of a uri and has to change the bound name?
+       -- I think we can use ordering on bound name identities to resolve the issue without too much trouble
+       CHECK (uri_host(expected_bound_name) = reference_host()
+              AND
+              expected_bound_name = name
+              OR
+              uri_host(expected_bound_name) <> reference_host()),
+       group_id integer NOT NULL -- TODO where names are actually uris check that the group name matches
+);
+
+CREATE FUNCTION no_update_expected_bound_name() RETURNS trigger as $$
+       BEGIN
+           IF OLD.expected_bound_name IS NOT NULL AND OLD.expected_bound_name <> OLD.name THEN
+              RAISE exception 'Cannot change the expected bound name for a reference name!';
+              -- if you need to do this then use use the name ordering functionality
+              -- can change away from case where name matches ebn
+           END IF;
+           RETURN NULL;
+       END;
+$$ language plpgsql;
+
+CREATE TRIGGER no_update_expected_bound_name BEFORE UPDATE
+       ON reference_names FOR EACH ROW EXECUTE PROCEDURE no_update_expected_bound_name();
+
+CREATE FUNCTION user_reference_name() RETURNS trigger AS $$
+       BEGIN
+           INSERT INTO reference_names (name, group_id)
+                  -- this tracks the source that is the user's interlex
+                  -- contributions that have no additional artifact
+                  -- uploads are tied to bound name of the file
+                  -- and can be tracked and computed separately
+                  SELECT 'https://' || reference_host() || '/' || groupname || '/contributions', id
+                  FROM groups WHERE id = NEW.id;
+           RETURN NULL;
+       END;
+$$ language plpgsql;
+
+CREATE TRIGGER user_reference_name AFTER INSERT
+       ON users FOR EACH ROW EXECUTE PROCEDURE user_reference_name();
+
+-- graph_subsets, graphs, subgraphs... HRM content_sets, ie the actual ontology content
+
+-- note to self: qualified and unqualified imports, all named based imports without identity are unqualified
+-- we distinguish here because names 'point' to more than one type of thing that we want to be able to track the history of
+CREATE TYPE named_type AS ENUM ('serialization',
+                                'local_naming_conventions',  -- aka curies
+                                -- bound to bound_name incidentally so they are ranked higher
+                                'bound_name',  -- just use the string itself? might be more space efficient to hash? we will want to be able to
+                                         --   create name equivalences e.g. for mapping user iris to interlex iris?
+                                         --   but probably not using the qualifier system... probably...
+                                         --   nope, needed to track external renamings ?? we will find a use
+                                         --   nope again, names don't have reference names, that would be redundant
+                                         --   triple nope, names as defined in the names table sure do map to reference_names... but they might map to more than one, so quad nope
+                                         --   quint nope says bound_name is in 1:1 with reference_name and need to be able to reconstruct the actual name
+                                -- 'source',  -- (name, metadata_identity, data_identity) but could be any subset of those, and we can reconstruct using the load data
+                                'metadata',  -- pairs, includes the type
+                                'data',  -- triples s p o type + lang
+                                'subgraph' -- FIXME how is this any different from data? unnamed subgraphs
+                                -- singletion identified by hash on triple set  these are not named, that is the whole point, so they don't need to be here
+                                -- 'name-metadata' -- (name, metadata_identity)
+                                -- 'name-data' -- (name, data_identity)
+                                -- 'source',  -- can be computed if we need it
+                                );
+
+CREATE TABLE identities(
+       identity bytea PRIMARY KEY,
+       triples_count integer NOT NULL, -- ok to be zero for bound_name
+       reference_name uri,
+       type named_type NOT NULL,
+       CHECK (reference_name IS NULL AND type = 'subgraph' OR type <> 'subgraph'),
+       -- FIXME serialization from interlex needs to differ from triples?? name
+       -- also n3 format might collide?
+       CONSTRAINT fk__identities__reference_name__reference_names
+                  FOREIGN key (reference_name)
+                  REFERENCES reference_names (name) match simple
+       -- this includes metadata identities because the keys will never collide unless they do, in which case we want to know
+       -- anything that is co-named here can go in, the process of calculating the identity is effectively identical even though
+       -- the code is different, it is just the data - the name
+       -- we just have to create an additional qualifier off of the source which has a parallel history per user
+       -- and then we link the two in another table?! no, the problem is determining the correct previous qualifier
+       -- this could include any hashing identities including unparsed bytes?
+);
+
+CREATE INDEX identities_identity_index ON identities (identity);
+
 CREATE TYPE source_process AS ENUM ('FileFromIRI',  -- transitive closure be implemented using these on each file
-                                    'FileFromPOST', -- we do not allow untrackable uploads use /<user>/ontologies
+                                    'FileFromPOST', -- we do not allow untrackable uploads use /<user>/ontologies /user/upload worst case
                                     'FileFromVCS',  -- this requires InterLex to clone the repo... which is ok I guess requires admin
                                     'NonOntologyFileFromVCS',
 
@@ -39,314 +195,59 @@ CREATE TYPE source_process AS ENUM ('FileFromIRI',  -- transitive closure be imp
                                     'InterLex'
                                     );
 
--- NOTE 'names' referred to here are 'graph names' or 'triple set names'
-/* -- EXPLAINIATION
-   incompatible defs
-   source = data + bound name + metadata
-   source - data = metadata
-   source - name = ??
-   source - metadata = ??
-   source = data
-   source = metadata + data
-   source = metadata + data + name
 
-   THIS IS NOT CORRECT
-   name and metadata are NOT subsets of data in more precise nomenclature
-   The system developed here is based on invariance under an identity function
-   to changes in defined/distinct subsets of data.
+CREATE TYPE identity_relation AS ENUM ('hasPart', 'dereferencedTo'); -- , 'named', 'pointedTo', 'resolvedTo');
+-- dereferencedTo history can be reconstructed for names -> serialization without a bound name
 
-   Ident(name1) -> 0
-   Ident(name2) -> 0
-   =>
-   name1 = name2
-   
-   Ident(data1) -> 1
-   Ident(data2) -> 1
-   =>
-   data1 = data2
-
-   =>
-   data1 != name1
-   
-   Ident(data3) -> 0
-   =>
-   data3 = name1
-   
-   In this implementation the identity function is a hash function, currently SHA256.
-   Names are any subset of data that are unique for a given identity function.
-   In this context case sensitive string matching or bytestring equality also work.
-   
-   Invariants are then considered only over 2 levels, data and its complement.
-   We call the invariant data a name and the part that can vary data.
-   
-   Names are always invariant to changes in data because by definition they are the thing that does not change.
-   The function Data is completely unconstrained when applied to a name.
-   Data(data1) -> data2
-   data1 = data2
-   data1 != data2
-
-   Thus it is no surprise that
-   Data(name1) -> data1
-   Data(name2) -> data2
-   data1 != data2
-   happens routinely
-
-   Pointing of names to data means that the identity of the data is invariant to changes in the name.
-   Name(data) -> name1
-   Name(data) -> name2
-   =/> name1 = name2
-   
-   Name(data) -> name1
-   Name(data) -> name2
-   Name(data) -> name3
-   name1 != name2 != name3
-
-   Binding of names to data means that the name is embedded in the data
-   so that the data is no longer invariant to changes in the name.
-
-   BoundName(data) -> name1
-   BoundName(data) -> name2
-   name1 != name2
-   =>
-   data1 != data2
-   
-   BoundName(data1) -> name1
-   BoundName(data2) -> name2
-   name1 != name2
-
-   Means that I can implement
-
-   Data(name) -> data
-   BoundName(data) = name
-   Data(name2) -> data
-   BoundName(data) != name2
-
-   and solves the Name(data) issue
-
-
-   However there is one additional criteria that is required.
-   There must be a function that can distinguish between changes in
-   the identity of the data where the name has not change and
-   changes in the identity of the data where the name has changed.
-   
-   data1 != data2
-   NameChanged(data1, data2) -> True
-   =>
-   BoundName(data1) != BoundName(data2)
-
-   data1 != data2
-   NameChanged(data1, data2) -> False
-   =>
-   BoundName(data1) = BoundName(data2)
-
-   The NameChanged function actually gives us something more powerful.
-   It gives us bound metadata* (hencforth referred to just as metadata).
-   A bound name can be considered to be the minimal subset of the data
-   that has a useful identity function. This could be as complex as
-   urls that resolve differently or a simple as the first byte of a file.
-   The number of things that can be named using the first byte of a file
-   is quite small, so we usually pick identity functions that are a bit
-   larger.
-   
-   data1 != data2
-   BoundData(data1) = data3
-   BoundData(data2) = data4
-   data3 = data4
-   data3 != data4
-
-   SubsetChanged(data1, data2) -> True
-   SubsetChanged(data1, data2) -> False
-
-   The generalized SubsetChanged function implies that
-   there is some subset of the data that we can treat as
-   distinct from the data and that subset can have as many
-   subsets as our identity function can support.
-   
-   The trick is to use a common subset as a name.
-   We usually break this out into name, metadata, and data.
-   Where the name is a subset of both, and the metadata is
-   a subset of the data. We are then left with the 'real'
-   data that can change identity independent of the name
-   and the metadata without loosing its identity.
-
-   A bound name is the minimal subset of the data that satisfies the
-   desired Ident function and NameWithCorrectness(name) -> data
-
-   * Unbound metadata is not really a useful idea because technically
-   any other data bound to a name could be considered as metadata and
-   thus open to interpretation and convention.
-     
-   # backwards definitions
-   IdentName(name) -> 1
-   IdentName(name) -> 2
-   1 != 2
-   =>
-   {name | IdentName(name) -> 1} != {name | IdentName(name) -> 2}
-   shorthand name1 name2
-
-   DataIdent(data) -> 1
-   DataIdent(data) -> 2
-   1 != 2
-   => 
-   {data | IdentData(data) -> 1} != {data | IdentData(data) -> 2}
-   shorthand data1 data2
-   
-   IdentName does not have to be the same as IdentData, though they can be
-   
-   BoundName(data) => name
-   
-   Note: data and name can have the same type if 
-
-   NameChanged({data | IdentData(data) -> 1}, {data | IdentData(data) -> 2}) -> True
-   =>
-   BoundName({data | IdentData(data) -> 1}) != BoundName({data | IdentData(data) -> 2})
-   => 
-   name
-
-   NameChanged({data | IdentData(data) -> 1}, {data | IdentData(data) -> 2}) -> False
-   
-
-*/
-CREATE TABLE names(
-       -- any uri that has ever pointed to a bound name, the set of these is quite large
-       -- even those that no longer resolve but are bound names
-       -- NOTE that security/validity/trust is not managed at this level
-       -- it is managed at the level of qualifiers, anyone can claim to be uberon
-       -- the validity of the claim is orthogonal to the claim itself, these tables deal with the claims
-       -- the best way to identify invalid claims is the enumerate them an mark them as such
-       -- NOTE this table can be extended to track the current state of the resolution of a name
-       name uri PRIMARY KEY,
-       bound_name uri NOT NULL
+CREATE TABLE identity_relations(
+       s bytea NOT NULL,
+       p identity_relation,
+       o bytea NOT NULL,
+       CONSTRAINT pk__serialization_parts PRIMARY KEY (s, p, o),
+       CONSTRAINT fk__identity_relations__s__identities
+                  FOREIGN key (s)
+                  REFERENCES identities (identity) match simple,
+       CONSTRAINT fk__identity_relations__o__identities
+                  FOREIGN key (o)
+                  REFERENCES identities (identity) match simple
+       -- amusingly when serializing this table back to RDF it will be ident:serialization hasPart: ident:constituent as owl:NamedIndividuals
 );
-
-CREATE TABLE bound_names(
-       name uri PRIMARY KEY,
-       -- names explicitly occuring in conjuction with a set of triples
-);
-
-CREATE TABLE reference_names(
-       -- the set of interlex uris that we use internally to track all bound names
-       -- one or the other of these names SHALL be the bound name
-       -- note that I'm implementing this with uris, but really it could be anything
-       name uri PRIMARY KEY CHECK (uri_host(name) = reference_host()),  -- change this to match your system
-       bound_name uri UNIQUE,  -- default name, but can be updated to a single external external name
-       CHECK (uri_host(bound_name) = reference_host() AND bound_name = name OR uri_host(bound_name) <> reference_host()),
-       group_id integer NOT NULL -- TODO where names are actually uris check that the group name matches
-);
-
-CREATE FUNCTION user_reference_name() RETURNS trigger AS $$
-       BEGIN
-           INSERT INTO reference_names (name, group_id) VALUES
-                  -- this tracks the source that is the user's interlex
-                  -- contributions that have no additional artifact
-                  -- uploads are tied to bound name of the file
-                  -- and can be tracked and computed separately
-                  ('https://' || reference_host() || (SELECT groupname FROM groups WHERE id = NEW.id) || '/contributions'),
-                  NEW.id)
-           RETURN NULL;
-       END;
-$$ language plpgsql;
-
-CREATE TRIGGER user_reference_name AFTER INSERT ON users FOR EACH ROW EXECUTE PROCEDURE user_reference_name();
-
-CREATE TABLE metadata_identities(
-       -- hashes of owl:Ontology sections aka metadata identity naming doesn't quite make sense atm
-       identity bytea PRIMARY KEY,
-       -- the minimal value here is the name or the hash of the name + a type to distinguish it from
-       -- the data
-       -- minimal metadata in this case is thus identical the bound_name + type
-       bound_name uri NOT NULL
-);
-
-/*
-CREATE TABLE sources(
-       -- aka files NOT ontologies
-       -- sources do not tell you whether they are loading to or from, they are independent of that
-       -- they are the unresolved graph subset
-       id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-       owner_group_id integer NOT NULL,
-       interlex_source_path text NOT NULL, -- this is user + ontpath
-       external_source_iri uri UNIQUE, -- this is what should appear internally in source_metadata
-       -- CONSTRAINT pk__sources PRIMARY KEY (owner_group_id, interlex_source_path),
-       CONSTRAINT un__sources UNIQUE (owner_group_id, interlex_source_path),
-       CONSTRAINT fk__sources__owner_group_id__groups
-                  FOREIGN key (owner_group_id)
-                  REFERENCES groups (id) match simple
-);
-
--- TODO renaming?
-
-CREATE FUNCTION create_user_source() RETURNS trigger AS $$
-       BEGIN
-           INSERT INTO sources (owner_group_id, interlex_source_path) VALUES
-                  (NEW.id, '/interlex.ttl'); -- NOTE this is /<user>/interlex.ttl neet to be clear that this is not an ont path
-           RETURN NULL;
-       END;
-$$ language plpgsql;
-
-CREATE TRIGGER create_user_source AFTER INSERT ON users FOR EACH ROW EXECUTE PROCEDURE create_user_source();
-
-CREATE TABLE source_metadata(
-       source_id integer NOT NULL,
-       metadata_triples_hash bytea NOT NULL,
-       -- and suddenly self describing document structure makes sense
-);
-*/
-
--- graph_subsets, graphs, subgraphs... HRM content_sets, ie the actual ontology content
-/*
-CREATE TABLE source_triples(
-       -- BIG NOTE: triples included for hash computation should be split into into
-       -- those attached to an owl:Ontology typed subject and everything else
-       -- because the owl:Ontology section 'names' the rest of the graph but
-       -- the hash of the content should be invariant to changes in the name
-       -- they are literally the same
-       -- if there is not an owl:Ontology typed subject then the containing source
-       -- certain other rdf:type predicates may also fall into the metadata naming section
-       -- if changes to them do not affect the view...
-
-       source_triples_hash bytea PRIMARY KEY,
-       triples_count integer NOT NULL,
-       source_id integer NOT NULL,
-       CONSTRAINT fk__source_triples__source_id__sources
-                  FOREIGN key (source_id)
-                  REFERENCES sources (id) match simple
-);
-*/
-
-CREATE TABLE data_identities(
-       identity bytea PRIMARY KEY,
-       triples_count integer NOT NULL CHECK (triples_count > 0),
-       source_id integer NOT NULL,
-       CONSTRAINT fk__source_triples__source_id__sources
-                  FOREIGN key (source_id)
-                  REFERENCES sources (id) match simple
-);
-
-CREATE TABLE bound_name_()
 
 CREATE TABLE qualifiers(
-             -- qualifiers are source triple hashes with an ordering rule
-             -- but those orderings are also 'qualified' per group
-             -- with the note that source triples hashes can only have 
-             id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-             source_triples_hash,
-             previous_qualifier_id integer
-             -- CONSTRAINT pk__qualifiers PRIMARY KEY (source_triples_hash, group_id)
-)
-
-CREATE TABLE source_serialization(
-       -- prov
-       source_serialization_hash bytea PRIMARY KEY,
-       source_triples_hash bytea NOT NULL,
-       CONSTRAINT fk__source_ser__source_triples_hash__source_triples
-                  FOREIGN key (source_triples_hash)
-                  REFERENCES source_triples (source_triples_hash) match simple
-       -- group_id integer NOT NULL,
+       -- qualifiers are source triple hashes with an ordering rule
+       -- but those orderings are also 'qualified' per group
+       id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+       identity bytea NOT NULL,
+       group_id integer NOT NULL,
+       previous_qualifier_id integer,
+       -- CONSTRAINT pk__qualifiers PRIMARY KEY (data_identity, group_id)
+       CONSTRAINT fk__qualifiers_previous_qualifier_id
+                  FOREIGN key (previous_qualifier_id)
+                  REFERENCES qualifiers (id) match simple
 );
 
-CREATE TYPE transform_rule AS enum ('EquivClassIntersection', 'EquivClassUnion', 'RestrictionSome', 'RestrictionAll', 'List');
+-- TODO user explicitly included/excluded qualifiers (ie when they switch to closed world) needs to have datetime
 
+CREATE TYPE transform_rule AS ENUM ('EquivClassIntersection', 'EquivClassUnion', 'RestrictionSome', 'RestrictionAll', 'List');
+
+CREATE TABLE load_events(
+       -- NOTE: this is also the user edit log...
+       -- SELECT * FROM load_events AS e JOIN identity_relations AS rel JOIN identities AS i ON e.serialization_identity = rel.s AND rel.o = i.identity WHERE rel.p = 'hasPart';
+       -- gives the reference_names for the parts of a serialization, usually we go the other way
+       -- SELECT * FROM reference_names AS ref JOIN identity_relations AS rel JOIN load_events AS e ON ref.identity = rel.o AND rel.s = e.serialization_identity WHERE rel.p = 'hasPart' AND datetime < some_time;
+       id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+       serialization_identity bytea NOT NULL,
+       -- identity bytea NOT NULL,  -- TODO trigger check on data and metadata
+       group_id integer NOT NULL, -- from /<user>/path-to-reference-name
+       user_id integer NOT NULL, -- from the api key mapping
+       datetime timestamp DEFAULT CURRENT_TIMESTAMP,
+       CONSTRAINT un__load_events__ident_group_id UNIQUE (serialization_identity, group_id), -- possibly redundent?
+       CONSTRAINT fk__load_events__ident__identities
+                  FOREIGN KEY (serialization_identity)
+                  REFERENCES identities (identity)
+);
+
+/*
 CREATE TABLE load_processes(
        -- this is more for prov curiosity than real use right now
        id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -362,66 +263,29 @@ CREATE TABLE load_processes(
                   REFERENCES source_serialization (source_serialization_hash) match simple
        -- TODO more forieng keys here
 );
-
-CREATE TABLE old_qualifiers(
-       -- ordering of source_triples_hash for a given source id in time by group
-       -- there are some use cases where dissociation from temporal order may be useful
-       id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-       source_id integer NOT NULL,  -- can get this from the load_process_id, but may be tricky to validate previous_q_id...
-       load_process_id integer CHECK (load_process_id IS NOT NULL OR (load_process_id IS NULL AND equivalent_qualifier_id IS NOT NULL)),
-
-       group_id integer NOT NULL, -- redundant
-       datetime timestamp DEFAULT CURRENT_TIMESTAMP, -- this also here for speed to avoid dealing with joins? or we leave date out of lopr?
-       source_serialization_hash bytea NOT NULL,
-       source_triples_hash bytea, -- NOT NULL,
-       previous_qualifier_id integer NOT NULL CHECK (previous_qualifier_id <= id),  -- do we even need this anymore? no?
-       equivalent_qualifier_id integer,  -- useful for exact duplicate loads by different users and quick rollbacks
-
-       -- basically load process id + time, load processes are not sequential, but are treated as time invariant
-       -- this allows us to do REALLY fast rollbacks by simply adding an equivalent qulaifier id to the old version
-       -- and then setting previous qualifier as usual
-       -- source_triples_hash could go in for completeness
-       -- useful for just completely ignoring a set of changes and starting back from the past in terms of content
-       -- TODO need a check on previous qualifier_id to make sure its source_process_id matches
-       -- but that is a super advanced feature
-
-       CONSTRAINT fk__qualifiers__source_id__source_processes
-                  FOREIGN key (source_id)
-                  REFERENCES sources (id) match simple,
-       CONSTRAINT fk__qualifiers__source_serialization_hash__source_serialization
-                  FOREIGN key (source_serialization_hash)
-                  REFERENCES source_serialization (source_serialization_hash) match simple,
-       CONSTRAINT fk__qualifiers__load_process_id__load_processes
-                  FOREIGN key (load_process_id)
-                  REFERENCES load_processes (id) match simple,
-       -- CONSTRAINT fk__qualifiers__source_qualifier__qualifiers
-                  -- FOREIGN key (source_qualifier_id)
-                  -- REFERENCES qualifiers (id) match simple,
-       CONSTRAINT fk__qualifiers__previous_qualifier__qualifiers
-                  FOREIGN key (previous_qualifier_id)
-                  REFERENCES qualifiers (id) match simple
-);
+*/
 
 CREATE TABLE qualifiers_current(
-       source_id integer PRIMARY KEY,
+       identity bytea PRIMARY KEY,
        id integer NOT NULL,
        previous_ids integer[] NOT NULL,  -- no FK here, 'enforced' via population via trigger
        -- TODO CHECK qualifiers previous_qualifier_id = OLD.id aka previous_ids head? in trigger?
-       CONSTRAINT fk__qualifiers__source_id__source_processes
-                  FOREIGN key (source_id)
-                  REFERENCES sources (id) match simple,
+       CONSTRAINT fk__qualifiers__identity__identities
+                  FOREIGN key (identity)
+                  REFERENCES identities (identity) match simple,
        CONSTRAINT fk__qualifiers_current__id__qualifiers
                   FOREIGN key (id)
                   REFERENCES qualifiers (id) match simple
 );
 
 CREATE FUNCTION qualifiers_to_current() RETURNS trigger AS $$
+       -- TODO align on types
        BEGIN
-           IF NOT EXISTS (SELECT * FROM qualifiers_current AS qc WHERE qc.source_id = NEW.source_id) THEN
+           IF NOT EXISTS (SELECT * FROM qualifiers_current AS qc WHERE qc.identity = NEW.identity) THEN
               -- FIXME actually retrieve previous_qualifier_id
-              INSERT INTO qualifiers_current (source_id, id, previous_ids) VALUES (NEW.source_id, NEW.id, '{0}');
+              INSERT INTO qualifiers_current (identity, id, previous_ids) VALUES (NEW.identity, NEW.id, '{0}');
            ELSE
-              UPDATE qualifiers_current AS qc SET qc.id = NEW.id WHERE qc.source_id = NEW.source_id;
+              UPDATE qualifiers_current AS qc SET qc.id = NEW.id WHERE qc.identity = NEW.identity;
            END IF;
            RETURN NULL;
        END;
@@ -430,14 +294,15 @@ $$ language plpgsql;
 CREATE FUNCTION qualifiers_current_array() RETURNS trigger AS $$
        BEGIN
            UPDATE qualifiers_current as qc
-                  SET previous_ids = (NEW.source_id || NEW.previous_ids)
-                  WHERE qc.source_id = NEW.source_id;
+                  SET previous_ids = (NEW.identity || NEW.previous_ids)
+                  WHERE qc.identity = NEW.identity;
            -- TODO does NEW work for this and restrict to row automatically?
            RETURN NULL;
        END;
 $$ language plpgsql;
 
-CREATE TRIGGER qualifiers_to_current AFTER INSERT OR UPDATE ON qualifiers FOR EACH ROW EXECUTE PROCEDURE qualifiers_to_current();
+CREATE TRIGGER qualifiers_to_current AFTER INSERT OR UPDATE ON qualifiers
+       FOR EACH ROW EXECUTE PROCEDURE qualifiers_to_current();
 CREATE TRIGGER qualifiers_current_array AFTER INSERT ON qualifiers_current
        FOR EACH ROW EXECUTE PROCEDURE qualifiers_current_array();
 CREATE TRIGGER qualifiers_current_array_id_only AFTER UPDATE ON qualifiers_current
@@ -447,6 +312,7 @@ CREATE INDEX qualifiers_id_index ON qualifiers (id);
 
 -- the root qualifier the root for all new source process qualifiers
 
+/*  -- nooo? at least not for now?
 CREATE FUNCTION create_source_qualifier() RETURNS trigger AS $$
        -- creates the root for all source process qualifiers, is equivalent to itself since there is no load id
        -- TODO create group interlex source process -> create source_process qualifier
@@ -473,6 +339,7 @@ CREATE FUNCTION create_source_qualifier() RETURNS trigger AS $$
 $$ language plpgsql;
 
 CREATE TRIGGER create_source_qualifier AFTER INSERT ON sources FOR EACH ROW EXECUTE PROCEDURE create_source_qualifier();
+*/
 
 CREATE FUNCTION create_load_process_qualifier() RETURNS trigger AS $$  -- TODO should be source_triples_hash if anything
        DECLARE
@@ -510,7 +377,8 @@ CREATE TABLE triples(
        o_blank integer, -- this is internal for (s_blank p o_blank) and triples.id for (s, p, o_blank)
        datatype uri CHECK (o_lit IS NULL OR o_lit IS NOT NULL AND datatype IS NOT NULL),
        language varchar(10),
-       subgraph_hash bytea CHECK (s_blank IS NULL OR s_blank IS NOT NULL AND subgraph_hash IS NOT NULL),
+       subgraph_identity bytea CHECK (s_blank IS NULL OR
+       /*must use in data ident*/     s_blank IS NOT NULL AND subgraph_identity IS NOT NULL),
        CHECK ((s IS NOT NULL AND s_blank IS NULL) OR
               (s IS NULL AND s_blank IS NOT NULL)),
        CHECK ((o IS NOT NULL AND o_lit IS NULL AND o_blank IS NULL) OR
@@ -519,8 +387,11 @@ CREATE TABLE triples(
        CHECK (o_blank <> s_blank),
        CONSTRAINT un__triples__s_p_o UNIQUE (s, p, o),
        CONSTRAINT un__triples__s_p_o_lit UNIQUE (s, p, o_lit, datatype, language),
-       CONSTRAINT un__triples__s_p_o_blank UNIQUE (s, p, o_blank)
+       CONSTRAINT un__triples__s_p_o_blank UNIQUE (s, p, o_blank, subgraph_identity)
 );
+
+-- note diff at load time from the previous qualifier for the source?
+-- ON CONFLICT INSERT INTO temp table or something
 
 /*
 (9997 null 0 rdf:type           null null owl:Restriction null null ASDF87SDF7A6SD75A5)
