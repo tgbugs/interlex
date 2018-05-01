@@ -82,12 +82,6 @@ CREATE TABLE names(
        -- should not be a reference name?
 );
 
-CREATE TABLE bound_names(
-       name uri PRIMARY KEY
-       -- may be a name or a reference_name
-       -- names explicitly occuring in conjuction with a set of triples
-);
-
 CREATE TABLE reference_names(
        -- the set of interlex uris that we use internally to track all bound names
        -- one or the other of these names SHALL be the bound name
@@ -142,6 +136,7 @@ CREATE TRIGGER user_reference_name AFTER INSERT
 CREATE TYPE named_type AS ENUM ('serialization',
                                 'local_naming_conventions',  -- aka curies
                                 -- bound to bound_name incidentally so they are ranked higher
+                                -- FIXME hashing bound names for this is stupid
                                 'bound_name',  -- just use the string itself? might be more space efficient to hash? we will want to be able to
                                          --   create name equivalences e.g. for mapping user iris to interlex iris?
                                          --   but probably not using the qualifier system... probably...
@@ -379,18 +374,66 @@ CREATE TABLE triples(
        o_blank integer, -- this is internal for (s_blank p o_blank) and triples.id for (s, p, o_blank)
        datatype uri CHECK (o_lit IS NULL OR o_lit IS NOT NULL AND datatype IS NOT NULL),
        language varchar(10),
-       subgraph_identity bytea CHECK (s_blank IS NULL OR
-       /*must use in data ident*/     s_blank IS NOT NULL AND subgraph_identity IS NOT NULL),
+       subgraph_identity bytea,
        CHECK ((s IS NOT NULL AND s_blank IS NULL) OR
               (s IS NULL AND s_blank IS NOT NULL)),
        CHECK ((o IS NOT NULL AND o_lit IS NULL AND o_blank IS NULL) OR
               (o IS NULL AND o_lit IS NOT NULL AND o_blank IS NULL) OR
               (o IS NULL AND o_lit IS NULL AND o_blank IS NOT NULL)),
-       CHECK (o_blank <> s_blank),
-       CONSTRAINT un__triples__s_p_o UNIQUE (s, p, o),
-       CONSTRAINT un__triples__s_p_o_lit UNIQUE (s, p, o_lit, datatype, language),
-       CONSTRAINT un__triples__s_p_o_blank UNIQUE (s, p, o_blank, subgraph_identity)
+       CHECK (s_blank IS NULL OR
+              s_blank IS NOT NULL AND
+              subgraph_identity IS NOT NULL),
+       CHECK (o_blank IS NULL OR
+              o_blank IS NOT NULL AND
+              subgraph_identity IS NOT NULL),
+       CHECK (o_blank <> s_blank)
+       -- CONSTRAINT un__triples__s_p_o UNIQUE (s, p, o),
+       -- CONSTRAINT un__triples__s_p_o_lit UNIQUE (s, p, o_lit, datatype, language),
+       -- FIXME o_lib can be BIG, too big to
+       -- CONSTRAINT un__triples__s_p_o_blank UNIQUE (s, p, o_blank, subgraph_identity)
+       -- CONSTRAINT un__triples__s_blank_p_o_blank UNIQUE (s_blank, p, o_blank, subgraph_identity)
 );
+CREATE INDEX triples__s__index ON triples (s);
+
+CREATE INDEX triples__subgraph_identity__index
+       ON triples (subgraph_identity);
+
+CREATE UNIQUE INDEX un__triples__s_p_o_uri_hash
+       -- assume uri_hash is safe since it is based on
+       -- access/hash.h hash_any directly from the postgres sources
+       ON triples (uri_hash(s), uri_hash(p), uri_hash(o))
+       WHERE s IS NOT NULL AND o IS NOT NULL;
+
+CREATE UNIQUE INDEX un__triples__s_p_o_lit_md5
+       ON triples (uri_hash(s), uri_hash(p), uri_hash(datatype), md5(o_lit))
+       WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL;
+
+CREATE UNIQUE INDEX un__triples__s_p_o_lit_lang_md5
+       ON triples (uri_hash(s), uri_hash(p), uri_hash(datatype), md5(md5(o_lit) || md5(language)))
+       WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL;
+
+CREATE UNIQUE INDEX un__triples__s_blank_p_o_lit_md5
+       ON triples (s_blank, uri_hash(p), uri_hash(datatype), md5(o_lit), subgraph_identity)
+       -- this should be a VERY rare condition
+       WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL;
+
+CREATE UNIQUE INDEX un__triples__s_blank_p_o_lit_lang_md5
+       ON triples (s_blank, uri_hash(p), uri_hash(datatype), md5(md5(o_lit) || md5(language)), subgraph_identity)
+       -- this should be a VERY rare condition
+       WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL;
+
+CREATE UNIQUE INDEX un__triples__s_p_o_blank ON triples
+       (uri_hash(s), uri_hash(p), o_blank, subgraph_identity)
+       WHERE s IS NOT NULL AND o_lit IS NOT NULL;
+
+CREATE UNIQUE INDEX un__triples__s_blank_p_o_blank
+       ON triples (s_blank, uri_hash(p), o_blank, subgraph_identity)
+       WHERE s_blank IS NOT NULL AND o_blank IS NOT NULL;
+
+-- ALTER TABLE triples DROP CONSTRAINT un__triples__s_p_o_lit;
+-- CREATE UNIQUE INDEX un__triples_s_p_o_lit_md5 ON triples (s, p, md5(o_lit), datatype, language);
+-- ALTER TABLE triples ADD CONSTRAINT un__triples_s_p_o_lit UNIQUE USING INDEX un__triples_s_p_o_lit_md5;
+-- does not work, probably because md5(o_lit) but that is ok
 
 -- note diff at load time from the previous qualifier for the source?
 -- ON CONFLICT INSERT INTO temp table or something
