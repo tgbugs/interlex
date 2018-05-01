@@ -4,7 +4,10 @@
 CREATE sequence if NOT exists interlex_ids_seq;
 
 CREATE TABLE interlex_ids(
-       id char(7) PRIMARY key DEFAULT LPAD(NEXTVAL('interlex_ids_seq')::text, 7, '0')
+       -- these when used in http://uri.interlex.org/base/ilx_{id} are the reference ids for terms
+       -- they can however be mapped to more than one since they cannot (usually) be bound
+       id char(7) PRIMARY key DEFAULT LPAD(NEXTVAL('interlex_ids_seq')::text, 7, '0'),
+       CHECK (id ~ '[0-9]{7}')
 );
 
 CREATE TABLE existing_iris(
@@ -375,6 +378,16 @@ CREATE TABLE triples(
        datatype uri CHECK (o_lit IS NULL OR o_lit IS NOT NULL AND datatype IS NOT NULL),
        language varchar(10),
        subgraph_identity bytea,
+       CHECK (uri_host(s) <> reference_host() OR
+              uri_host(s) = reference_host() AND
+              uri_path_array(s)[2] !~* 'ilx_' OR
+              uri_host(s) = reference_host() AND
+              -- TODO we can't check that the id is actually in the database without a trigger
+              -- TODO also prevent users from creating ilx_ fragments in /uris/
+              -- only base may have ilx ids, all the rest are by construction from qualifiers
+              -- FIXME un hardcode 'base' and 'ilx_'
+              uri_path_array(s)[1] = 'base' AND
+              uri_path_array(s)[2] ~* 'ilx_'),
        CHECK ((s IS NOT NULL AND s_blank IS NULL) OR
               (s IS NULL AND s_blank IS NOT NULL)),
        CHECK ((o IS NOT NULL AND o_lit IS NULL AND o_blank IS NULL) OR
@@ -429,6 +442,8 @@ CREATE UNIQUE INDEX un__triples__s_p_o_blank ON triples
 CREATE UNIQUE INDEX un__triples__s_blank_p_o_blank
        ON triples (s_blank, uri_hash(p), o_blank, subgraph_identity)
        WHERE s_blank IS NOT NULL AND o_blank IS NOT NULL;
+
+CREATE INDEX search_index ON triples USING GIN (to_tsvector('english', o_lit)) WHERE o_lit IS NOT NULL;
 
 -- ALTER TABLE triples DROP CONSTRAINT un__triples__s_p_o_lit;
 -- CREATE UNIQUE INDEX un__triples_s_p_o_lit_md5 ON triples (s, p, md5(o_lit), datatype, language);
