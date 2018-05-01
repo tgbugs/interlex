@@ -22,3 +22,15 @@ def hasErrors(*error_types):
                 return e.external_return
         return wrapped
     return decorator
+
+def bigError(method):
+    @wraps(method)
+    def wrapped(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except BaseException as e:
+            if hasattr(e, 'orig'):
+                raise e.orig
+            else:
+                raise e
+    return wraps

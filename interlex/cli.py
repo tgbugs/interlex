@@ -27,7 +27,8 @@ Options:
 from urllib.parse import urlparse
 import requests
 from pyontutils.core import PREFIXES as uPREFIXES
-from interlex.core import printD, interlex_load
+from interlex.core import printD, InterLexLoad
+from IPython import embed
 
 port_api = 8500
 port_uri = 8505
@@ -70,7 +71,20 @@ def main():
             printD(resp.text)
 
     elif args['load']:
-        interlex_load()
+        from flask_sqlalchemy import SQLAlchemy
+        from interlex.uri import run_uri
+        from interlex.load import TripleLoader
+        app = run_uri()
+        db = SQLAlchemy(app)
+        il = InterLexLoad()
+        il.existing_ids()
+        try: il.triples()
+        except ValueError as e: pass
+        il.ids()
+        ltl = type('TripleLoader', (TripleLoader,), {})
+        loader = ltl(db.session)
+        # il.load(loader)  # do this one yourself
+        embed()
 
     elif args['dbsetup']:
         #dburi = dbUri()

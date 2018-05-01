@@ -1,7 +1,6 @@
 #!/usr/bin/env python3.6
 
 import sys
-import json
 import socket
 from pathlib import Path, PurePath
 from tempfile import gettempdir
@@ -20,8 +19,8 @@ from pyontutils.config import devconfig
 from pyontutils.utils import TermColors as tc
 from pyontutils.core import PREFIXES as uPREFIXES, rdf, rdfs, owl, definition
 from pyontutils.core import yield_recursive
-from pyontutils.ontutils import url_blaster
 from pyontutils.ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
+from interlex.exc import bigError
 from IPython import embed
 
 try:
@@ -80,6 +79,7 @@ def makeParamsValues(values, constants=tuple()):
                 for name, value in zip(names, values)}
     return values_template, params
 
+
 class FakeSession:
     def __init__(self):
         self._return_value = None
@@ -106,119 +106,172 @@ class FakeSession:
     def rollback(self):
         printD('Fake rollback')
 
+
 # get interlex
-def interlex_load():
-    from pyontutils.utils import mysql_conn_helper
-    DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'
-    if socket.gethostname() != 'orpheus':
-        config = mysql_conn_helper('localhost', 'nif_eelg', 'nif_eelg_secure', 33060)  # see .ssh/config
-    else:
-        config = mysql_conn_helper('nif-mysql.crbs.ucsd.edu', 'nif_eelg', 'nif_eelg_secure')
-    engine = create_engine(DB_URI.format(**config), echo=True)
-    config = None
-    del(config)
-    insp = inspect(engine)
-
-    #ilxq = ('SELECT * FROM term_existing_ids as teid '
-            #'JOIN terms as t ON t.id = teid.tid '
-            #'WHERE t.type != "cde"')
-    header_object_properties = [d['name'] for d in insp.get_columns('term_relationships')]
-    header_subClassOf = [d['name'] for d in insp.get_columns('term_superclasses')]
-    header_terms = [d['name'] for d in insp.get_columns('terms')]
-    queries = dict(
-        terms = 'SELECT * from terms WHERE type != "cde"',
-        subClassOf = 'SELECT * from term_superclasses',
-        object_properties = 'SELECT * from term_relationships',
-        annotation_properties = 'SELECT * from term_annotations limit 10000',  # not quite yet also slow
-        cde_ids = 'SELECT id, ilx FROM terms where type = "cde"',
-        )
-    data = {name:engine.execute(query).fetchall()
-            for name, query in queries.items()}
-    ilx_index = {}
-    id_type = {}
-    triples = []
-    type_to_owl = {'term':owl.Class,
-                   'cde':owl.Class,
-                'annotation':owl.AnnotationProperty,
-                'relationship':owl.ObjectProperty}
-
-    def addToIndex(id, ilx, class_):
-        if ilx not in ilx_index:
-            ilx_index[ilx] = []
-        ilx_index[ilx].append(id)
-        if id not in id_type:
-            id_type[id] = []
-        id_type[id].append(class_)
-
-    [addToIndex(row.id, row.ilx[4:], owl.Class) for row in data['cde_ids']]
-
-    bads = []
-    for row in data['terms']:
-        #id, ilx_with_prefix, _, _, _, _, label, definition, comment, type_
-        ilx = row.ilx[4:]
-        uri = f'http://uri.interlex.org/base/ilx_{ilx}'
-
-        try:
-            class_ = type_to_owl[row.type]
-        except KeyError as e:
-            bads.append(row)
-            # fixed this particular case with
-            # update terms set type = 'term' where id = 304434;
-            continue
-
-        triples.extend((
-            # TODO consider interlex internal? ilxi.label or something?
-            (uri, rdf.type, class_),
-            (uri, rdfs.label, rdflib.Literal(row.label)),
-            (uri, definition, row.definition),
-        ))
-        addToIndex(row.id, ilx, class_)
-
-    versions = {k:v for k, v in ilx_index.items() if len(v) > 1}  # where did our dupes go!?
-    tid_to_ilx = {v:k
-                for k, vs in ilx_index.items()
-                  for v in vs}
-
-    def baseUri(e):
-        return f'http://uri.interlex.org/base/ilx_{tid_to_ilx[e]}'
-
-    WTF = []
-    for row in data['object_properties']:
-        _, s_id, o_id, p_id, *rest = row
-        ids_triple = s_id, p_id, o_id
-        try:
-            t = tuple(baseUri(e) for e in ids_triple)
-            triples.append(t)
-        except KeyError as e:
-            WTF.append(row)
-
-    WTF2 = []
-    for row in data['subClassOf']:
-        _, s_id, o_id, *rest = row
-        try:
-            s, o = baseUri(s_id), baseUri(o_id)
-        except KeyError as e:
-            WTF2.append(row)
-            continue
-
-        s_type = id_type[s_id]
-        o_type = id_type[o_id]
-        assert s_type == o_type, f'types do not match! {s_type} {o_type}'
-        if s_type == owl.Class:
-            p = rdfs.subClassOf
+class InterLexLoad:
+    def __init__(self):
+        from pyontutils.utils import mysql_conn_helper
+        DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'
+        if socket.gethostname() != 'orpheus':
+            config = mysql_conn_helper('localhost', 'nif_eelg', 'nif_eelg_secure', 33060)  # see .ssh/config
         else:
-            p = rdfs.subPropertyOf
-        t = s, p, o
-        triples.append(t)
+            config = mysql_conn_helper('nif-mysql.crbs.ucsd.edu', 'nif_eelg', 'nif_eelg_secure')
+        self.engine = create_engine(DB_URI.format(**config), echo=True)
+        config = None
+        del(config)
+        self.insp = inspect(self.engine)
 
-    #engine.execute()
-    embed()
-    if bads or WTF or WTF2:
-        printD(bads[:10])
-        printD(WTF[:10])
-        printD(WTF2[:10])
-        raise ValueError('BADS HAVE ENTERED THE DATABASE AAAAAAAAAAAA')
-    return 'ok\n', 200
+    @bigError
+    def load(self, Loader):
+        loader = Loader('tgbugs', 'tgbugs', 'http://interlex.org/base/interlex')
+        loader.session.execute(self.ilx_sql, self.ilx_params)
+        loader.session.execute(self.eid_sql, self.eid_params)
+        loader.session.execute("setval('interlex_ids_sql', :current, TRUE)", dict(current=self.current))
+        loader._graph = rdflib.Graph()
+        [loader.graph.add(t) for t in self.triples]
+        name = 'http://toms.ilx.dump/TODO'
+        loader._serialization = repr((name, self.triples)).encode()
+        setup_ok = loader(name)
+        if setup_ok is not None:
+            raise LoadError(setup_ok)
+        
+        loader.load()
+
+    def ids(self):
+        rows = self.engine.execute('SELECT DISTINCT ilx FROM terms ORDER BY ilx ASC')
+        values = [(row.ilx[4:],) for row in rows]
+        vt, self.ilx_params = makeParamsValues(values)
+        self.ilx_sql = 'INSERT INTO interlex_ids VALUES ' + vt
+        self.current = int(values[-1][0].strip('0'))
+        printD(self.current)
+
+    def existing_ids(self):
+        insp, engine = self.insp, self.engine
+
+        terms = [c['name'] for c in insp.get_columns('terms')]
+        term_existing_ids = [c['name'] for c in insp.get_columns('term_existing_ids')]
+        header = term_existing_ids + terms
+
+        query = engine.execute('SELECT * FROM term_existing_ids as teid JOIN terms as t ON t.id = teid.tid WHERE t.type != "cde"')
+
+        #data = query.fetchall()
+        #cdata = list(zip(*data))
+
+        #def datal(head):
+            #return cdata[header.index(head)]
+
+        values = [(row.ilx[4:], row.iri) for row in query if row.ilx not in row.iri]
+        sql_base = 'INSERT INTO existing_iris (group_id, ilx_id, iri) VALUES '
+        values_template, params = makeParamsValues(values, constants=('idFromGroupname(:group)',))
+        params['group'] = 'base'
+        sql = sql_base + values_template
+        self.eid_sql = sql
+        self.eid_params = params
+        return sql, params
+
+    def triples(self):
+        insp, engine = self.insp, self.engine
+        #ilxq = ('SELECT * FROM term_existing_ids as teid '
+                #'JOIN terms as t ON t.id = teid.tid '
+                #'WHERE t.type != "cde"')
+        header_object_properties = [d['name'] for d in insp.get_columns('term_relationships')]
+        header_subClassOf = [d['name'] for d in insp.get_columns('term_superclasses')]
+        header_terms = [d['name'] for d in insp.get_columns('terms')]
+        queries = dict(
+            terms = 'SELECT * from terms WHERE type != "cde"',
+            subClassOf = 'SELECT * from term_superclasses',
+            object_properties = 'SELECT * from term_relationships',
+            annotation_properties = 'SELECT * from term_annotations limit 10000',  # not quite yet also slow
+            cde_ids = 'SELECT id, ilx FROM terms where type = "cde"',
+            )
+        data = {name:engine.execute(query).fetchall()
+                for name, query in queries.items()}
+        ilx_index = {}
+        id_type = {}
+        triples = []
+        type_to_owl = {'term':owl.Class,
+                    'cde':owl.Class,
+                    'annotation':owl.AnnotationProperty,
+                    'relationship':owl.ObjectProperty}
+
+        def addToIndex(id, ilx, class_):
+            if ilx not in ilx_index:
+                ilx_index[ilx] = []
+            ilx_index[ilx].append(id)
+            if id not in id_type:
+                id_type[id] = []
+            id_type[id].append(class_)
+
+        [addToIndex(row.id, row.ilx[4:], owl.Class) for row in data['cde_ids']]
+
+        bads = []
+        for row in data['terms']:
+            #id, ilx_with_prefix, _, _, _, _, label, definition, comment, type_
+            ilx = row.ilx[4:]
+            uri = f'http://uri.interlex.org/base/ilx_{ilx}'
+
+            try:
+                class_ = type_to_owl[row.type]
+            except KeyError as e:
+                bads.append(row)
+                # fixed this particular case with
+                # update terms set type = 'term' where id = 304434;
+                continue
+
+            triples.extend((
+                # TODO consider interlex internal? ilxi.label or something?
+                (uri, rdf.type, class_),
+                (uri, rdfs.label, rdflib.Literal(row.label)),
+                (uri, definition, row.definition),
+            ))
+            addToIndex(row.id, ilx, class_)
+
+        versions = {k:v for k, v in ilx_index.items() if len(v) > 1}  # where did our dupes go!?
+        tid_to_ilx = {v:k
+                    for k, vs in ilx_index.items()
+                    for v in vs}
+
+        def baseUri(e):
+            return f'http://uri.interlex.org/base/ilx_{tid_to_ilx[e]}'
+
+        WTF = []
+        for row in data['object_properties']:
+            _, s_id, o_id, p_id, *rest = row
+            ids_triple = s_id, p_id, o_id
+            try:
+                t = tuple(baseUri(e) for e in ids_triple)
+                triples.append(t)
+            except KeyError as e:
+                WTF.append(row)
+
+        WTF2 = []
+        for row in data['subClassOf']:
+            _, s_id, o_id, *rest = row
+            try:
+                s, o = baseUri(s_id), baseUri(o_id)
+            except KeyError as e:
+                WTF2.append(row)
+                continue
+
+            s_type = id_type[s_id]
+            o_type = id_type[o_id]
+            assert s_type == o_type, f'types do not match! {s_type} {o_type}'
+            if s_type == owl.Class:
+                p = rdfs.subClassOf
+            else:
+                p = rdfs.subPropertyOf
+            t = s, p, o
+            triples.append(t)
+
+        #engine.execute()
+        self.triples = triples
+        self.wat = bads, WTF, WTF2
+        if bads or WTF or WTF2:
+            printD(bads[:10])
+            printD(WTF[:10])
+            printD(WTF2[:10])
+            raise ValueError('BADS HAVE ENTERED THE DATABASE AAAAAAAAAAAA')
+        return triples
 
 def server_api(db=None, dburi=dbUri()):
     app = Flask('InterLex api server')
@@ -447,83 +500,12 @@ class RegexConverter(BaseConverter):
         super().__init__(url_map)
         self.regex = items[0]
 
-
-def makeTestRoutes(limit=1):
-    ilx_pattern, parent_child, node_methods = uriStructure()
-    users = 'base', 'origin', 'tgbugs'  # base redirects to default/curated ...
-    other_users = 'latest', 'curated', 'bob'
-    ilx_patterns = 'ilx_1234567', 'ilx_0090000'
-    words = 'isReadablePredicate', 'cookies'
-    versions = '1524344335', '2018-04-01'
-    filenames = 'brain', 'myOntology', 'your-ontology-123', '_yes_this_works'
-    extensions = 'ttl', 'owl', 'n3', 'xml', 'json'
-    filenames_extensions = tuple(f + '.' + e for f in filenames for e in extensions)
-    pics = 'GO', 'GO:', 'GO:123', 'http://purl.obolibrary.org/obo/GO_'
-    ont_paths = 'anatomy', 'anatomy/brain', 'anatomy/stomach', 'methods-core/versions/100'
-    uri_paths = ('mouse/labels', 'mouse/labels/', 'mouse/labels/1',
-                 'mouse/versions/1',
-                 'mouse/versions/1/',
-                 'mouse/versions/1/labels')
-    options = {
-        ilx_pattern:ilx_patterns,
-        '<user>':users,
-        '<other_user>':other_users,
-        '<other_user_diff>':other_users,
-        '<word>':words,
-        '<epoch_verstr_id>':versions,
-        '<epoch_verstr_ont>':versions,
-        '<filename>':filenames,
-        '<filename_terminal>':filenames,
-        '<filename>.<extension>':filenames_extensions,
-        '<filename_terminal>.<extension>':filenames_extensions,
-        '<prefix_iri_curie>':pics,
-        '<path:uri_path>':uri_paths,
-        '<path:ont_path>':ont_paths,
-    }
-    # make cartesian product of combinations
-    routes = make_paths(parent_child, options=options, limit=limit)
-    return routes
-
 def server_curies(db=None):
     app = Flask('InterLex curies server')
-    @app.route('/<curie>')
-    def curie(curie):
-        return 
+    @app.route('/<prefix_curie>')
+    def curie(prefix_curie):
+        return redirect('http://uri.interlex.org/base/curies/{prefix_curie}', 301)
     return app
-
-def test(server='localhost:8505'):
-    from load import FileFromFile
-
-    def test_routes():
-        routes = makeTestRoutes()
-        # TODO a way to mark expected failures
-        urls = [
-            'http://localhost:8505/tgbugs/curies/BIRNLEEX:796?local=true',
-            'http://localhost:8505/tgbugs/curies/BIRNLEX:796?local=true',
-            'http://localhost:8505/tgbugs/curies/BIRNLEEX:796',
-            'http://localhost:8505/tgbugs/curies/BIRNLEX:796',
-            ]
-        urls = [f'http://{server}{r}' for r in routes] + urls
-        printD(urls)
-        url_blaster(urls, 0)
-
-    def test_loader():
-        session = FakeSession()
-        fff = FileFromFile(session)
-        ttl = Path(devconfig.ontology_local_repo) / 'ttl'
-        names =  (ttl/'NIF-GrossAnatomy.ttl',
-                  #ttl/'NIF-Chemical.ttl',
-                  #ttl/'external'/'uberon.owl',  # FIXME to big for testing w/o pypy3
-                  #ttl/'external'/'uberon.ttl',
-                  #ttl/'generated'/'parcellation'/
-                  ttl/'generated'/'parcellation-artifacts.ttl',
-                  ttl/'nif.ttl',)
-        name = names[0]
-        for name in names[::-1]:
-            with fff as f:
-                f(name.as_posix())
-
-    test_loader()
 
 def run_api():
     return server_api(db=SQLAlchemy())

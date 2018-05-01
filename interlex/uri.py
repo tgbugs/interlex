@@ -1,6 +1,7 @@
 import os
+import json
 import rdflib
-from flask import Flask, request
+from flask import Flask, request, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from protcur.core import atag, htmldoc
 from protcur.server import table_style, details_style, render_table
@@ -33,11 +34,11 @@ def uriStructure():
         # TODO distinguish between ontology _files_ and 'ontologies' which are the import closure?
         # ya, identified vs unidentified imports, owl only supports unidentified imports
         '<path:ont_path>':     intermediate_filename,  # FIXME this would seem to only allow a single extension?
-        '<filename>':          ['version'],
+        '<filename>':          [None, 'version'],
         'version':             ['<epoch_verstr_ont>'],
-        '<epoch_verstr_ont>':  ['<filename_terminal>.<extension>'],
+        '<epoch_verstr_ont>':  ['<filename_terminal>', '<filename_terminal>.<extension>'],
         'curies':              [None, '<prefix_iri_curie>'],  # external onts can be referenced from here...
-        'uris':                ['<path:uri_path>'],
+        'uris':                ['<path:uri_path>'],  # TODO no ilx_ check here as well as in database
         'own':                 ['<other_user>'],
         'diff':                ['<other_user_diff>'],
 
@@ -51,7 +52,9 @@ def uriStructure():
                     #'<prefix_iri_curie>':[],  only prefixes can be updated...?
                     ilx_pattern:['GET', 'PATCH'],
                     '<word>':['GET', 'PATCH'],
+                    '<filename>':['GET', 'POST'],
                     '<filename>.<extension>':['GET', 'POST'],
+                    '<filename_terminal>':['GET', 'POST'],
                     '<filename_terminal>.<extension>':['GET', 'POST'],
     }
     return ilx_pattern, parent_child, node_methods
@@ -71,7 +74,8 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
         reference_host = None
         def __init__(self):
             self.session = self.db.session
-            self.filefromiri = FileFromIRI(self.session)  # FIXME need a way to pass ref host?
+            effi = type('FileFromIRI', (FileFromIRI,), {})
+            self.FileFromIRI = effi(self.session)  # FIXME need a way to pass ref host?
 
         def reference_name(self, user, path):
             # need this for testing, in an ideal world we read from headers
@@ -303,7 +307,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
         # TODO enable POST here from users (via apikey) that are contributor or greater in a group admin is blocked from posting in this way
         # TODO curies from ontology files vs error on unknown? vs warn that curies were not added << last option best, warn that they were not added
         # TODO HEAD -> return owl:Ontology section
-        def ontologies(self, user, filename, extension, ont_path=''):
+        def ontologies(self, user, filename, extension=None, ont_path=''):
             # on POST for new file check to make sure that that the ontology iri matches the post endpoint
             # response needs to include warnings about any parts of the file that could not be lifted to interlex
             # TODO for ?iri=external-iri validate that uri_host(external-iri) and /ontologies/... ... match
@@ -311,7 +315,8 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
             printD(user, filename, extension, ont_path)
             group = user  #  FIXME
             user = 'tgbugs'  # FIXME from api token decryption
-            match_path = os.path.join(ont_path, filename + '.' + extension)
+            extension = '.' + extension if extension else ''
+            match_path = os.path.join(ont_path, filename + extension)
             path = os.path.join('ontologies', match_path)  # FIXME get middle from request?
             #request_reference_name = request.headers['']
             reference_name = self.reference_name(group, path)
@@ -347,13 +352,18 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                             # FIXME this should be handled elsewhere for user
                             if match_path not in name and match_path not in expected_bound_name:
                                 return f'No common name between {expected_bound_name} and {reference_name}', 400
-                            with self.filefromiri as f:
-                                # TODO get actual user from the api key
-                                #print()
-                                out = f(group, user, reference_name, name, expected_bound_name)
-                                # out = f(user, filepath, ontology_iri, new=True)
-                                #embed()
-                                printD('should be done running?')
+
+                            loader = self.FileFromIRI(group, user, reference_name, self.reference_host)
+                            setup_ok = loader(name, expected_bound_name)
+                            if setup_ok is not None:
+                                return setup_ok
+
+                            out = loader.load()
+
+                            # TODO get actual user from the api key
+                            # out = f(user, filepath, ontology_iri, new=True)
+                            #embed()
+                            printD('should be done running?')
 
                             # TODO return loading stats etc
                             return out
@@ -371,7 +381,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
             return request.path + '\n'
 
         def ontologies_version(self, user, filename, epoch_verstr_ont,
-                               filename_terminal, extension, ont_path=''):
+                               filename_terminal, extension=None, ont_path=''):
             if filename != filename_terminal:
                 return abort(404)
             else:
@@ -417,10 +427,10 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
 
         def curies(self, user, other_user, prefix_iri_curie):
             return request.path
-        def ontologies(self, user, other_user, filename, extension, ont_path=''):
+        def ontologies(self, user, other_user, filename, extension=None, ont_path=''):
             return request.path
         def ontologies_version(self, user, other_user, filename, epoch_verstr_ont,
-                               filename_terminal, extension, ont_path=''):
+                               filename_terminal, extension=None, ont_path=''):
             if filename != filename_terminal:
                 return abort(404)
             else:
@@ -461,10 +471,10 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
 
         def curies(self, user, other_user_diff, prefix_iri_curie):
             return request.path
-        def ontologies(self, user, other_user_diff, filename, extension, ont_path=''):
+        def ontologies(self, user, other_user_diff, filename, extension=None, ont_path=''):
             return request.path
         def ontologies_version(self, user, other_user_diff, filename,
-                               epoch_verstr_ont, filename_terminal, extension, ont_path=''):
+                               epoch_verstr_ont, filename_terminal, extension=None, ont_path=''):
             if filename != filename_terminal:
                 return abort(404)
             else:
@@ -499,7 +509,6 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
     @app.before_first_request
     def runonce():
         # FIXME this is a reasonably safe way to make sure that we have a db connection
-        TripleLoader.reference_host = next(db.session.execute('SELECT reference_host()'))[0]
         Endpoints.reference_host = next(db.session.execute('SELECT reference_host()'))[0]
         printD(Endpoints.reference_host)
 

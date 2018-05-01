@@ -11,7 +11,6 @@ from interlex.core import printD, permissions_sql, bnodes, makeParamsValues
 from IPython import embed
 
 class TripleLoader:
-    reference_host = None
     _cache_names = set() # FIXME make sure that reference hosts don't get crossed up
     _cache_identities = set()
     formats = {
@@ -19,7 +18,18 @@ class TripleLoader:
         'owl':'xml',
         'n3':'n3',
     }
-    def __init__(self, session, cypher=hashlib.sha256, encoding='utf-8'):
+    def __new__(cls, session, cypher=hashlib.sha256, encoding='utf-8'):
+        cls.process_type = cls.__name__
+        cls.session = session
+        cls.execute = session.execute
+        cls.cypher = cypher
+        cls.encoding = encoding
+        cls.orderInvariantHash = OrderInvariantHash(cypher, encoding)
+        cls.__new__ = super().__new__
+        return cls
+
+    def _old__init__(self, session, cypher=hashlib.sha256, encoding='utf-8'):
+        # FIXME this stuff should go in new
         self.process_type = self.__class__.__name__
         self.session = session
         self.execute = session.execute
@@ -30,16 +40,34 @@ class TripleLoader:
         #self.reference_host = next(self.session.execute('SELECT reference_host()'))
         #printD(self.reference_host)
 
-    def __enter__(self, exit=False):
-        if not exit:
-            printD('entering')
-
-        self.group = None
-        self.user = None
-
-        self._name = None
+    def __init__(self, group, user, reference_name, reference_host):
+        self.preinit()
+        printD(group, user, reference_name, reference_host)
+        self.reference_host = reference_host
         self._reference_name = None
         self._reference_name_in_db = None
+        self.group = group
+        self.user = user
+
+        # FIXME reference names should NOT have file type extensions
+        # we can have a default file type and resolve types
+        # interlex is not a flat file, it will resolve types
+        # but it does not have to use then in identifiers so it does not
+
+        """  # TODO for the future, distinguish between the external bound and internal
+        ext = PurePath(reference_name).suffix
+        if ext:
+            reference_name = reference_name.rstrip(ext)
+        """
+
+            #self.extension = ext[1:]
+            # extension is set by name not reference_name
+            # we might want to track this for stats reasons...
+            
+        self.reference_name = reference_name
+
+    def preinit(self):
+        self._name = None
         self._expected_bound_name = None  # TODO multiple bound names can occure eg via versionIRI?
         self._transaction_cache_names = set()
 
@@ -77,18 +105,19 @@ class TripleLoader:
 
         self._safe = True
 
-        # graph load (usually)
+    def __enter__(self):
+        self.preinit()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         # TODO rollback on >= 400? no, should all be handled locally
-        self.__enter__(True)  # the paranoia is real
+        self.__enter__()  # the paranoia is real
         self._safe = False
         printD('exit')
 
     @hasErrors(LoadError)
-    def __call__(self, group, user, reference_name, name, expected_bound_name=None):
-        printD(group, user, reference_name, name, expected_bound_name)
+    def __call__(self, name, expected_bound_name=None):
+        printD(name, expected_bound_name)
         # FIXME this is a synchronous interface
         # if we want it to be async it will require
         # more work
@@ -96,14 +125,19 @@ class TripleLoader:
         # followed by a second post asking to ingest from remote?
         # how do we deal with the issue of names?
         if not self._safe:
-            raise RuntimeError(f'{self} is not in safe mode, did you call it using \'with\'?')
-        self.group = group
-        self.user = user
+            raise RuntimeError(f'{self} is not in safe mode, '
+                               'did you call it using \'with\'?'
+                               'Alternately, run preinit() to clear latent state.')
+        else:
+            self._safe = False
 
         # expected_bound_name should only be supplied if it differes from name for the inital load
         # self.name = name  # TODO this is not quite ready yet, loading from arbitrary uris/filenames needs one more level
 
-        if name == reference_name:
+        if name == self.reference_name:
+            # FIXME this is if the iri is give, obviously the bound name will
+            # match and everything should work, do need to figure out how to
+            # handle this case properly though... name = None and _serialization already set
             # NOTE for direct user contributions name should be their orcid
             # or the interface/api endpoint they were using if we want to track that?
             return 'you cannot load an ontology into itself from itself unless you are interlex itself', 400
@@ -116,10 +150,8 @@ class TripleLoader:
             expected_bound_name = name
 
         self.name = name
-        self.reference_name = reference_name
         # in any case where this function is called name should not equal reference name
         # it should either be a filename or something like that
-
 
         def ___n(value): return value is None
         def NOTN(value): return value is not None
@@ -180,6 +212,7 @@ class TripleLoader:
         if stop is not None:
             return stop
         
+    def load(self):
         output = ''
         try:
             output += self.load_event()
@@ -224,7 +257,7 @@ class TripleLoader:
     @name.setter
     def name(self, value):
         # TODO
-        if value not in self._cache_names:
+        if value not in self._cache_names or self._transaction_cache_names:
             try:
                 sql = 'INSERT INTO names VALUES (:name)'
                 self.session.execute(sql, dict(name=value))
@@ -691,9 +724,12 @@ class TripleLoader:
         self._free_subgraph_identities = free_subgraph_identities
         return
 
-    def make_load_records(self, mi, di):
+    def make_load_records(self, ci, mi, di):
         # TODO resursive on type?
         # s, s_blank, p, o, o_lit, datatype, language, subgraph_identity
+        if not ci:
+            ct = c, ccols = [], ''
+            yield ct,
         if not mi:
             mt = m, mcols = [], 's, p, o'
             mlt = ml, mlcols = [], 's, p, o_lit, datatype, language'
@@ -748,6 +784,7 @@ class TripleLoader:
         # TODO always insert metadata first so that in-database integrity checks
         # can run afterward and verify roundtrip identity
         #ni = self.ident_exists(self.bound_name_identity)  # FIXME usually a waste
+        ci = self.ident_exists(self.curies_identity)
         mi = self.ident_exists(self.metadata_identity)
         di = self.ident_exists(self.data_identity)
         sgi = {k:v in self._cache_identities for k, v in self.subgraph_identities.items()}
@@ -798,7 +835,7 @@ class TripleLoader:
         sql_base = 'INSERT INTO triples'
         suffix = ' ON CONFLICT DO NOTHING'
         sqls = []
-        for sections in self.make_load_records(mi, di):
+        for sections in self.make_load_records(ci, mi, di):
             for values, sql_columns in sections:
                 if values:
                     values_template, params = makeParamsValues(values)
@@ -826,18 +863,20 @@ class FileFromBase(TripleLoader):
         return self._extension
 
 class FileFromFile(FileFromBase):
-    def __call__(self, name, group='tgbugs', user='tgbugs', reference_name=None):
-        self.reference_host = 'uri.interlex.org'
-        self.path = Path(name).resolve().absolute()
-        name = self.path.as_uri()
+    def __init__(self, group='tgbugs', user='tgbugs',
+                 reference_name=None, reference_host='uri.interlex.org'):
         if reference_name is None:
             # FIXME the way this is implemented will be one way to check to make
             # sure that users/groups match the reference_name?
             reference_name = f'http://uri.interlex.org/{group}/upload/test'
-        out = super().__call__(group, user, reference_name, name)
-        self.reference_host = None
+        super().__init__(group, user, reference_name, reference_host)
+
+    def __call__(self, name, expected_bound_name):
+        self.path = Path(name).resolve().absolute()
+        name = self.path.as_uri()
+        setup_ok = super().__call__(name, expected_bound_name)
         self.path = None  # avoid poluting the class namespace
-        return out
+        return setup_ok
 
     @property
     def serialization(self):
