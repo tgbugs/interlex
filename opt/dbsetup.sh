@@ -9,7 +9,7 @@ SQL="${ABS_PATH}/../sql/"
 RESOURCES="${ABS_PATH}/../resources/"
 
 if [ -z $1 ]; then
-    PORT=5423
+    PORT=5432
 else
     PORT=$1
 fi

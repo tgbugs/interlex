@@ -581,6 +581,7 @@ class TripleLoader:
         return self._identity_triple_count[identity]  # this should never key error
 
     def process_graph(self):
+        self.bound_name  # TODO what to do about graphs that don't have a bound name?
         printD('processing graph')
         dts = DeterministicTurtleSerializer(self.graph)
         gsortkey = dts._globalSortKey
@@ -731,8 +732,12 @@ class TripleLoader:
         # TODO resursive on type?
         # s, s_blank, p, o, o_lit, datatype, language, subgraph_identity
         if not ci:
-            ct = c, ccols = [], ''
+            ct = c, ccols, *_ = [], 'serialization_identity, curie_prefix, iri_prefix', (':ident',), {'ident':self.serialization_identity}
+            for curie_prefix, iri_prefix in self.curies:
+                c.append((curie_prefix, iri_prefix))
+
             yield ct,
+
         if not mi:
             mt = m, mcols = [], 's, p, o'
             mlt = ml, mlcols = [], 's, p, o_lit, datatype, language'
@@ -741,7 +746,9 @@ class TripleLoader:
                 if isinstance(o, rdflib.URIRef):
                     m.append((self.bound_name, p, str(o)))
                 else:
-                    ml.append((self.bound_name, p, str(o), str(o.datatype), o.language))
+                    o_lit = o
+                    datatype = str(o.datatype) if o.datatype is not None else o.datatype
+                    ml.append((self.bound_name, p, str(o_lit), datatype, o.language))
 
             mbt = mb, mbcols = [], 's, p, o_blank, subgraph_identity'
             for p, subgraph_identity in self.metadata_unnamed:
@@ -758,7 +765,9 @@ class TripleLoader:
                 if isinstance(o, rdflib.URIRef):
                     d.append((s, p, str(o)))
                 else:
-                    dl.append((s, p, str(o), str(o.datatype), o.language))
+                    o_lit = o
+                    datatype = str(o.datatype) if o.datatype is not None else o.datatype
+                    dl.append((s, p, str(o_lit), datatype, o.language))
 
             dbt = db, dbcols = [], 's, p, o_blank, subgraph_identity'
             for s, p, subgraph_identity in self.data_unnamed:
@@ -774,7 +783,9 @@ class TripleLoader:
                     elif isinstance(o, int):
                         sg.append((s, p, None, None, None, None, o, subgraph_identity))
                     else:  # FIXME not clear we ever have these Literal cases...
-                        sg.append((s, p, None, str(o), str(o.datatype), o.language, None, subgraph_identity))
+                        o_lit = o
+                        datatype = str(o.datatype) if o.datatype is not None else o.datatype
+                        sg.append((s, p, None, str(o_lit), datatype, o.language, None, subgraph_identity))
 
             yield dt, dlt, dbt, sgt
  
@@ -838,11 +849,27 @@ class TripleLoader:
         sql_base = 'INSERT INTO triples'
         suffix = ' ON CONFLICT DO NOTHING'
         sqls = []
+
         for sections in self.make_load_records(ci, mi, di):
-            for values, sql_columns in sections:
+            for values, sql_columns, *constParams in sections:
+                if constParams:
+                    printD(constParams)
+                    constants, const_params = constParams
+                else:
+                    constants, params = tuple(), {}
+
                 if values:
-                    values_template, params = makeParamsValues(values)
-                    sql = sql_base + f' ({sql_columns}) VALUES ' + values_template + suffix
+                    values_template, params = makeParamsValues(values, constants=constants)
+                    params.update(const_params)
+                    if constants:
+                        # FIXME HACK resolve how we are going to represent and store curies
+                        # ie as (/<user>/curies iri_prefix curie) in triples or elsewhere
+                        # with a /<user>/curies rdf:type ilxr:Curies
+                        # or a /identities/curies or some such
+                        base = 'INSERT INTO curies '
+                        sql = base + f' ({sql_columns}) VALUES ' + values_template
+                    else:
+                        sql = sql_base + f' ({sql_columns}) VALUES ' + values_template + suffix
                     self.execute(sql, params)
 
         return 'TODO\n'

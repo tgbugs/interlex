@@ -124,6 +124,7 @@ class InterLexLoad:
         config = None
         del(config)
         self.insp = inspect(self.engine)
+        self.graph = None
 
     @bigError
     def load(self):
@@ -132,11 +133,15 @@ class InterLexLoad:
         loader.session.execute(self.eid_sql, self.eid_params)
         # FIXME this probably requires admin permissions
         self.admin_exec(f"SELECT setval('interlex_ids_seq', {self.current}, TRUE)")  # DANGERZONE
-        self.loader._graph = rdflib.Graph()
-        mg = makeGraph('', graph=self.loader.graph)  # FIXME I swear I fixed this already
-        [mg.add_trip(*t) for t in self.triples]
+        if self.graph is None:
+            self.graph = rdflib.Graph()
+            self.loader._graph
+            mg = makeGraph('', graph=self.graph)  # FIXME I swear I fixed this already
+            [mg.add_trip(*t) for t in self.triples]
+        self.loader._graph = self.graph
         name = 'http://toms.ilx.dump/TODO'
         self.loader._bound_name = name
+        self.loader.expected_bound_name = name
         self.loader._serialization = repr((name, self.triples)).encode()
         setup_ok = self.loader(name)
 
@@ -144,6 +149,7 @@ class InterLexLoad:
             raise LoadError(setup_ok)
         
         self.loader.load()
+        printD('Yay!')
 
     def ids(self):
         rows = self.engine.execute('SELECT DISTINCT ilx FROM terms ORDER BY ilx ASC')
@@ -258,6 +264,8 @@ class InterLexLoad:
                     for k, vs in ilx_index.items()
                     for v in vs}
 
+        multi_type = {tid_to_ilx[id]:types for id, types in id_type.items() if len(types) > 1}
+
         def baseUri(e):
             return f'http://uri.interlex.org/base/ilx_{tid_to_ilx[e]}'
 
@@ -280,9 +288,11 @@ class InterLexLoad:
                 WTF2.append(row)
                 continue
 
-            s_type = id_type[s_id]
-            o_type = id_type[o_id]
+            # TODO for multi type properties we only need the overlap
+            s_type = id_type[s_id][0]
+            o_type = id_type[o_id][0]
             assert s_type == o_type, f'types do not match! {s_type} {o_type}'
+            # FIXME XXX it was possible to insert subPropertyOf on Classes :/ and the errors were silent
             if s_type == owl.Class:
                 p = rdfs.subClassOf
             else:
@@ -291,6 +301,7 @@ class InterLexLoad:
             triples.append(t)
 
         #engine.execute()
+        #embed()
         self.triples = triples
         self.wat = bads, WTF, WTF2
         if bads or WTF or WTF2:

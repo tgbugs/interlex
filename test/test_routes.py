@@ -40,7 +40,7 @@ def makeTestRoutes(limit=1):
     return routes
 
 class TestRoutes(unittest.TestCase):
-    server='localhost:8505'  # FIXME
+    host='localhost:8505'  # FIXME
     def test_routes(self):
         routes = makeTestRoutes()
         # TODO a way to mark expected failures
@@ -50,7 +50,10 @@ class TestRoutes(unittest.TestCase):
             'http://localhost:8505/tgbugs/curies/BIRNLEEX:796',
             'http://localhost:8505/tgbugs/curies/BIRNLEX:796',
             ]
-        urls = [f'http://{self.server}{r}' for r in routes] + urls
+        urls = [f'http://{self.host}{r}' for r in routes] + urls
         print(urls)
         url_blaster(urls, 0)
 
+    def test_stress(self):
+        urls = [f"https://{self.host}/tgbugs/ilx_{id:0>7}" for id in range(100000,105000)]
+        url_blaster(urls, 0, method='get')

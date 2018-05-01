@@ -375,8 +375,8 @@ CREATE TABLE triples(
        o uri,
        o_lit text,
        o_blank integer, -- this is internal for (s_blank p o_blank) and triples.id for (s, p, o_blank)
-       datatype uri CHECK (o_lit IS NULL OR o_lit IS NOT NULL AND datatype IS NOT NULL),
-       language varchar(10),
+       datatype uri,
+       language varchar(10), -- FIXME can we put these in the datatype column as just strings?
        subgraph_identity bytea,
        CHECK (uri_host(s) <> reference_host() OR
               uri_host(s) = reference_host() AND
@@ -393,6 +393,7 @@ CREATE TABLE triples(
        CHECK ((o IS NOT NULL AND o_lit IS NULL AND o_blank IS NULL) OR
               (o IS NULL AND o_lit IS NOT NULL AND o_blank IS NULL) OR
               (o IS NULL AND o_lit IS NULL AND o_blank IS NOT NULL)),
+       CHECK (NOT (datatype IS NOT NULL AND language IS NOT NULL)),
        CHECK (s_blank IS NULL OR
               s_blank IS NOT NULL AND
               subgraph_identity IS NOT NULL),
