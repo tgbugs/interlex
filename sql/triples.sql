@@ -380,14 +380,14 @@ CREATE TABLE triples(
        subgraph_identity bytea,
        CHECK (uri_host(s) <> reference_host() OR
               uri_host(s) = reference_host() AND
-              uri_path_array(s)[2] !~* 'ilx_' OR
+              (uri_path_array(s))[2] !~* 'ilx_' OR
               uri_host(s) = reference_host() AND
               -- TODO we can't check that the id is actually in the database without a trigger
               -- TODO also prevent users from creating ilx_ fragments in /uris/
               -- only base may have ilx ids, all the rest are by construction from qualifiers
               -- FIXME un hardcode 'base' and 'ilx_'
-              uri_path_array(s)[1] = 'base' AND
-              uri_path_array(s)[2] ~* 'ilx_'),
+              (uri_path_array(s))[1] = 'base' AND
+              (uri_path_array(s))[2] ~* 'ilx_'),
        CHECK ((s IS NOT NULL AND s_blank IS NULL) OR
               (s IS NULL AND s_blank IS NOT NULL)),
        CHECK ((o IS NOT NULL AND o_lit IS NULL AND o_blank IS NULL) OR

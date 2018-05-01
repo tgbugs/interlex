@@ -76,13 +76,14 @@ def main():
         from interlex.load import TripleLoader
         app = run_uri()
         db = SQLAlchemy(app)
-        il = InterLexLoad()
+        ltl = type('TripleLoader', (TripleLoader,), {})
+        Loader = ltl(db.session)
+        il = InterLexLoad(Loader)
         il.existing_ids()
         try: il.triples()
         except ValueError as e: pass
         il.ids()
-        ltl = type('TripleLoader', (TripleLoader,), {})
-        loader = ltl(db.session)
+        self = il
         # il.load(loader)  # do this one yourself
         embed()
 

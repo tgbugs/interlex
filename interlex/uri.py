@@ -1,7 +1,7 @@
 import os
 import json
 import rdflib
-from flask import Flask, request, redirect, url_for
+from flask import Flask, request, redirect, url_for, abort
 from flask_sqlalchemy import SQLAlchemy
 from protcur.core import atag, htmldoc
 from protcur.server import table_style, details_style, render_table

@@ -7,6 +7,7 @@
 --BEGIN
 INSERT INTO interlex_ids DEFAULT VALUES RETURNING id;
 
+/*
 INSERT INTO existing_iris (ilx_id, iri, group_id) VALUES ('0000001', 'http://uri.neuinfo.org/nif/nifstd/birnlex_796', 1),
                                                          ('0000001', 'http://purl.obolibrary.org/obo/UBERON_0000955', 1);
 INSERT INTO triples (s, p, o)
@@ -36,6 +37,8 @@ INSERT INTO triples (s, p, o)
               ('http://purl.obolibrary.org/OBO/UBERON_0000955',
                'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
                'http://www.w3.org/2002/07/owl#Class');
+
+*/
 
 -- DECLARE tgbugs_id integer;
 -- SELECT id INTO STRICT tgbugs_id FROM idFromGroupname('tgbugs');

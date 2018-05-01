@@ -18,6 +18,9 @@ class TripleLoader:
         'owl':'xml',
         'n3':'n3',
     }
+    def ___new__(cls, *args, **kwargs):
+        return super().__new__(cls)
+
     def __new__(cls, session, cypher=hashlib.sha256, encoding='utf-8'):
         cls.process_type = cls.__name__
         cls.session = session
@@ -25,7 +28,7 @@ class TripleLoader:
         cls.cypher = cypher
         cls.encoding = encoding
         cls.orderInvariantHash = OrderInvariantHash(cypher, encoding)
-        cls.__new__ = super().__new__
+        cls.__new__ = cls.___new__
         return cls
 
     def _old__init__(self, session, cypher=hashlib.sha256, encoding='utf-8'):
@@ -414,7 +417,7 @@ class TripleLoader:
 
     # the things themselves
     @property
-    def serialization(self): raise NotImplementedError('Implement this in the subclass')
+    def serialization(self): return self._serialization  # intentionally errors
 
     @property
     def curies(self):

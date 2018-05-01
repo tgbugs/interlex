@@ -5,6 +5,7 @@ import socket
 from pathlib import Path, PurePath
 from tempfile import gettempdir
 from functools import partialmethod
+from collections import Counter
 import rdflib
 import requests
 import sqlalchemy as sa
@@ -18,7 +19,7 @@ from werkzeug.routing import BaseConverter
 from pyontutils.config import devconfig
 from pyontutils.utils import TermColors as tc
 from pyontutils.core import PREFIXES as uPREFIXES, rdf, rdfs, owl, definition
-from pyontutils.core import yield_recursive
+from pyontutils.core import makeGraph, yield_recursive
 from pyontutils.ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
 from interlex.exc import bigError
 from IPython import embed
@@ -109,7 +110,10 @@ class FakeSession:
 
 # get interlex
 class InterLexLoad:
-    def __init__(self):
+    def __init__(self, Loader):
+        self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex', 'uri.interlex.org')
+        self.admin_engine = create_engine(dbUri(user='interlex-admin'), echo=True)
+        self.admin_exec = self.admin_engine.execute
         from pyontutils.utils import mysql_conn_helper
         DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'
         if socket.gethostname() != 'orpheus':
@@ -122,20 +126,24 @@ class InterLexLoad:
         self.insp = inspect(self.engine)
 
     @bigError
-    def load(self, Loader):
-        loader = Loader('tgbugs', 'tgbugs', 'http://interlex.org/base/interlex')
-        loader.session.execute(self.ilx_sql, self.ilx_params)
+    def load(self):
+        loader = self.loader
+        self.loader.session.execute(self.ilx_sql, self.ilx_params)
         loader.session.execute(self.eid_sql, self.eid_params)
-        loader.session.execute("setval('interlex_ids_sql', :current, TRUE)", dict(current=self.current))
-        loader._graph = rdflib.Graph()
-        [loader.graph.add(t) for t in self.triples]
+        # FIXME this probably requires admin permissions
+        self.admin_exec(f"SELECT setval('interlex_ids_seq', {self.current}, TRUE)")  # DANGERZONE
+        self.loader._graph = rdflib.Graph()
+        mg = makeGraph('', graph=self.loader.graph)  # FIXME I swear I fixed this already
+        [mg.add_trip(*t) for t in self.triples]
         name = 'http://toms.ilx.dump/TODO'
-        loader._serialization = repr((name, self.triples)).encode()
-        setup_ok = loader(name)
+        self.loader._bound_name = name
+        self.loader._serialization = repr((name, self.triples)).encode()
+        setup_ok = self.loader(name)
+
         if setup_ok is not None:
             raise LoadError(setup_ok)
         
-        loader.load()
+        self.loader.load()
 
     def ids(self):
         rows = self.engine.execute('SELECT DISTINCT ilx FROM terms ORDER BY ilx ASC')
@@ -161,12 +169,31 @@ class InterLexLoad:
             #return cdata[header.index(head)]
 
         values = [(row.ilx[4:], row.iri) for row in query if row.ilx not in row.iri]
+
+        # TODO :/
+        dupes = [u for u, c in Counter(_[1] for _ in values).most_common() if c > 1]
+
+        bads = []
+        bads += [(a, b) for a, b in values if b in dupes]
+        # TODO one of these is incorrect can't quite figure out which, so skipping entirely for now
+
+        for id_, iri in values:  # FIXME
+            if ' ' in iri:  # sigh, skip these for now since pguri doesn't seem to handled them
+                bads.append((id_, iri))
+        values = [v for v in values if v not in bads]
+        self.user_iris = [v for v in values if 'interlex.org' in v[1]]  # TODO
+        values = [v for v in values if 'interlex.org' not in v[1]]
+
+
         sql_base = 'INSERT INTO existing_iris (group_id, ilx_id, iri) VALUES '
         values_template, params = makeParamsValues(values, constants=('idFromGroupname(:group)',))
         params['group'] = 'base'
         sql = sql_base + values_template
+        self.eid_values = values
         self.eid_sql = sql
         self.eid_params = params
+        self.eid_bads = bads
+        printD(bads)
         return sql, params
 
     def triples(self):
