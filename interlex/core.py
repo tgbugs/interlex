@@ -16,8 +16,6 @@ from flask import Flask, url_for, redirect, request, render_template, render_tem
 from flask import make_response, abort
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.routing import BaseConverter
-from protcur.core import atag, htmldoc
-from protcur.server import table_style, details_style, render_table
 from pyontutils.config import devconfig
 from pyontutils.utils import TermColors as tc
 from pyontutils.core import PREFIXES as uPREFIXES, rdf, rdfs, owl, definition
@@ -107,6 +105,120 @@ class FakeSession:
 
     def rollback(self):
         printD('Fake rollback')
+
+# get interlex
+def interlex_load():
+    from pyontutils.utils import mysql_conn_helper
+    DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'
+    if socket.gethostname() != 'orpheus':
+        config = mysql_conn_helper('localhost', 'nif_eelg', 'nif_eelg_secure', 33060)  # see .ssh/config
+    else:
+        config = mysql_conn_helper('nif-mysql.crbs.ucsd.edu', 'nif_eelg', 'nif_eelg_secure')
+    engine = create_engine(DB_URI.format(**config), echo=True)
+    config = None
+    del(config)
+    insp = inspect(engine)
+
+    #ilxq = ('SELECT * FROM term_existing_ids as teid '
+            #'JOIN terms as t ON t.id = teid.tid '
+            #'WHERE t.type != "cde"')
+    header_object_properties = [d['name'] for d in insp.get_columns('term_relationships')]
+    header_subClassOf = [d['name'] for d in insp.get_columns('term_superclasses')]
+    header_terms = [d['name'] for d in insp.get_columns('terms')]
+    queries = dict(
+        terms = 'SELECT * from terms WHERE type != "cde"',
+        subClassOf = 'SELECT * from term_superclasses',
+        object_properties = 'SELECT * from term_relationships',
+        annotation_properties = 'SELECT * from term_annotations limit 10000',  # not quite yet also slow
+        cde_ids = 'SELECT id, ilx FROM terms where type = "cde"',
+        )
+    data = {name:engine.execute(query).fetchall()
+            for name, query in queries.items()}
+    ilx_index = {}
+    id_type = {}
+    triples = []
+    type_to_owl = {'term':owl.Class,
+                   'cde':owl.Class,
+                'annotation':owl.AnnotationProperty,
+                'relationship':owl.ObjectProperty}
+
+    def addToIndex(id, ilx, class_):
+        if ilx not in ilx_index:
+            ilx_index[ilx] = []
+        ilx_index[ilx].append(id)
+        if id not in id_type:
+            id_type[id] = []
+        id_type[id].append(class_)
+
+    [addToIndex(row.id, row.ilx[4:], owl.Class) for row in data['cde_ids']]
+
+    bads = []
+    for row in data['terms']:
+        #id, ilx_with_prefix, _, _, _, _, label, definition, comment, type_
+        ilx = row.ilx[4:]
+        uri = f'http://uri.interlex.org/base/ilx_{ilx}'
+
+        try:
+            class_ = type_to_owl[row.type]
+        except KeyError as e:
+            bads.append(row)
+            # fixed this particular case with
+            # update terms set type = 'term' where id = 304434;
+            continue
+
+        triples.extend((
+            # TODO consider interlex internal? ilxi.label or something?
+            (uri, rdf.type, class_),
+            (uri, rdfs.label, rdflib.Literal(row.label)),
+            (uri, definition, row.definition),
+        ))
+        addToIndex(row.id, ilx, class_)
+
+    versions = {k:v for k, v in ilx_index.items() if len(v) > 1}  # where did our dupes go!?
+    tid_to_ilx = {v:k
+                for k, vs in ilx_index.items()
+                  for v in vs}
+
+    def baseUri(e):
+        return f'http://uri.interlex.org/base/ilx_{tid_to_ilx[e]}'
+
+    WTF = []
+    for row in data['object_properties']:
+        _, s_id, o_id, p_id, *rest = row
+        ids_triple = s_id, p_id, o_id
+        try:
+            t = tuple(baseUri(e) for e in ids_triple)
+            triples.append(t)
+        except KeyError as e:
+            WTF.append(row)
+
+    WTF2 = []
+    for row in data['subClassOf']:
+        _, s_id, o_id, *rest = row
+        try:
+            s, o = baseUri(s_id), baseUri(o_id)
+        except KeyError as e:
+            WTF2.append(row)
+            continue
+
+        s_type = id_type[s_id]
+        o_type = id_type[o_id]
+        assert s_type == o_type, f'types do not match! {s_type} {o_type}'
+        if s_type == owl.Class:
+            p = rdfs.subClassOf
+        else:
+            p = rdfs.subPropertyOf
+        t = s, p, o
+        triples.append(t)
+
+    #engine.execute()
+    embed()
+    if bads or WTF or WTF2:
+        printD(bads[:10])
+        printD(WTF[:10])
+        printD(WTF2[:10])
+        raise ValueError('BADS HAVE ENTERED THE DATABASE AAAAAAAAAAAA')
+    return 'ok\n', 200
 
 def server_api(db=None, dburi=dbUri()):
     app = Flask('InterLex api server')
@@ -205,81 +317,6 @@ def server_api(db=None, dburi=dbUri()):
         user = 'uberon'
         graph.parse(file.as_posix())
 
-        # get interlex
-        def interlex_load():
-            from pyontutils.utils import mysql_conn_helper
-            DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'
-            if socket.gethostname() != 'orpheus':
-                config = mysql_conn_helper('localhost', 'nif_eelg', 'nif_eelg_secure', 33060)  # see .ssh/config
-            else:
-                config = mysql_conn_helper('nif-mysql.crbs.ucsd.edu', 'nif_eelg', 'nif_eelg_secure')
-            engine = create_engine(DB_URI.format(**config), echo=True)
-            config = None
-            del(config)
-            insp = inspect(engine)
-
-            #ilxq = ('SELECT * FROM term_existing_ids as teid '
-                    #'JOIN terms as t ON t.id = teid.tid '
-                    #'WHERE t.type != "cde"')
-            queries = dict(
-                terms = 'SELECT * from terms WHERE type != "cde"',
-                sups = 'SELECT * from term_superclasses',
-                ops = 'SELECT * from term_relationships',
-                # aps = 'SELECT * from term_annotations',  # not quite yet
-                )
-            data = {name:engine.execute(query).fetchall()
-                    for name, query in queries.items()}
-            ilx_index = {}
-            id_type = {}
-            triples = []
-            type_to_owl = {'term':owl.Class,
-                        'annotation':owl.AnnotationProperty,
-                        'relationship':owl.ObjectProperty}
-            for row in data['terms']:
-                ilx = row[1][4:]
-                uri = f'http://uri.interlex.org/base/ilx_{ilx}'
-                class_ = type_to_owl[row[9]]
-                triples.extend((
-                    # TODO consider interlex internal? ilxi.label or something?
-                    (uri, rdf.type, class_),
-                    (uri, rdfs.label, ),
-                    (uri, definition, ),
-                ))
-                #print(ilx)
-                id = row[0]
-                if ilx not in ilx_index:
-                    ilx_index[ilx] = []
-                ilx_index[ilx].append(id)
-                if id not in id_type:
-                    id_type[id] = []
-                id_type[id] = class_
-
-            versions = {k:v for k, v in ilx_index.items() if len(v) > 1}  # where did our dupes go!?
-            tid_to_ilx = {v[0]:k
-                        for k, v in ilx_index.items()}
-            def baseUri(e):
-                return f'http://uri.interlex.org/base/ilx_{tid_to_ilx[e]}'
-
-            for _, s_id, o_id, p_id, *rest in data['ops']:
-                t = tuple(baseUri(e) for e in (s_id, p_id, o_id))
-                triples.append(t)
-
-            for _, s_id, o_id, *rest in data['sups']:
-                s, o = baseUri(s_id), baseUri(o_id)
-                s_type = id_type[s_id]
-                o_type = id_type[o_id]
-                assert s_type == o_type
-                if type_ == owl.Class:
-                    p = rdfs.subClassOf
-                else:
-                    p = rdfs.subPropertyOf
-                t = s, p, o
-                triples.append(t)
-
-            #engine.execute()
-            #embed()
-            return 'ok\n', 200
-
         # FIXME getIdFromGroupname ... sigh naming
         src_qual = next(session.execute(('SELECT id FROM qualifiers WHERE group_id = idFromGroupname(:group) '
                                          'AND source_qualifier_id = 0'), dict(group=user))).id
@@ -334,7 +371,6 @@ def server_api(db=None, dburi=dbUri()):
         except BaseException as e:
             session.rollback()
             return e.orig.pgerror, 404
-        return interlex_load()
 
     @app.route('/curies/<group>/add', methods=['POST'])
     def curies_add(group):

@@ -6,6 +6,7 @@ Usage:
     interlex uri [options]
     interlex curies [options]
     interlex test [options]
+    interlex load [options]
     interlex dbsetup [options]
     interlex post curies [options] <user>
     interlex post ontology [options] <user>
@@ -26,7 +27,7 @@ Options:
 from urllib.parse import urlparse
 import requests
 from pyontutils.core import PREFIXES as uPREFIXES
-from interlex.core import printD
+from interlex.core import printD, interlex_load
 
 port_api = 8500
 port_uri = 8505
@@ -39,11 +40,9 @@ def main():
         from core import test
         if args['--debug']:
             embed()
-            return
         else:
             test()
-            return
-    if args['post']:
+    elif args['post']:
         user = args['<user>']
         name = args['<name>']
         if args['--local']:
@@ -69,9 +68,11 @@ def main():
             url = f'{scheme}://{host}/{user}/ontologies/' + u.path[1:]
             resp = requests.post(url, json=j)
             printD(resp.text)
-        return
-            
-    if args['dbsetup']:
+
+    elif args['load']:
+        interlex_load()
+
+    elif args['dbsetup']:
         #dburi = dbUri()
         # app.config['SQLALCHEMY_DATABASE_URI']
         #engine, insp = database()
@@ -95,23 +96,23 @@ def main():
         engine.execute(sql, args)
 
         embed()
-        return
 
-    if args['api']:
-        from core import run_api
-        app = run_api()
-        port = port_api
-    elif args['uri']:
-        from uri import run_uri
-        app = run_uri()
-        port = port_uri
-    elif args['curies']:
-        from core import run_curies
-        app = run_curies()
-        port = port_curies
+    else:
+        if args['api']:
+            from core import run_api
+            app = run_api()
+            port = port_api
+        elif args['uri']:
+            from uri import run_uri
+            app = run_uri()
+            port = port_uri
+        elif args['curies']:
+            from core import run_curies
+            app = run_curies()
+            port = port_curies
 
-    app.debug = args['--debug']
-    app.run(host='localhost', port=port, threaded=True)  # FIXME gunicorn
+        app.debug = args['--debug']
+        app.run(host='localhost', port=port, threaded=True)  # FIXME gunicorn
 
 if __name__ == '__main__':
     main()

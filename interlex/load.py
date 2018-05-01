@@ -2,9 +2,11 @@ from pathlib import Path, PurePath
 import rdflib
 import hashlib
 import requests
+import sqlalchemy as sa
 from pyontutils.core import rdf, owl
 from pyontutils.utils import OrderInvariantHash
 from pyontutils.ttlser import DeterministicTurtleSerializer
+from interlex.exc import hasErrors, LoadError
 from interlex.core import printD, permissions_sql, bnodes, makeParamsValues
 from IPython import embed
 
@@ -13,7 +15,7 @@ class TripleLoader:
     _cache_names = set() # FIXME make sure that reference hosts don't get crossed up
     _cache_identities = set()
     formats = {
-        'ttl':'ttl',
+        'ttl':'turtle',
         'owl':'xml',
         'n3':'n3',
     }
@@ -39,6 +41,7 @@ class TripleLoader:
         self._reference_name = None
         self._reference_name_in_db = None
         self._expected_bound_name = None  # TODO multiple bound names can occure eg via versionIRI?
+        self._transaction_cache_names = set()
 
         self._extension = None
         self._mimetype = None
@@ -68,6 +71,7 @@ class TripleLoader:
         self._bound_name_identity = None
         self._metadata_identity = None
         self._data_identity = None
+        self._transaction_cache_identities = set()
 
         self._identity_triple_count = None
 
@@ -82,6 +86,7 @@ class TripleLoader:
         self._safe = False
         printD('exit')
 
+    @hasErrors(LoadError)
     def __call__(self, group, user, reference_name, name, expected_bound_name=None):
         printD(group, user, reference_name, name, expected_bound_name)
         # FIXME this is a synchronous interface
@@ -179,9 +184,13 @@ class TripleLoader:
         try:
             output += self.load_event()
             self.session.commit()
+            self.cache_on_success()
             return output
         except BaseException as e:
             self.session.rollback()
+            if type(e) == LoadError:
+                raise e
+
             embed()
             if hasattr(e, 'orig'):
                 raise e.orig
@@ -207,7 +216,6 @@ class TripleLoader:
         """
 
 
-
     # names
     @property
     def name(self):
@@ -224,7 +232,7 @@ class TripleLoader:
                 # name was already in but not cached
                 self.session.rollback()
 
-            self._cache_names.add(value)
+            self._transaction_cache_names.add(value)
             self._name = value
 
     @property
@@ -243,9 +251,9 @@ class TripleLoader:
             except StopIteration:
                 # set it by setting self.expected_bound_name = something (including None)
                 self._reference_name_in_db = False
-                print('WARNING reference name has not been created yet!\n')
+                printD('WARNING reference name has not been created yet!\n')
         elif self._reference_name != value:
-            raise ValueError('cannot change reference names')
+            raise LoadError('cannot change reference names')
 
     @property
     def reference_name_in_db(self):
@@ -266,7 +274,7 @@ class TripleLoader:
     def expected_bound_name(self, value):
         if self.expected_bound_name is not None:
             # NOTE this is also enforced in the database
-            raise ValueError('Cannot change expected bound names once they have been set!')
+            raise LoadError('Cannot change expected bound names once they have been set!')
         elif self.expected_bound_name == value:
             printD('WARNING: trying to set expected bound name again!')
         else:
@@ -298,7 +306,7 @@ class TripleLoader:
         if self._format is None:
             if self.extension not in self.formats and self.mimetype not in self.formats:
                 # TODO use ttlfmt parser attempter
-                raise TypeError(f"Don't know how to parse either {extension} or {mimetype}")
+                raise LoadError(f"Don't know how to parse either {extension} or {mimetype}")
             elif self.extension not in self.formats:
                 self._format = self.formats[self.mimetype]
             else:
@@ -312,7 +320,12 @@ class TripleLoader:
         if self._serialization_identity is None:
             m = self.cypher()
             m.update(self.serialization)
-            self._serialization_identity = m.digest()
+            ident = m.digest()
+            if self.ident_exists(ident):
+                # TODO user options for what to do about qualifiers
+                raise LoadError(f'The exact file derferenced to by {self.name} is already in InterLex')
+            self._serialization_identity = ident
+            self._transaction_cache_identities.add(ident)
 
         return self._serialization_identity
 
@@ -393,8 +406,8 @@ class TripleLoader:
             self._bound_name = str(next(subjects))
             try:
                 extra = next(subjects)
-                raise ValueError('More than one owl:Ontology in this file!\n'
-                                 '{self.ontology_iri}\n{extra}\n')
+                raise LoadError('More than one owl:Ontology in this file!\n'
+                                '{self.ontology_iri}\n{extra}\n')
             except StopIteration:
                 pass
 
@@ -475,12 +488,34 @@ class TripleLoader:
         if real_value is None:
             real_value = self.digest(type_name)
             setattr(self, real_name, real_value)
+            self._transaction_cache_identities.add(real_value)
 
         return real_value
 
     def digest(self, type_name):
         value = getattr(self, type_name)
         return self.orderInvariantHash(value)
+
+    def ident_exists(self, ident):
+        # TODO check to make sure that the load succeeded
+        # transactions probably take care of this
+        # but need to make sure
+        if ident in self._cache_identities:
+            return True
+
+        sql = ('SELECT * FROM identities ' #' as i JOIN load_processes'
+               'WHERE identity = :ident')
+        try:
+            next(self.session.execute(sql, dict(ident=ident)))
+            self._cache_identities.add(ident)
+            return True
+        except StopIteration:
+            return False
+
+    def cache_on_success(self):
+        self._cache_names.update(self._transaction_cache_names)
+        self._cache_identities.update(self._transaction_cache_identities)
+        # TODO names
 
     def identity_triple_count(self, identity):
         """ Note: these are unique triple counts on normalized subgraphs """
@@ -517,9 +552,7 @@ class TripleLoader:
 
         def sortkey(triple):
             s, p, o = triple
-            return (gsortkey(s),
-                    psortkey(p),
-                    gsortkey(o))
+            return gsortkey(s), psortkey(p), gsortkey(o)
 
         def normalize(cmax, t, existing):
             for e in t:
@@ -676,6 +709,8 @@ class TripleLoader:
                 p = str(p)
                 mb.append((self.bound_name, p, 0, subgraph_identity))
 
+            yield mt, mlt, mbt
+
         if not di:
             dt = d, dcols = [], 's, p, o'
             dlt = dl, dlcols = [], 's, p, o_lit, datatype, language'
@@ -702,24 +737,19 @@ class TripleLoader:
                     else:  # FIXME not clear we ever have these Literal cases...
                         sg.append((s, p, None, str(o), str(o.datatype), o.language, None, subgraph_identity))
 
-        return mt, mlt, mbt, dt, dlt, dbt, sgt
+            yield dt, dlt, dbt, sgt
  
     def load_event(self):
         # FIXME only insert on success...
         si = self.serialization_identity
 
-        if si in self._cache_identities:
-            # TODO give the user options to say yes i want this explicitly in my graph
-            #self.execute(sql_prov, params)
-            return 'already in\n'
-
         # TODO need a way to pass in si
 
         # TODO always insert metadata first so that in-database integrity checks
         # can run afterward and verify roundtrip identity
-        ni = self.bound_name_identity in self._cache_identities  # self.identities_add?
-        mi = self.metadata_identity in self._cache_identities
-        di = self.data_identity in self._cache_identities
+        #ni = self.ident_exists(self.bound_name_identity)  # FIXME usually a waste
+        mi = self.ident_exists(self.metadata_identity)
+        di = self.ident_exists(self.data_identity)
         sgi = {k:v in self._cache_identities for k, v in self.subgraph_identities.items()}
 
         # (:s, 'hasPart', :o)
@@ -730,7 +760,7 @@ class TripleLoader:
         sql_ident_base = 'INSERT INTO identities (reference_name, identity, type, triples_count) VALUES '
         types_idents = (('serialization', self.serialization_identity),  # TODO abstract... type + ident
                         ('local_naming_conventions', self.curies_identity),
-                        ('bound_name', self.bound_name_identity),
+                        #('bound_name', self.bound_name_identity),
                         ('metadata', self.metadata_identity),
                         ('data', self.data_identity),
                         ('subgraph', *self.free_subgraph_identities))
@@ -768,11 +798,12 @@ class TripleLoader:
         sql_base = 'INSERT INTO triples'
         suffix = ' ON CONFLICT DO NOTHING'
         sqls = []
-        for values, sql_columns in self.make_load_records(mi, di):
-            if values:
-                values_template, params = makeParamsValues(values)
-                sql = sql_base + f' ({sql_columns}) VALUES ' + values_template + suffix
-                self.execute(sql, params)
+        for sections in self.make_load_records(mi, di):
+            for values, sql_columns in sections:
+                if values:
+                    values_template, params = makeParamsValues(values)
+                    sql = sql_base + f' ({sql_columns}) VALUES ' + values_template + suffix
+                    self.execute(sql, params)
 
         return 'TODO\n'
 
@@ -803,9 +834,10 @@ class FileFromFile(FileFromBase):
             # FIXME the way this is implemented will be one way to check to make
             # sure that users/groups match the reference_name?
             reference_name = f'http://uri.interlex.org/{group}/upload/test'
-        super().__call__(group, user, reference_name, name)
+        out = super().__call__(group, user, reference_name, name)
         self.reference_host = None
         self.path = None  # avoid poluting the class namespace
+        return out
 
     @property
     def serialization(self):
@@ -829,13 +861,13 @@ class FileFromIRI(FileFromBase):
             printD(self.name)
             head = requests.head(self.name)  # check on the size to make sure no troll
 
-            if head.status_code >= 400:
-                return f'Error: nothing found at {self.name}\n', 400
-
-            while head.is_redirect:  # FIXME redirect loop issue
+            while head.is_redirect and head.status_code < 400:  # FIXME redirect loop issue
                 head = s.send(head.next)
                 if not head.is_redirect:
                     break
+
+            if head.status_code >= 400:
+                raise LoadError(f'Nothing found at {self.name}\n')
 
             self._header = head.headers
 
@@ -870,7 +902,7 @@ class FileFromIRI(FileFromBase):
         if 'Content-Encoding' in self.header and self.header['Content-Encoding'] == 'gzip':
             if size_mb > self.maxsize_mbgz:
                 if not is_admin:
-                    raise ValueError(self.lfmessage)  # TODO error handling
+                    raise LoadError(self.lfmessage)  # TODO error handling
             resp = requests.get(self.name)
             size_mb = len(resp.content) / 1024 ** 2
         else:
@@ -878,7 +910,7 @@ class FileFromIRI(FileFromBase):
 
         if size_mb > self.maxsize_mb:
             if not is_admin:
-                raise ValueError(self.lfmessage)
+                raise LoadError(self.lfmessage)
 
         if resp is None:
             resp = requests.get(self.name)

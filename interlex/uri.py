@@ -1,13 +1,18 @@
 import os
+import rdflib
 from flask import Flask, request
 from flask_sqlalchemy import SQLAlchemy
+from protcur.core import atag, htmldoc
+from protcur.server import table_style, details_style, render_table
 from pyontutils.core import makePrefixes, makeGraph
 from pyontutils.ttlser import CustomTurtleSerializer
+from interlex.exc import LoadError
 from interlex.core import printD
 from interlex.core import dbUri, permissions_sql
 from interlex.core import RegexConverter, make_paths, makeParamsValues
 from interlex.load import FileFromIRI, TripleLoader
 from interlex.dump import TripleExporter
+from IPython import embed
 
 def uriStructure():
     ilx_pattern = 'ilx_<regex("[0-9]{7}"):id>'
@@ -161,7 +166,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                    #'JOIN triples_literal as tl ON tl.s = e.iri OR tl.s = :uri')
 
             # don't use t.s because it will include the base iri? or no
-            sql = ('SELECT t.s, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank '
+            _sql = ('SELECT t.s, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank '
                    'FROM existing_iris as e '
                    'JOIN triples as t '
                    #'JOIN triples as tb'  # TODO efficient subgraph retrieval?
@@ -171,19 +176,38 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                    #'OR t.o_blank = t.id '
                    #'AND tb1 = tb2)'
                    'WHERE e.ilx_id = :id')
+            sql = '''
+            WITH graph AS (
+                SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity
+                FROM triples as t JOIN existing_iris as e
+                ON s = iri OR s = :uri
+                WHERE ilx_id = :id
+            ), subgraphs AS (
+                SELECT sg.s, sg.s_blank, sg.p, sg.o,
+                       sg.o_lit, sg.datatype, sg.language,
+                       sg.o_blank, sg.subgraph_identity
+                FROM triples as sg, graph as g
+                WHERE sg.subgraph_identity = g.subgraph_identity AND sg.s is NULL
+            )
+            SELECT * FROM graph UNION SELECT * from subgraphs;
+            '''
             resp = list(self.session.execute(sql, args))
             #printD(resp)
             PREFIXES, g = self.getGroupCuries(user)
             te = TripleExporter()
             _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
             cts = CustomTurtleSerializer(g.g)
+            gsortkey = cts._globalSortKey
+            psortkey = lambda p: cts.predicate_rank[p]
+            def sortkey(triple):
+                s, p, o = triple
+                return gsortkey(s), psortkey(p), gsortkey(o)
+
             trips = ((atag(e, g.qname(e))
                       if isinstance(e, rdflib.URIRef) and e.startswith('http')
                       else str(e)
                       for e in t)
-                     for t in sorted(g.g, key=lambda t: (cts.object_rank[t[0]],
-                                                         cts.predicate_rank[t[1]],
-                                                         cts.object_rank[t[2]])))
+                     for t in sorted(g.g, key=sortkey))
 
             # TODO list users with variants from base and/org curated
             # we need an 'uncurated not latest' or do we?
