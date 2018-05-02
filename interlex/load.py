@@ -383,7 +383,9 @@ class TripleLoader:
         return self.get_identity('metadata')
 
     @property
-    def data_identity(self):
+    def data_identity(self):  # FIXME! this should be data + free_subgraph_identities XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+        # the head triple in all cases is bound to the ontology name
+        moar = sorted(self.free_subgraph_identities)
         return self.get_identity('data')
 
     @property
@@ -732,7 +734,8 @@ class TripleLoader:
         # TODO resursive on type?
         # s, s_blank, p, o, o_lit, datatype, language, subgraph_identity
         if not ci:
-            ct = c, ccols, *_ = [], 'serialization_identity, curie_prefix, iri_prefix', (':ident',), {'ident':self.serialization_identity}
+            ct = c, ccols, *_ = ([], 'serialization_identity, curie_prefix, iri_prefix',
+                                 (':ident',), {'ident':self.serialization_identity})
             for curie_prefix, iri_prefix in self.curies:
                 c.append((curie_prefix, iri_prefix))
 
@@ -788,7 +791,7 @@ class TripleLoader:
                         sg.append((s, p, None, str(o_lit), datatype, o.language, None, subgraph_identity))
 
             yield dt, dlt, dbt, sgt
- 
+
     def load_event(self):
         # FIXME only insert on success...
         si = self.serialization_identity
@@ -872,8 +875,8 @@ class TripleLoader:
                         sql = sql_base + f' ({sql_columns}) VALUES ' + values_template + suffix
                     self.execute(sql, params)
 
+        # TODO create qualifiers
         return 'TODO\n'
-
 
 
 class InterLex(TripleLoader):

@@ -247,6 +247,22 @@ CREATE TABLE load_events(
                   REFERENCES identities (identity)
 );
 
+CREATE FUNCTION load_event_to_qualifier() RETURNS trigger AS $$
+       BEGIN
+           INSERT INTO qualifiers (identity, group_id, previous_qualifier_id)
+           SELECT i.identity, q.group_id, q.id
+           FROM qualifiers as q, identity_relations as ir
+           JOIN identities as i ON ir.o = i.identity
+           WHERE q.group_id = NEW.group_id AND
+                 i.type = 'data' AND
+                 ir.p = 'hasPart' AND
+                 ir.s = NEW.serialization_identity;
+       END
+$$ language plpgsql;
+
+CREATE TRIGGER load_event_to_qualifier BEFORE INSERT ON load_events
+       FOR EACH ROW EXECUTE PROCEDURE load_event_to_qualifier();
+
 /*
 CREATE TABLE load_processes(
        -- this is more for prov curiosity than real use right now

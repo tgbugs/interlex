@@ -12,6 +12,7 @@ INSERT INTO groups (groupname, own_role) VALUES
        ('origin', 'builtin'),
        ('curated', 'builtin'),
        ('reasonable', 'builtin')
+       -- ('types', 'builtin')
        -- ('history', 'builtin') -- TODO consdier the right way to pull this off
        ;
 
@@ -51,6 +52,8 @@ INSERT INTO groups (own_role, groupname)
        FROM unnest(ARRAY['info',
                          'postgres',
                          'default'
+                         'type',  -- TODO
+                         'types',
 
                          'tom',
                          'tgillesp',
