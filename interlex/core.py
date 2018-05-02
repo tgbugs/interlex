@@ -137,8 +137,8 @@ class IdentityBNode(rdflib.BNode):
     """
     cypher = hashlib.sha256
     encoding = 'utf-8'
-    def __init__(self, triples_or_pairs_or_list_or_thing):
-        self.identity = self.identity_function(triples_or_pairs_or_list_or_thing)
+    def __init__(self, triples_or_pairs_or_thing):
+        self.identity = self.identity_function(triples_or_pairs_or_thing)
         super().__init__(identity)
 
     def atomic(self, thing):
@@ -155,10 +155,6 @@ class IdentityBNode(rdflib.BNode):
                 thing = self.atomic(thing)
             m.update(thing)
         return m.digest()
-
-    def get_bnode_identity(self, bnode):
-        return b"But I'm me!"  # TODO
-
 
     def add_to_subgraphs(self, thing):
         if s in self.subgraph_mapping:
@@ -215,28 +211,100 @@ class IdentityBNode(rdflib.BNode):
             if isinstance(s, rdflib.BNode):
                 self.subgraph_mapping[s] = os
 
-    def recurse(self, triples_or_pairs_or_list_or_thing, to_resolve=tuple()):
-        for thing in triples_or_pairs_or_list_or_thing:
+    def sort_subgraph(self, subgraph):
+        sortlast = b'\xff' * 64
+        def sortkey(thing):
+            return tuple(sortlast if
+                         isinstance(t, rdflib.BNode) else
+                         t
+                         for t in thing)
+
+        def normalize(thing, cmax, existing):
+            thing_out = []
+            for e in thing:
+                if isinstance(e, rdflib.BNode):
+                    if e not in existing:
+                        cmax += 1
+                        existing[e] = cmax
+
+                    thing_out.append(existing[e])
+                else:
+                    thing_out.append(e)
+
+            yield tuple(thing_out)
+            yield cmax
+
+        def intlast(thing):
+            return tuple(sortlast + bytes(str(e))
+                            if isinstance(e, int)
+                            else e
+                            for e in thing)
+
+        # total ordering on the identities of the the named elements of the subgraph
+        # if there is a name as a subject it will appear first due to the fffffff
+        phase1 = sorted(subgraph, key=sortkey)
+
+        cmax = -1
+        existing = {}
+
+        # number the bnodes preserving their linking structure
+        phase2 = []
+        for thing in phase1:
+            nthing, cmax = normalize(thing, cmax, existing)
+            phase2.append(nthing)
+
+        # reorder based on the linking structure putting integers last
+        phase2 = tuple(sorted(phase2, key=intlast))
+        return phase2, start
+
+    def subgraph_identities(self):
+        # TODO fail on dangling nodes
+        for subgraph in subgraphs:
+            normalized = self.sort_subgraph(subgraph)
+            if isinstance(normalized[0][0], int):  # is free
+                head = None
+                graph = normalized
+            else:
+                head, *graph = normalized
+
+            ident = self.ordered_atomic(
+                *(self.ordered_atomic(*thing)
+                  for thing in graph))
+
+        named_linked, linked, free = [], [], []
+        return named_linked, linked, free
+
+    def recurse(self, triples_or_pairs_or_thing, bnodes_ok=False):
+        for thing in triples_or_pairs_or_thing:
             if isinstance(thing, rdflib.URIRef):
                 yield atomic(thing)
             elif isinstance(thing, rdflib.Literal):
                 # "http://asdf.asdf" != <http://asdf.asdf>
+                # TODO hash individual bits first or no?, I think no
                 yield self.ordered_atomic(thing, thing.datatype, thing.language)
-            #elif isinstance(thing, IdLocalBNode) and thing.local_id == 0:
+            elif isinstance(thing, IdLocalBNode) or isinstance(thing, IdentityBNode):
+                # TODO check that we aren't being lied to?
+                yield thing.identity
             elif isinstance(thing, rdflib.BNode):
-                raise ValueError('BNodes only have names or collective identity...')
+                if bnodes_ok:
+                    yield thing
+                else:
+                    raise ValueError('BNodes only have names or collective identity...')
             else:
                 if any(isinstance(e, rdflib.BNode) for e in thing):
-                    to_resolve.append(thing)
-                    pass  # LET THE GAMES BEGIN
+                    self.add_to_subgraphs(tuple(self.recurse(thing, bnodes_ok=True)))
                 else:
-                    yield self.ordered_atomic(*sorted(self.recurse(t) for t in thing))
+                    if len(thing) == 3 or len(thing) == 2:
+                        yield self.ordered_atomic(*self.recurse(t) for t in thing)
+                    else:
+                        yield self.ordered_atomic(*sorted(self.recurse(t) for t in thing))
 
-    def identity_function(self, triples_or_pairs_or_list_or_thing):
-        self.m = self.cypher()
+    def identity_function(self, triples_or_pairs_or_thing):
         self.subgraph_mapping = {}
         self.subgraphs = []
-        identity = self.recurse(triples_or_pairs_or_list_or_thing)
+        self.m = self.cypher()
+        named_identities = self.recurse(triples_or_pairs_or_thing)
+        named_linked, linked, free = self.subgraph_identities()
         return self.m.digest()
 
 class IdLocalBNode(rdflib.BNode):
