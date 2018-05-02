@@ -107,6 +107,149 @@ class FakeSession:
     def rollback(self):
         printD('Fake rollback')
 
+class IdentityBNode(rdflib.BNode):
+    """ An identity blank node is a blank node that is identified by
+        the output of some identity function on the subgraph that it
+        identifies. IBNodes do not need to be linked into quads for
+        the named parts of a graph because they will fail to bind on
+        any set of triples whose identity does not match their identity.
+
+        However, for graphs that are unnamed, practically they should be
+        bound as quads to prevent collisions. When serialized to triples
+        it is reasonable to use the identity as a prefix for the local
+        node ordering.
+
+        IBNodes should only be used at the head of an unnamed graph or
+        a collection of triples. Even if the triples around bound to a
+        name by convetion, the IBNode should still be used to identify them.
+
+        When calculating the identity, it may be useful to use the identity
+        function to provide a total ordering on all nodes.
+
+        When directly mapping an IBNode to a set of pairs that has a name
+        the identity can be reattached, but it must be by convetion, otherwise
+        the identity of the pairs will change.
+
+        This is also true for lists. Note that IBNodes bound by convention are
+        NOT cryptographically secure because it is trivial to tamper with the
+        contents of the message and regenerate the IBNode. IBNodes are therefore
+        not useful as bound identifiers, but only as unbound or pointing identifiers.
+    """
+    cypher = hashlib.sha256
+    encoding = 'utf-8'
+    def __init__(self, triples_or_pairs_or_list_or_thing):
+        self.identity = self.identity_function(triples_or_pairs_or_list_or_thing)
+        super().__init__(identity)
+
+    def atomic(self, thing):
+        m = self.cypher()
+        if thing is not None:
+            to_hash = str(thing).encode(self.encoding)
+            m.update(to_hash)
+        return m.digest()
+
+    def ordered_atomic(self, *things):
+        m = self.cypher()
+        for thing in things:
+            if thing is None:  # all null are converted to the starting hash
+                thing = self.atomic(thing)
+            m.update(thing)
+        return m.digest()
+
+    def get_bnode_identity(self, bnode):
+        return b"But I'm me!"  # TODO
+
+
+    def add_to_subgraphs(self, thing):
+        if s in self.subgraph_mapping:
+            ss = self.subgraph_mapping[s]
+        else:
+            ss = False
+
+        if o in self.subgraph_mapping:
+            os = self.subgraph_mapping[o]
+        else:
+            os = False
+
+        if ss and os:
+            if ss is not os:  # this should only happen for 1:1 bnodes
+                new = ss + [t] + os
+                try:
+                    self.subgraphs.remove(ss)
+                    self.subgraphs.remove(os)
+                    self.subgraphs.append(new)
+                    for bn in bnodes(ss):
+                        self.subgraph_mapping[bn] = new
+                    for bn in bnodes(os):
+                        self.subgraph_mapping[bn] = new
+                except ValueError as e:
+                    print(e)
+                    embed()
+                '''
+                for t_ in ss: [print(e) for e in t_]
+                print()
+                [print(e) for e in t]
+                print()
+                for t_ in os: [print(e) for e in t_]
+                '''
+                # FIXME there are some ordering issues I think?
+                # or maybe not and these are just the true bnodes
+                # that do actually have no ambiguity
+
+                #raise TypeError('wat')
+            else:
+                ss.append(t)
+        elif not (ss or os):
+            new = [t]
+            self.subgraphs.append(new)
+            if isinstance(s, rdflib.BNode):
+                self.subgraph_mapping[s] = new
+            if isinstance(o, rdflib.BNode):
+                self.subgraph_mapping[o] = new
+        elif ss:
+            ss.append(t)
+            if isinstance(o, rdflib.BNode):
+                self.subgraph_mapping[o] = ss
+        elif os:
+            os.append(t)
+            if isinstance(s, rdflib.BNode):
+                self.subgraph_mapping[s] = os
+
+    def recurse(self, triples_or_pairs_or_list_or_thing, to_resolve=tuple()):
+        for thing in triples_or_pairs_or_list_or_thing:
+            if isinstance(thing, rdflib.URIRef):
+                yield atomic(thing)
+            elif isinstance(thing, rdflib.Literal):
+                # "http://asdf.asdf" != <http://asdf.asdf>
+                yield self.ordered_atomic(thing, thing.datatype, thing.language)
+            #elif isinstance(thing, IdLocalBNode) and thing.local_id == 0:
+            elif isinstance(thing, rdflib.BNode):
+                raise ValueError('BNodes only have names or collective identity...')
+            else:
+                if any(isinstance(e, rdflib.BNode) for e in thing):
+                    to_resolve.append(thing)
+                    pass  # LET THE GAMES BEGIN
+                else:
+                    yield self.ordered_atomic(*sorted(self.recurse(t) for t in thing))
+
+    def identity_function(self, triples_or_pairs_or_list_or_thing):
+        self.m = self.cypher()
+        self.subgraph_mapping = {}
+        self.subgraphs = []
+        identity = self.recurse(triples_or_pairs_or_list_or_thing)
+        return self.m.digest()
+
+class IdLocalBNode(rdflib.BNode):
+    """ For use inside triples.
+        Local ids should be consecutive integers.
+        Ordering can be by sub-identity or by string ordering
+        on the named portions of the graph.
+    """
+    def __init__(self, identity, local_id):
+        self.identity = identity
+        self.local_id = local_id
+    def __str__(self):
+        return f'{self.identity}_{self.local_id}'
 
 # get interlex
 class InterLexLoad:
