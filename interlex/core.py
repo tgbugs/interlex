@@ -2,6 +2,7 @@
 
 import sys
 import socket
+import hashlib
 from pathlib import Path, PurePath
 from tempfile import gettempdir
 from functools import partialmethod
@@ -259,7 +260,8 @@ class IdentityBNode(rdflib.BNode):
 
     def subgraph_identities(self):
         # TODO fail on dangling nodes
-        for subgraph in subgraphs:
+        named_linked, linked, free = {}, {}, {}
+        for subgraph in self.subgraphs:
             normalized = self.sort_subgraph(subgraph)
             if isinstance(normalized[0][0], int):  # is free
                 head = None
@@ -271,7 +273,12 @@ class IdentityBNode(rdflib.BNode):
                 *(self.ordered_atomic(*thing)
                   for thing in graph))
 
-        named_linked, linked, free = [], [], []
+            if head is None:
+                free[ident] = graph
+            else:
+                named_linked[ident] = head
+                linked[ident] = graph
+
         return named_linked, linked, free
 
     def recurse(self, triples_or_pairs_or_thing, bnodes_ok=False):
@@ -294,17 +301,18 @@ class IdentityBNode(rdflib.BNode):
                 if any(isinstance(e, rdflib.BNode) for e in thing):
                     self.add_to_subgraphs(tuple(self.recurse(thing, bnodes_ok=True)))
                 else:
-                    if len(thing) == 3 or len(thing) == 2:
-                        yield self.ordered_atomic(*self.recurse(t) for t in thing)
+                    if len(thing) == 3 or len(thing) == 2:  # FIXME assumes contents are atomic
+                        yield self.ordered_atomic(*(tuple(self.recurse(t)) for t in thing))
                     else:
-                        yield self.ordered_atomic(*sorted(self.recurse(t) for t in thing))
+                        yield self.ordered_atomic(*sorted(tuple(self.recurse(t)) for t in thing))
 
     def identity_function(self, triples_or_pairs_or_thing):
         self.subgraph_mapping = {}
         self.subgraphs = []
         self.m = self.cypher()
-        named_identities = self.recurse(triples_or_pairs_or_thing)
+        named_identities = tuple(self.recurse(triples_or_pairs_or_thing))  # memory :/
         named_linked, linked, free = self.subgraph_identities()
+        embed()
         return self.m.digest()
 
 class IdLocalBNode(rdflib.BNode):
