@@ -145,7 +145,10 @@ class IdentityBNode(rdflib.BNode):
     def atomic(self, thing):
         m = self.cypher()
         if thing is not None:
-            to_hash = str(thing).encode(self.encoding)
+            if isinstance(thing, bytes):
+                to_hash = thing
+            else:
+                to_hash = str(thing).encode(self.encoding)
             m.update(to_hash)
         return m.digest()
 
@@ -158,6 +161,8 @@ class IdentityBNode(rdflib.BNode):
         return m.digest()
 
     def add_to_subgraphs(self, thing):
+        printD(thing)
+        t = s, p, o = thing  # FIXME how to deal with pairs?
         if s in self.subgraph_mapping:
             ss = self.subgraph_mapping[s]
         else:
@@ -256,7 +261,7 @@ class IdentityBNode(rdflib.BNode):
 
         # reorder based on the linking structure putting integers last
         phase2 = tuple(sorted(phase2, key=intlast))
-        return phase2, start
+        return phase2
 
     def subgraph_identities(self):
         # TODO fail on dangling nodes
@@ -283,8 +288,14 @@ class IdentityBNode(rdflib.BNode):
 
     def recurse(self, triples_or_pairs_or_thing, bnodes_ok=False):
         for thing in triples_or_pairs_or_thing:
-            if isinstance(thing, rdflib.URIRef):
-                yield atomic(thing)
+            if isinstance(thing, bytes):
+                # do NOT assume that this has already been hashed,
+                # if bytes is encountered here, it should be hashed
+                yield self.atomic(thing)
+            elif type(thing) == str:  # exact match since all the rest are instances of string
+                yield self.atomic(thing)
+            elif isinstance(thing, rdflib.URIRef):
+                yield self.atomic(thing)
             elif isinstance(thing, rdflib.Literal):
                 # "http://asdf.asdf" != <http://asdf.asdf>
                 # TODO hash individual bits first or no?, I think no
@@ -299,12 +310,17 @@ class IdentityBNode(rdflib.BNode):
                     raise ValueError('BNodes only have names or collective identity...')
             else:
                 if any(isinstance(e, rdflib.BNode) for e in thing):
+                    #self.add_to_subgraphs(tuple(str(t).encode(self.encoding) if
+                                                #not isinstance(t, rdflib.BNode) else
+                                                #t
+                                                #for t in thing))
                     self.add_to_subgraphs(tuple(self.recurse(thing, bnodes_ok=True)))
                 else:
                     if len(thing) == 3 or len(thing) == 2:  # FIXME assumes contents are atomic
-                        yield self.ordered_atomic(*(tuple(self.recurse(t)) for t in thing))
+                        yield self.ordered_atomic(*tuple(self.recurse(thing)))
                     else:
-                        yield self.ordered_atomic(*sorted(tuple(self.recurse(t)) for t in thing))
+                        raise ValueError('wat')
+                        yield self.ordered_atomic(*sorted(tuple(self.recurse(thing))))
 
     def identity_function(self, triples_or_pairs_or_thing):
         self.subgraph_mapping = {}
