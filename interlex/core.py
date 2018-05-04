@@ -138,11 +138,17 @@ class IdentityBNode(rdflib.BNode):
     """
     cypher = hashlib.sha256
     encoding = 'utf-8'
-    def __new__(cls, triples_or_pairs_or_thing):
+    def __new__(cls, triples_or_pairs_or_thing, debug=False):
         self = super().__new__(cls)  # first time without value
         self.cypher_check()
+        if type(triples_or_pairs_or_thing) == bytes:
+            triples_or_pairs_or_thing = triples_or_pairs_or_thing,
         self.identity = self.identity_function(triples_or_pairs_or_thing)
-        return super().__new__(cls, self.identity)
+        real_self = super().__new__(cls, self.identity)
+        if debug == True:
+            return self
+
+        return real_self
 
     def cypher_check(self):
         m1 = self.cypher()
@@ -229,8 +235,43 @@ class IdentityBNode(rdflib.BNode):
 
     def sort_subgraph(self, subgraph):
         sortlast = b'\xff' * 64
+        # FIXME ambiguity when we have multiple blank, named, blank as in lists
+        # FIXME these are subgraphs of subgraphs...
+        # they are connected but we still need to calculate and identity for them
+        # rank by closest named objects, ties are broken by the 2nd closest named etc.
+        double_blank_objects = set(o for s, p, o in subgraph if
+                                   isinstance(s, rdflib.BNode) and
+                                   isinstance(o, rdflib.BNode))
+
+        distance_value = {}
+
+        def inner(obj):  # FIXME this kills the crab
+            if obj not in distance_value:
+                distance_value[obj] = set()
+            for s, p, o in subgraph:
+                if s == obj:
+                    if isinstance(o, rdflib.BNode):
+                        for depth, value in inner(o):
+                            depth += 1
+                            dv = depth, value
+                            distance_value[obj].add(dv)
+                            yield dv
+                    else:
+                        dv = 1, o
+                        distance_value[obj].add(dv)
+                        yield dv
+                        
+
+        for o in double_blank_objects:
+            list(inner(o))
+
+        double_ranks = {k:str(i+1).encode(self.encoding)
+                        for i, (k, v) in enumerate(sorted(distance_value.items(),
+                                                          key=lambda kv:sorted(kv[1])))}
         def sortkey(thing):
-            return tuple(sortlast if
+            return tuple((sortlast + double_ranks[t] if
+                          t in double_ranks else
+                          sortlast + b'0') if
                          isinstance(t, rdflib.BNode) else
                          t
                          for t in thing)
@@ -317,6 +358,7 @@ class IdentityBNode(rdflib.BNode):
                 # "http://asdf.asdf" != <http://asdf.asdf>
                 # TODO hash individual bits first or no?, I think no
                 # update, yes hash first for consistency, always recurse before calling an atomic
+                # need str(thing) here to break recursion on literal type
                 yield self.ordered_identity(*self.recurse((str(thing), thing.datatype, thing.language)))
             elif isinstance(thing, IdLocalBNode) or isinstance(thing, IdentityBNode):
                 # TODO check that we aren't being lied to?
@@ -343,14 +385,22 @@ class IdentityBNode(rdflib.BNode):
     def identity_function(self, triples_or_pairs_or_thing):
         self.subgraph_mapping = {}
         self.subgraphs = []
-        named_identities = tuple(self.recurse(triples_or_pairs_or_thing))  # memory :/
-        named_linked, linked, free = self.subgraph_identities()
+        self.named_identities = tuple(self.recurse(triples_or_pairs_or_thing))  # memory :/
+        self.named_linked, self.linked_identities, self.free_identities = self.subgraph_identities()
         # named linked are the 'head' triples that do not participate in the calculation of the linked identity but that we do need to map
         #assert tuple(named_linked) == tuple(linked)
         m = self.cypher()
-        [m.update(ident) for ident in sorted(named_identities + tuple(linked) + tuple(free))]
-        #embed()
-        return m.digest()
+        self.all_idents = sorted(self.named_identities +
+                                 tuple(self.linked_identities) +
+                                 tuple(self.free_identities))
+        if len(self.all_idents) == 1:
+            # singleton values will all already have been hashed
+            # therefore we do not double hash since most of the time
+            # it is simply the serialization that we are hashing as a whole
+            return self.all_idents[0]
+        else:
+            [m.update(ident) for ident in self.all_idents]
+            return m.digest()
 
 class IdLocalBNode(rdflib.BNode):
     """ For use inside triples.
