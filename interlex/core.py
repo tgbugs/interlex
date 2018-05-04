@@ -141,14 +141,16 @@ class IdentityBNode(rdflib.BNode):
     def __new__(cls, triples_or_pairs_or_thing, debug=False):
         self = super().__new__(cls)  # first time without value
         self.cypher_check()
-        if type(triples_or_pairs_or_thing) == bytes:
-            triples_or_pairs_or_thing = triples_or_pairs_or_thing,
         self.identity = self.identity_function(triples_or_pairs_or_thing)
         real_self = super().__new__(cls, self.identity)
         if debug == True:
             return self
-
+            
+        real_self.identity = self.identity
         return real_self
+
+    def check(self, other):
+        return self.identity == self.identity_function(other)
 
     def cypher_check(self):
         m1 = self.cypher()
@@ -166,6 +168,7 @@ class IdentityBNode(rdflib.BNode):
         return m.digest()
 
     def ordered_identity(self, *things):
+        """ this assumes that the things are ALREADY ordered correctly """
         m = self.cypher()
         for thing in things:
             if type(thing) != bytes:
@@ -383,24 +386,23 @@ class IdentityBNode(rdflib.BNode):
                         yield self.ordered_identity(*sorted(self.recurse(thing)))
 
     def identity_function(self, triples_or_pairs_or_thing):
-        self.subgraph_mapping = {}
-        self.subgraphs = []
-        self.named_identities = tuple(self.recurse(triples_or_pairs_or_thing))  # memory :/
-        self.named_linked, self.linked_identities, self.free_identities = self.subgraph_identities()
-        # named linked are the 'head' triples that do not participate in the calculation of the linked identity but that we do need to map
-        #assert tuple(named_linked) == tuple(linked)
-        m = self.cypher()
-        self.all_idents = sorted(self.named_identities +
-                                 tuple(self.linked_identities) +
-                                 tuple(self.free_identities))
-        if len(self.all_idents) == 1:
-            # singleton values will all already have been hashed
-            # therefore we do not double hash since most of the time
-            # it is simply the serialization that we are hashing as a whole
-            return self.all_idents[0]
+        if isinstance(triples_or_pairs_or_thing, bytes):  # serialization
+            return self.atomic(triples_or_pairs_or_thing)
+        elif isinstance(triples_or_pairs_or_thing, str):  # a node
+            return next(self.recurse((triples_or_pairs_or_thing,)))
         else:
-            [m.update(ident) for ident in self.all_idents]
-            return m.digest()
+            self.subgraph_mapping = {}
+            self.subgraphs = []
+            self.named_identities = tuple(self.recurse(triples_or_pairs_or_thing))  # memory :/
+            self.named_linked, self.linked_identities, self.free_identities = self.subgraph_identities()
+            # named linked are the 'head' triples that do not participate in the
+            # calculation of the linked identity but that we do need to map
+            #assert tuple(named_linked) == tuple(linked)
+            self.all_idents = sorted(self.named_identities +
+                                    tuple(self.linked_identities) +
+                                    tuple(self.free_identities))
+
+            return self.ordered_identity(*self.all_idents)
 
 class IdLocalBNode(rdflib.BNode):
     """ For use inside triples.

@@ -1,13 +1,13 @@
 import unittest
 from pathlib import Path
-from rdflib import Graph
+import rdflib
 from pyontutils.config import devconfig
 from interlex.core import bnodes, IdentityBNode
 from IPython import embed
 
 class TestIBNode(unittest.TestCase):
     def setUp(self):
-        self.graph1 = Graph()
+        self.graph1 = rdflib.Graph()
         file = Path(devconfig.ontology_local_repo) / 'ttl/BIRNLex_annotation_properties.ttl'
         with open(file.as_posix(), 'rb') as f:
             self.ser1 = f.read()
@@ -16,11 +16,48 @@ class TestIBNode(unittest.TestCase):
         g2format = 'xml'
         self.ser2 = self.graph1.serialize(format=g2format)
 
-        self.graph2 = Graph()
+        self.graph2 = rdflib.Graph()
         self.graph2.parse(data=self.ser2, format=g2format)
 
     def test_ser(self):
         assert IdentityBNode(self.ser1) != IdentityBNode(self.ser2), 'serialization matches!'
+
+    def test_nodes(self):
+        assert IdentityBNode('hello there') == IdentityBNode('hello there')
+        assert IdentityBNode(b'hello there') == IdentityBNode(b'hello there')
+        try:
+            assert IdentityBNode(rdflib.BNode()) != IdentityBNode(rdflib.BNode())
+            # TODO consider returning the bnode itself?
+            raise AssertionError('identity bnode returned identity for bnode')
+        except ValueError as e:
+            pass
+            
+        try:
+            bnode = rdflib.BNode()
+            assert IdentityBNode(bnode) == IdentityBNode(bnode)
+            raise AssertionError('identity bnode returned identity for bnode')
+        except ValueError as e:
+            pass
+        
+        lit1 = rdflib.Literal('hello there')
+        lit2 = rdflib.Literal('hello there', datatype=rdflib.XSD.string)
+        lit3 = rdflib.Literal('hello there', lang='klingon')
+        
+        assert IdentityBNode(lit1) == IdentityBNode(lit1)
+        assert IdentityBNode(lit2) == IdentityBNode(lit2)
+        assert IdentityBNode(lit3) == IdentityBNode(lit3)
+
+        assert IdentityBNode(lit1) != IdentityBNode(lit2)
+        assert IdentityBNode(lit1) != IdentityBNode(lit3)
+        assert IdentityBNode(lit2) != IdentityBNode(lit3)
+
+        uri1 = rdflib.URIRef('http://example.org/1')
+        uri2 = rdflib.URIRef('http://example.org/2')
+
+        assert IdentityBNode(uri1) == IdentityBNode(uri1)
+        assert IdentityBNode(uri2) == IdentityBNode(uri2)
+
+        assert IdentityBNode(uri1) != IdentityBNode(uri2)
 
     def test_bnodes(self):
         assert sorted(bnodes(self.graph1)) != sorted(bnodes(self.graph2)), 'bnodes match!'
@@ -57,3 +94,6 @@ class TestIBNode(unittest.TestCase):
 
         assert id1.identity == id2.identity, 'identities do not match'
 
+    def test_check(self):
+        id1 = IdentityBNode(self.graph1)
+        assert id1.check(self.graph2), 'check failed!'
