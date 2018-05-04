@@ -138,9 +138,16 @@ class IdentityBNode(rdflib.BNode):
     """
     cypher = hashlib.sha256
     encoding = 'utf-8'
-    def __init__(self, triples_or_pairs_or_thing):
+    def __new__(cls, triples_or_pairs_or_thing):
+        self = super().__new__(cls)  # first time without value
+        self.cypher_check()
         self.identity = self.identity_function(triples_or_pairs_or_thing)
-        super().__init__(identity)
+        return super().__new__(cls, self.identity)
+
+    def cypher_check(self):
+        m1 = self.cypher()
+        m2 = self.cypher()
+        assert m1.digest() == m2.digest(), f'Cypher {self.cypher} does not have a stable starting point!'
 
     def atomic(self, thing):
         m = self.cypher()
@@ -152,16 +159,19 @@ class IdentityBNode(rdflib.BNode):
             m.update(to_hash)
         return m.digest()
 
-    def ordered_atomic(self, *things):
+    def ordered_identity(self, *things):
         m = self.cypher()
         for thing in things:
+            if type(thing) != bytes:
+                raise TypeError(f'{type(thing)} is not bytes, did you forget to call atomic first?')
             if thing is None:  # all null are converted to the starting hash
-                thing = self.atomic(thing)
+                thing = self.atomic(None)
+            #thing = self.atomic(thing)  # FIXME careful on double hash?
             m.update(thing)
         return m.digest()
 
     def add_to_subgraphs(self, thing):
-        printD(thing)
+        #printD(thing)
         t = s, p, o = thing  # FIXME how to deal with pairs?
         if s in self.subgraph_mapping:
             ss = self.subgraph_mapping[s]
@@ -241,10 +251,10 @@ class IdentityBNode(rdflib.BNode):
             yield cmax
 
         def intlast(thing):
-            return tuple(sortlast + bytes(str(e))
-                            if isinstance(e, int)
-                            else e
-                            for e in thing)
+            return tuple(sortlast + str(e).encode(self.encoding)
+                         if isinstance(e, int)
+                         else e
+                         for e in thing)
 
         # total ordering on the identities of the the named elements of the subgraph
         # if there is a name as a subject it will appear first due to the fffffff
@@ -261,6 +271,7 @@ class IdentityBNode(rdflib.BNode):
 
         # reorder based on the linking structure putting integers last
         phase2 = tuple(sorted(phase2, key=intlast))
+
         return phase2
 
     def subgraph_identities(self):
@@ -270,25 +281,31 @@ class IdentityBNode(rdflib.BNode):
             normalized = self.sort_subgraph(subgraph)
             if isinstance(normalized[0][0], int):  # is free
                 head = None
-                graph = normalized
+                ngraph = normalized
             else:
-                head, *graph = normalized
+                head, *ngraph = normalized
 
-            ident = self.ordered_atomic(
-                *(self.ordered_atomic(*thing)
-                  for thing in graph))
+            ident = self.ordered_identity(
+                *(self.ordered_identity(*(str(e).encode(self.encoding) if
+                                          isinstance(e, int) else  # FIXME recurse?? except that we already hash the non bnodes...
+                                          # FIXME this makes the identity not match the graph?
+                                          e
+                                          for e in tuple_))
+                  for tuple_ in ngraph))
 
             if head is None:
-                free[ident] = graph
+                free[ident] = ngraph
             else:
                 named_linked[ident] = head
-                linked[ident] = graph
+                linked[ident] = ngraph
 
         return named_linked, linked, free
 
     def recurse(self, triples_or_pairs_or_thing, bnodes_ok=False):
         for thing in triples_or_pairs_or_thing:
-            if isinstance(thing, bytes):
+            if thing is None:
+                yield self.atomic(thing)
+            elif isinstance(thing, bytes):
                 # do NOT assume that this has already been hashed,
                 # if bytes is encountered here, it should be hashed
                 yield self.atomic(thing)
@@ -299,7 +316,8 @@ class IdentityBNode(rdflib.BNode):
             elif isinstance(thing, rdflib.Literal):
                 # "http://asdf.asdf" != <http://asdf.asdf>
                 # TODO hash individual bits first or no?, I think no
-                yield self.ordered_atomic(thing, thing.datatype, thing.language)
+                # update, yes hash first for consistency, always recurse before calling an atomic
+                yield self.ordered_identity(*self.recurse((str(thing), thing.datatype, thing.language)))
             elif isinstance(thing, IdLocalBNode) or isinstance(thing, IdentityBNode):
                 # TODO check that we aren't being lied to?
                 yield thing.identity
@@ -317,19 +335,22 @@ class IdentityBNode(rdflib.BNode):
                     self.add_to_subgraphs(tuple(self.recurse(thing, bnodes_ok=True)))
                 else:
                     if len(thing) == 3 or len(thing) == 2:  # FIXME assumes contents are atomic
-                        yield self.ordered_atomic(*tuple(self.recurse(thing)))
+                        yield self.ordered_identity(*self.recurse(thing))
                     else:
                         raise ValueError('wat')
-                        yield self.ordered_atomic(*sorted(tuple(self.recurse(thing))))
+                        yield self.ordered_identity(*sorted(self.recurse(thing)))
 
     def identity_function(self, triples_or_pairs_or_thing):
         self.subgraph_mapping = {}
         self.subgraphs = []
-        self.m = self.cypher()
         named_identities = tuple(self.recurse(triples_or_pairs_or_thing))  # memory :/
         named_linked, linked, free = self.subgraph_identities()
-        embed()
-        return self.m.digest()
+        # named linked are the 'head' triples that do not participate in the calculation of the linked identity but that we do need to map
+        #assert tuple(named_linked) == tuple(linked)
+        m = self.cypher()
+        [m.update(ident) for ident in sorted(named_identities + tuple(linked) + tuple(free))]
+        #embed()
+        return m.digest()
 
 class IdLocalBNode(rdflib.BNode):
     """ For use inside triples.
@@ -409,10 +430,23 @@ class InterLexLoad:
         #def datal(head):
             #return cdata[header.index(head)]
 
-        values = [(row.ilx[4:], row.iri) for row in query if row.ilx not in row.iri]
+        values = [(row.ilx[4:], row.iri, row.version) for row in query if row.ilx not in row.iri]
 
-        # TODO :/
-        dupes = [u for u, c in Counter(_[1] for _ in values).most_common() if c > 1]
+        asdf = {}
+        for ilx, iri, ver in values :
+            if iri not in asdf:
+                asdf[iri] = set()
+
+            asdf[iri].add(ilx)
+
+        dupe_report = {k:tuple(f'http://uri.interlex.org/base/ilx_{i}' for i in v)
+         for k, v in asdf.items()
+         if len(v) > 1}
+        _ = [print(k, '\t', *v) for k, v in sorted(dupe_report.items())]
+
+        dupes = tuple(dupe_report)
+
+        # dupes = [u for u, c in Counter(_[1] for _ in values).most_common() if c > 1]  # picked up non-unique ilx which is not what we wanted
 
         bads = []
         bads += [(a, b) for a, b in values if b in dupes]
