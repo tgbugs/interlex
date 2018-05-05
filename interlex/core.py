@@ -138,15 +138,22 @@ class IdentityBNode(rdflib.BNode):
     """
     cypher = hashlib.sha256
     encoding = 'utf-8'
+    depth_invariant_predicates = rdf.rest,
+
     def __new__(cls, triples_or_pairs_or_thing, debug=False):
         self = super().__new__(cls)  # first time without value
+        self.debug = debug
+        self.id_lookup = {}
         self.cypher_check()
+        self.dip_idents = tuple(self.atomic(p) for p in self.depth_invariant_predicates)
         self.identity = self.identity_function(triples_or_pairs_or_thing)
         real_self = super().__new__(cls, self.identity)
         if debug == True:
             return self
             
+        real_self.debug = debug
         real_self.identity = self.identity
+        real_self.dip_idents = self.dip_idents
         return real_self
 
     def check(self, other):
@@ -165,7 +172,14 @@ class IdentityBNode(rdflib.BNode):
             else:
                 to_hash = str(thing).encode(self.encoding)
             m.update(to_hash)
-        return m.digest()
+        else:
+            to_hash = None
+
+        identity = m.digest()
+        if self.debug:
+            self.id_lookup[identity] = to_hash
+
+        return identity
 
     def ordered_identity(self, *things):
         """ this assumes that the things are ALREADY ordered correctly """
@@ -177,7 +191,14 @@ class IdentityBNode(rdflib.BNode):
                 thing = self.atomic(None)
             #thing = self.atomic(thing)  # FIXME careful on double hash?
             m.update(thing)
-        return m.digest()
+
+        identity = m.digest()
+        if self.debug:
+            self.id_lookup[identity] = tuple(self.id_lookup[t] if
+                                             t in self.id_lookup else
+                                             t for t in things)
+
+        return identity
 
     def add_to_subgraphs(self, thing):
         #printD(thing)
@@ -238,15 +259,26 @@ class IdentityBNode(rdflib.BNode):
 
     def sort_subgraph(self, subgraph):
         sortlast = b'\xff' * 64
-        # FIXME ambiguity when we have multiple blank, named, blank as in lists
-        # FIXME these are subgraphs of subgraphs...
-        # they are connected but we still need to calculate and identity for them
-        # rank by closest named objects, ties are broken by the 2nd closest named etc.
+        objects = set(o for s, p, o in subgraph)
         double_blank_objects = set(o for s, p, o in subgraph if
                                    isinstance(s, rdflib.BNode) and
                                    isinstance(o, rdflib.BNode))
 
+        heads = set(s for s, p, o in subgraph if
+                    isinstance(s, rdflib.BNode) and
+                    s not in objects and
+                    isinstance(o, rdflib.BNode))
+
         distance_value = {}
+
+        # FIXME this is _still_ broken for lists
+        # because list order has no semantics
+        # but persists, sigh
+
+        # FIXME ambiguity when we have multiple blank, named, blank as in lists
+        # FIXME these are subgraphs of subgraphs...
+        # they are connected but we still need to calculate and identity for them
+        # rank by closest named objects, ties are broken by the 2nd closest named etc.
 
         def inner(obj):  # FIXME this kills the crab
             if obj not in distance_value:
@@ -255,7 +287,9 @@ class IdentityBNode(rdflib.BNode):
                 if s == obj:
                     if isinstance(o, rdflib.BNode):
                         for depth, value in inner(o):
-                            depth += 1
+                            if p not in self.dip_idents:
+                                depth += 1
+
                             dv = depth, value
                             distance_value[obj].add(dv)
                             yield dv
@@ -265,12 +299,13 @@ class IdentityBNode(rdflib.BNode):
                         yield dv
                         
 
-        for o in double_blank_objects:
+        for o in double_blank_objects | heads:
             list(inner(o))
 
         double_ranks = {k:str(i+1).encode(self.encoding)
                         for i, (k, v) in enumerate(sorted(distance_value.items(),
                                                           key=lambda kv:sorted(kv[1])))}
+
         def sortkey(thing):
             return tuple((sortlast + double_ranks[t] if
                           t in double_ranks else
@@ -315,6 +350,13 @@ class IdentityBNode(rdflib.BNode):
 
         # reorder based on the linking structure putting integers last
         phase2 = tuple(sorted(phase2, key=intlast))
+
+        if self.debug and distance_value:
+            #printD(self.id_lookup.keys())
+            printD()
+            _ = [(print(k[:5], *((c, self.id_lookup[e]) for c, e in v)), print())
+                 for k, v in sorted(distance_value.items())]
+            #embed()
 
         return phase2
 

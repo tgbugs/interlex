@@ -8,13 +8,18 @@ from IPython import embed
 class TestIBNode(unittest.TestCase):
     def setUp(self):
         self.graph1 = rdflib.Graph()
-        file = Path(devconfig.ontology_local_repo) / 'ttl/BIRNLex_annotation_properties.ttl'
+        #file = Path(devconfig.ontology_local_repo) / 'ttl/BIRNLex_annotation_properties.ttl'
+        file = Path(devconfig.git_local_base, 'pyontutils/test/nasty.ttl')
         with open(file.as_posix(), 'rb') as f:
             self.ser1 = f.read()
+        #embed()
         self.graph1.parse(data=self.ser1, format='turtle')
 
-        g2format = 'xml'
+        g2format = 'nt'
+        # broken serialization :/ with full lenght prefixes
         self.ser2 = self.graph1.serialize(format=g2format)
+        with open('/tmp/test_ser2.ttl', 'wb') as f:
+            f.write(self.ser2)
 
         self.graph2 = rdflib.Graph()
         self.graph2.parse(data=self.ser2, format=g2format)
@@ -62,20 +67,34 @@ class TestIBNode(unittest.TestCase):
     def test_bnodes(self):
         assert sorted(bnodes(self.graph1)) != sorted(bnodes(self.graph2)), 'bnodes match!'
 
+    def test_nifttl(self):
+        fmt = 'nifttl'
+        s1 = self.graph1.serialize(format=fmt)
+        g2 = rdflib.Graph()
+        [g2.add(t) for t in self.graph1]
+        [g2.namespace_manager.bind(k, str(v)) for k, v in self.graph1.namespaces()]
+        s2 = g2.serialize(format=fmt)
+        try:
+            assert s1 == s2
+        except AssertionError as e:
+            with open('/tmp/f1.ttl', 'wb') as f1, open('/tmp/f2.ttl', 'wb') as f2:
+                f1.write(s1)
+                f2.write(s2)
+            raise e
+
     def test_ibnode(self):
         def sbs(l1, l2):
             for a, b in zip(l1, l2):
                 print('', a[:5], a[-5:], '\n', b[:5], b[-5:], '\n\n')
 
         def ds(d1, d2):
-            for (k1, v1), (k2, v2) in zip(sorted(d1.items()), sorted(d2.items())):
+            for (k1, v1), (k2, v2) in sorted(zip(sorted(d1.items()), sorted(d2.items()))):
                 if k1 != k2:
                     # TODO len t1 != len t2
                     for t1, t2 in sorted(zip(sorted(v1), sorted(v2))):
                         print(tuple(e[:5] if type(e) == bytes else e for e in t1))
                         print(tuple(e[:5] if type(e) == bytes else e for e in t2))
                         print()
-            
 
         id1 = IdentityBNode(self.graph1, True)
         id2 = IdentityBNode(self.graph2, True)
@@ -90,7 +109,10 @@ class TestIBNode(unittest.TestCase):
 
         idfi1 = sorted(id1.free_identities) 
         idfi2 = sorted(id2.free_identities) 
-        assert idfi1 == idfi2, 'free identities do not match'
+        try:
+            assert idfi1 == idfi2, 'free identities do not match'
+        except:
+            embed()
 
         assert id1.identity == id2.identity, 'identities do not match'
 

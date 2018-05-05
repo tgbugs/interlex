@@ -7,7 +7,7 @@ from pyontutils.core import rdf, owl
 from pyontutils.utils import OrderInvariantHash
 from pyontutils.ttlser import DeterministicTurtleSerializer
 from interlex.exc import hasErrors, LoadError
-from interlex.core import printD, permissions_sql, bnodes, makeParamsValues
+from interlex.core import printD, permissions_sql, bnodes, makeParamsValues, IdentityBNode
 from IPython import embed
 
 class TripleLoader:
@@ -21,27 +21,12 @@ class TripleLoader:
     def ___new__(cls, *args, **kwargs):
         return super().__new__(cls)
 
-    def __new__(cls, session, cypher=hashlib.sha256, encoding='utf-8'):
+    def __new__(cls, session):
         cls.process_type = cls.__name__
         cls.session = session
         cls.execute = session.execute
-        cls.cypher = cypher
-        cls.encoding = encoding
-        cls.orderInvariantHash = OrderInvariantHash(cypher, encoding)
         cls.__new__ = cls.___new__
         return cls
-
-    def _old__init__(self, session, cypher=hashlib.sha256, encoding='utf-8'):
-        # FIXME this stuff should go in new
-        self.process_type = self.__class__.__name__
-        self.session = session
-        self.execute = session.execute
-        self.cypher = cypher
-        self.encoding = encoding
-        self.orderInvariantHash = OrderInvariantHash(cypher, encoding)
-        self._safe = False
-        #self.reference_host = next(self.session.execute('SELECT reference_host()'))
-        #printD(self.reference_host)
 
     def __init__(self, group, user, reference_name, reference_host):
         self.preinit()
@@ -354,9 +339,7 @@ class TripleLoader:
     @property
     def serialization_identity(self):
         if self._serialization_identity is None:
-            m = self.cypher()
-            m.update(self.serialization)
-            ident = m.digest()
+            ident = IdentityBNode(self.serialization).identity
             if self.ident_exists(ident):
                 # TODO user options for what to do about qualifiers
                 raise LoadError(f'The exact file derferenced to by {self.name} is already in InterLex')
