@@ -96,8 +96,8 @@ class TestIBNode(unittest.TestCase):
                         print(tuple(e[:5] if type(e) == bytes else e for e in t2))
                         print()
 
-        id1 = IdentityBNode(self.graph1, True)
-        id2 = IdentityBNode(self.graph2, True)
+        id1 = IdentityBNode(self.graph1, debug=True)
+        id2 = IdentityBNode(self.graph2, debug=True)
 
         idni1 = sorted(id1.named_identities) 
         idni2 = sorted(id2.named_identities) 

@@ -6,7 +6,7 @@ import hashlib
 from pathlib import Path, PurePath
 from tempfile import gettempdir
 from functools import partialmethod
-from collections import Counter
+from collections import Counter, defaultdict
 import rdflib
 import requests
 import sqlalchemy as sa
@@ -138,6 +138,7 @@ class IdentityBNode(rdflib.BNode):
     """
     cypher = hashlib.sha256
     encoding = 'utf-8'
+    sortlast = b'\xff' * 64
     depth_invariant_predicates = rdf.rest,
 
     def __new__(cls, triples_or_pairs_or_thing, debug=False):
@@ -185,10 +186,10 @@ class IdentityBNode(rdflib.BNode):
         """ this assumes that the things are ALREADY ordered correctly """
         m = self.cypher()
         for thing in things:
-            if type(thing) != bytes:
-                raise TypeError(f'{type(thing)} is not bytes, did you forget to call atomic first?')
             if thing is None:  # all null are converted to the starting hash
                 thing = self.atomic(None)
+            if type(thing) != bytes:
+                raise TypeError(f'{type(thing)} is not bytes, did you forget to call atomic first?')
             #thing = self.atomic(thing)  # FIXME careful on double hash?
             m.update(thing)
 
@@ -200,16 +201,120 @@ class IdentityBNode(rdflib.BNode):
 
         return identity
 
-    def add_to_subgraphs(self, thing):
+    def add_subgraphs(self, triple):
+        # blank objects are the subject heads of all our unnamed graphs
+        #blank_object_things = [t for t in things if isinstance(t[-1] )]
+        #assert len(blank_objects) == len(set(blank_objects))  # no duplicates
+
+        if not hasattr(self, 'named_blank_object_trips'):
+            self.named_blank_object_trips = defaultdict(set)
+            self.unnamed_blank_object_trips = defaultdict(set)  # note that these are not just heads
+            self.blank_subject_only_trips = defaultdict(set)  # _  p o -> sortlast s p -> hash
+            self.subjects_in_waiting = defaultdict(set)
+
+        #for t in triples:
+        s, p, o = t = triple
+        if isinstance(s, rdflib.BNode) and isinstance(o, rdflib.BNode):
+            self.unnamed_blank_object_trips[o].add(t)
+            self.subjects_in_waiting[s].add(t)
+            # TODO do we need to identify the heads of free graphs explicitly?
+        elif isinstance(s, rdflib.BNode):
+            self.blank_subject_only_trips[s].add(t)
+        elif isinstance(o, rdflib.BNode):
+            self.named_blank_object_trips[o].add(t)
+        else:
+            pass  # normal named thing
+
+    def sort_subgraphs(self):
+        def sortkey(thing):
+            # subject should always be the only bnode
+            s, p, o = thing
+            return (self.sortlast, p, o)
+
+        hashed_leaves = {}
+        # identical blank subject
+        for s, trips in self.blank_subject_only_trips.items():
+            # use None to treat blank nodes as null in in the sense of
+            normalized = sorted((None, self.atomic(p), self.atomic(o)) for s, p, o in trips)
+            # TODO normalize/flatten lists
+            hashed_leaves[s] = self.ordered_identity(*sorted((self.ordered_identity(*t)
+                                                              for t in normalized)))
+
+        def inner(todo):
+            for s, trips in self.subjects_in_waiting.items():
+                normalized = []
+                for t in trips:
+                    s, p, o = t
+                    if o not in hashed_leaves:
+                        # intermediate nodes
+                        todo.add(s)
+                        #raise ValueError()
+                    else:
+                        #printD(hashed_leaves[o])
+
+                        sn = None  # FIXME sort before or after None?
+                        pn = self.atomic(p)
+                        on = hashed_leaves[o]
+
+                        normalized.append((sn, pn, on))
+
+                normalized = sorted(normalized, key=sortkey)
+                #printD(normalized)
+                hashed_leaves[s] = self.ordered_identity(*sorted(self.ordered_identity(*t)
+                                                                  for t in normalized))
+
+            return todo
+
+        todo = True
+        printD(len(hashed_leaves))
+        while todo:
+            todo = inner(set()) #if type(todo) == bool else inner(todo)
+            #printD(len(todo))
+
+        for s, trips in {**self.blank_subject_only_trips, **self.subjects_in_waiting}.items():
+            # heads
+            normalized = []
+            if (s not in self.named_blank_object_trips and
+                s not in self.unnamed_blank_object_trips and
+                isinstance(s, rdflib.BNode)):
+                for s, p, o in trips:
+                    if not isinstance(o, rdflib.BNode):
+                        continue  # FIXME
+                    #yield None, p, hashed_leaves[o]
+                    pn = self.atomic(p)
+                    on = hashed_leaves[o]
+                    try:
+                        normalized.append((None, pn, on))
+                    except KeyError as e:
+                        printD(e)
+
+                normalized = sorted(normalized, key=sortkey)
+                hashed_leaves[s] = self.ordered_identity(*sorted(self.ordered_identity(*t)
+                                                                  for t in normalized))
+
+        printD(len(hashed_leaves))
+
+        # heads
+        for s in ((set(self.blank_subject_only_trips) |
+                   set(self.subjects_in_waiting)) -
+                  (set(self.named_blank_object_trips) |
+                   set(self.unnamed_blank_object_trips))):
+            if isinstance(s, rdflib.BNode):
+                printD(s, hashed_leaves[s][:10])
+
+        embed()
+
+    def add_to_subgraphs(self, thing, subgraphs, subgraph_mapping):
         #printD(thing)
+        # FIXME need to deal with heads and named heads
         t = s, p, o = thing  # FIXME how to deal with pairs?
-        if s in self.subgraph_mapping:
-            ss = self.subgraph_mapping[s]
+        if s in subgraph_mapping:
+            ss = subgraph_mapping[s]
         else:
             ss = False
 
-        if o in self.subgraph_mapping:
-            os = self.subgraph_mapping[o]
+        if o in subgraph_mapping:
+            os = subgraph_mapping[o]
         else:
             os = False
 
@@ -217,13 +322,13 @@ class IdentityBNode(rdflib.BNode):
             if ss is not os:  # this should only happen for 1:1 bnodes
                 new = ss + [t] + os
                 try:
-                    self.subgraphs.remove(ss)
-                    self.subgraphs.remove(os)
-                    self.subgraphs.append(new)
+                    subgraphs.remove(ss)
+                    subgraphs.remove(os)
+                    subgraphs.append(new)
                     for bn in bnodes(ss):
-                        self.subgraph_mapping[bn] = new
+                        subgraph_mapping[bn] = new
                     for bn in bnodes(os):
-                        self.subgraph_mapping[bn] = new
+                        subgraph_mapping[bn] = new
                 except ValueError as e:
                     print(e)
                     embed()
@@ -243,33 +348,72 @@ class IdentityBNode(rdflib.BNode):
                 ss.append(t)
         elif not (ss or os):
             new = [t]
-            self.subgraphs.append(new)
+            subgraphs.append(new)
             if isinstance(s, rdflib.BNode):
-                self.subgraph_mapping[s] = new
+                subgraph_mapping[s] = new
             if isinstance(o, rdflib.BNode):
-                self.subgraph_mapping[o] = new
+                subgraph_mapping[o] = new
         elif ss:
             ss.append(t)
             if isinstance(o, rdflib.BNode):
-                self.subgraph_mapping[o] = ss
+                subgraph_mapping[o] = ss
         elif os:
             os.append(t)
             if isinstance(s, rdflib.BNode):
-                self.subgraph_mapping[s] = os
+                subgraph_mapping[s] = os
+
+    def readable(self, triples):
+        if self.debug:
+            return tuple(tuple(self.id_lookup[e] if
+                         e in self.id_lookup else
+                         e for e in t)
+                         for t in triples)
+        else:
+            return triples
 
     def sort_subgraph(self, subgraph):
-        sortlast = b'\xff' * 64
+        """ This is really sort nameless subgraph as implemented at the moment
+        it chokes when given a named subgraph
+        """
         objects = set(o for s, p, o in subgraph)
-        double_blank_objects = set(o for s, p, o in subgraph if
-                                   isinstance(s, rdflib.BNode) and
-                                   isinstance(o, rdflib.BNode))
 
+        # subjects that are never objects
         heads = set(s for s, p, o in subgraph if
-                    isinstance(s, rdflib.BNode) and
-                    s not in objects and
-                    isinstance(o, rdflib.BNode))
+                    s not in objects)
+        linked_heads = set((s, p, o) for s, p, o in subgraph if
+                           s in heads and
+                           isinstance(o, rdflib.BNode))
 
-        distance_value = {}
+        subgraph_heads = tuple(t for t in subgraph if t[0] in heads)
+
+        # rank only by heads since the identity of the subgraphs will be subsumed
+        # into those head predicate subgraph identity or rather
+        # head predicate 0 subgraph identity
+        # but since everything we will be sorting against has a zero we can drop it
+        # we cannot drop the zero if hashing though I think? or we haven't decided yet
+
+        #double_blank_objects = set(o for s, p, o in subgraph if
+                                   #isinstance(s, rdflib.BNode) and
+                                   #isinstance(o, rdflib.BNode))
+
+        _subgraphs = []
+        _subgraph_mapping = {}
+        lh_sort = {}
+        if linked_heads:
+            for t in subgraph:
+                if t[0] not in heads:  # subgraph heads complement...
+                    self.add_to_subgraphs(t, _subgraphs, _subgraph_mapping)
+            named_linked, linked, free = self.subgraph_identities(_subgraphs, replace=True)
+            assert not named_linked, 'there are triples with named subjects!'
+            assert not linked, 'there are triples with named subjects!'
+        #if _subgraphs and self.debug:
+            #_ = [(print(k[:5], *(self.id_lookup[e] if e in self.id_lookup else e for e in t)), print())
+                 #for k, ts in sorted(free.items(), key=lambda kv:sorted(kv[1])) for t in ts]
+            for t in linked_heads:
+                head, p, o = t
+                lh_sort[t] = sortlast, p, _subgraph_mapping[o][0]
+
+        #distance_value = {}
 
         # FIXME this is _still_ broken for lists
         # because list order has no semantics
@@ -283,32 +427,52 @@ class IdentityBNode(rdflib.BNode):
         def inner(obj):  # FIXME this kills the crab
             if obj not in distance_value:
                 distance_value[obj] = set()
+            if obj in _subgraph_mapping:
+                value = _subgraph_mapping[obj][0]
+                dv = 0, value  # using a set means we are ok to add multiple times for all bnodes in subgraph
+                # TODO does it matter that multiple bnodes participating in the same subgrpah identity
+                # end up in distance_value?
+                # distance_value[obj].add(dv)  # do not set identity on a participant node
+                #printD('returning', obj, *dv)
+                #return dv
+                yield dv  # wtf
             for s, p, o in subgraph:
                 if s == obj:
                     if isinstance(o, rdflib.BNode):
+                        #if o in _subgraph_mapping:
+                            #printD(s, p, o)
                         for depth, value in inner(o):
                             if p not in self.dip_idents:
                                 depth += 1
 
                             dv = depth, value
                             distance_value[obj].add(dv)
-                            yield dv
+                            if value:
+                                yield dv
+                            else:
+                                return dv
                     else:
                         dv = 1, o
                         distance_value[obj].add(dv)
                         yield dv
-                        
 
-        for o in double_blank_objects | heads:
-            list(inner(o))
+        #for o in double_blank_objects | heads:
+        if self.debug and heads:
+            list(map(print, sorted(self.readable(subgraph))))
+            #embed()
+        #for o in heads:
+            #list(inner(o))
 
-        double_ranks = {k:str(i+1).encode(self.encoding)
-                        for i, (k, v) in enumerate(sorted(distance_value.items(),
-                                                          key=lambda kv:sorted(kv[1])))}
+        #double_ranks = {k:str(i+1).encode(self.encoding)
+                        #for i, (k, v) in enumerate(sorted(distance_value.items(),
+                                                          #key=lambda kv:sorted(kv[1])))}
+
+        head_ranks = {head:str(i + 1).encode(self.encoding)
+                      for i, (k, v) in enumerate(sorted(lh_sort.items(), key=lambda kv:sorted(kv[1])))}
 
         def sortkey(thing):
-            return tuple((sortlast + double_ranks[t] if
-                          t in double_ranks else
+            return tuple((sortlast + head_ranks[t] if
+                          t in head_ranks else
                           sortlast + b'0') if
                          isinstance(t, rdflib.BNode) else
                          t
@@ -337,7 +501,7 @@ class IdentityBNode(rdflib.BNode):
 
         # total ordering on the identities of the the named elements of the subgraph
         # if there is a name as a subject it will appear first due to the fffffff
-        phase1 = sorted(subgraph, key=sortkey)
+        phase1 = sorted(subgraph_heads, key=sortkey)
 
         cmax = -1
         existing = {}
@@ -351,19 +515,23 @@ class IdentityBNode(rdflib.BNode):
         # reorder based on the linking structure putting integers last
         phase2 = tuple(sorted(phase2, key=intlast))
 
-        if self.debug and distance_value:
-            #printD(self.id_lookup.keys())
-            printD()
-            _ = [(print(k[:5], *((c, self.id_lookup[e]) for c, e in v)), print())
-                 for k, v in sorted(distance_value.items())]
+        #if linked_heads: #distance_value:
+            #if self.debug:
+                #pass
+                #printD(self.id_lookup.keys())
+                #printD()
+                #_ = [(print(k[:5], *((c, self.id_lookup[e]) for c, e in v)), print())
+                     #for k, v in sorted(lh_sort.items())]
             #embed()
 
+        if not phase2:
+            embed()
         return phase2
 
-    def subgraph_identities(self):
+    def subgraph_identities(self, subgraphs, replace=False):
         # TODO fail on dangling nodes
         named_linked, linked, free = {}, {}, {}
-        for subgraph in self.subgraphs:
+        for subgraph in subgraphs:
             normalized = self.sort_subgraph(subgraph)
             if isinstance(normalized[0][0], int):  # is free
                 head = None
@@ -378,6 +546,15 @@ class IdentityBNode(rdflib.BNode):
                                           e
                                           for e in tuple_))
                   for tuple_ in ngraph))
+
+            if self.debug:
+                self.id_lookup[ident] = tuple(self.id_lookup[t] if
+                                                 t in self.id_lookup else
+                                                 t for t in ngraph)
+
+            if replace:
+                subgraph.clear()
+                subgraph.append(ident)
 
             if head is None:
                 free[ident] = ngraph
@@ -419,7 +596,9 @@ class IdentityBNode(rdflib.BNode):
                                                 #not isinstance(t, rdflib.BNode) else
                                                 #t
                                                 #for t in thing))
-                    self.add_to_subgraphs(tuple(self.recurse(thing, bnodes_ok=True)))
+                    #self.add_to_subgraphs(tuple(self.recurse(thing, bnodes_ok=True)),
+                                          #self.subgraphs, self.subgraph_mapping)
+                    self.add_subgraphs(thing)
                 else:
                     if len(thing) == 3 or len(thing) == 2:  # FIXME assumes contents are atomic
                         yield self.ordered_identity(*self.recurse(thing))
@@ -436,10 +615,11 @@ class IdentityBNode(rdflib.BNode):
             self.subgraph_mapping = {}
             self.subgraphs = []
             self.named_identities = tuple(self.recurse(triples_or_pairs_or_thing))  # memory :/
-            self.named_linked, self.linked_identities, self.free_identities = self.subgraph_identities()
+            #self.named_linked, self.linked_identities, self.free_identities = self.subgraph_identities(self.subgraphs)
             # named linked are the 'head' triples that do not participate in the
             # calculation of the linked identity but that we do need to map
             #assert tuple(named_linked) == tuple(linked)
+            asdf = self.sort_subgraphs()
             self.all_idents = sorted(self.named_identities +
                                     tuple(self.linked_identities) +
                                     tuple(self.free_identities))
