@@ -147,6 +147,7 @@ class IdentityBNode(rdflib.BNode):
         self.id_lookup = {}
         self.cypher_check()
         self.dip_idents = tuple(self.atomic(p) for p in self.depth_invariant_predicates)
+        self._thing = triples_or_pairs_or_thing
         self.identity = self.identity_function(triples_or_pairs_or_thing)
         real_self = super().__new__(cls, self.identity)
         if debug == True:
@@ -201,22 +202,45 @@ class IdentityBNode(rdflib.BNode):
 
         return identity
 
-    def add_subgraphs(self, triple):
+    def blah(self, triple):
+        # FIXME this does not work because blank subjects can occur in more than one triple
+
         # blank objects are the subject heads of all our unnamed graphs
         #blank_object_things = [t for t in things if isinstance(t[-1] )]
         #assert len(blank_objects) == len(set(blank_objects))  # no duplicates
 
+        if not hasattr(self, 's_all_blanks'):
+            self.s_all_blanks = defaultdict(set)
+            self.o_all_blanks = defaultdict(set)
+
+        #for t in triples:
+        s, p, o = t = triple
+
+        if isinstance(s, rdflib.BNode):
+            self.s_all_blanks[s].add(t)
+        if isinstance(o, rdflib.BNode):
+            self.o_all_blanks[o].add(t)
+
+    def add_subgraphs(self, triple):
         if not hasattr(self, 'named_blank_object_trips'):
             self.named_blank_object_trips = defaultdict(set)
             self.unnamed_blank_object_trips = defaultdict(set)  # note that these are not just heads
             self.blank_subject_only_trips = defaultdict(set)  # _  p o -> sortlast s p -> hash
             self.subjects_in_waiting = defaultdict(set)
 
-        #for t in triples:
         s, p, o = t = triple
+        #for s, trips in self.s_all_blanks:
+            #pass
+        #for o, trips in self.o_all_blanks:
+            #pass
+
         if isinstance(s, rdflib.BNode) and isinstance(o, rdflib.BNode):
             self.unnamed_blank_object_trips[o].add(t)
             self.subjects_in_waiting[s].add(t)
+            #if s in self.blank_subject_only_trips:
+                #more = self.blank_subject_only_trips[s]
+                #self.subjects_in_waiting[s].update(more)
+
             # TODO do we need to identify the heads of free graphs explicitly?
         elif isinstance(s, rdflib.BNode):
             self.blank_subject_only_trips[s].add(t)
@@ -237,70 +261,123 @@ class IdentityBNode(rdflib.BNode):
             # use None to treat blank nodes as null in in the sense of
             normalized = sorted((None, self.atomic(p), self.atomic(o)) for s, p, o in trips)
             # TODO normalize/flatten lists
-            hashed_leaves[s] = self.ordered_identity(*sorted((self.ordered_identity(*t)
-                                                              for t in normalized)))
+            #printD(normalized)
+            pti = tuple(self.ordered_identity(*t) for t in normalized)
+            #printD(pti)
+            ident = self.ordered_identity(*sorted(self.ordered_identity(*t)
+                                                  for t in normalized))
 
+            hashed_leaves[s] = ident
+            printD(s, ident)
+
+        hashed_branches = {}
         def inner(todo):
             for s, trips in self.subjects_in_waiting.items():
                 normalized = []
                 for t in trips:
                     s, p, o = t
-                    if o not in hashed_leaves:
+                    if o not in hashed_leaves and o not in hashed_branches:
                         # intermediate nodes
+                        printD(tc.red('WAT'), s)
                         todo.add(s)
+                        printD(todo)
                         #raise ValueError()
                     else:
                         #printD(hashed_leaves[o])
 
-                        sn = None  # FIXME sort before or after None?
-                        pn = self.atomic(p)
-                        on = hashed_leaves[o]
+                        if o in hashed_leaves:
+                            snl = None  # FIXME sort before or after None?
+                            pnl = self.atomic(p)
+                            onl = hashed_leaves[o]
+                            normalized.append((snl, pnl, onl))
 
-                        normalized.append((sn, pn, on))
+                        if o in hashed_branches:
+                            snb = None  # FIXME sort before or after None?
+                            pnb = self.atomic(p)
+                            onb = hashed_branches[o]
+                            normalized.append((snb, pnb, onb))
 
-                normalized = sorted(normalized, key=sortkey)
-                #printD(normalized)
-                hashed_leaves[s] = self.ordered_identity(*sorted(self.ordered_identity(*t)
-                                                                  for t in normalized))
+                if len(normalized) == len(trips):
+                    normalized = sorted(normalized, key=sortkey)
+                    ident = self.ordered_identity(*sorted(self.ordered_identity(*t)
+                                                          for t in normalized))
+                    hashed_branches[s] = ident
+                    printD(s, ident)
+                    #printD(normalized)
+                    #hashed_leaves[s] = self.ordered_identity(*sorted(self.ordered_identity(*t)
+                                                                      #for t in normalized))
 
+            printD(tc.red(str(len(todo))))
             return todo
 
+        count = 0
         todo = True
         printD(len(hashed_leaves))
         while todo:
             todo = inner(set()) #if type(todo) == bool else inner(todo)
-            #printD(len(todo))
+            printD(len(todo))
+            count += 1
+            if count > 10:
+                embed()
+                break
 
-        for s, trips in {**self.blank_subject_only_trips, **self.subjects_in_waiting}.items():
+
+        combined = defaultdict(set)
+        for k, v in self.blank_subject_only_trips.items():
+            combined[k].update(v)
+
+        for k, v in self.subjects_in_waiting.items():
+            combined[k].update(v)
+
+        # heads
+        heads = ((set(self.blank_subject_only_trips) |
+                  set(self.subjects_in_waiting)) -
+                 (set(self.named_blank_object_trips) |
+                  set(self.unnamed_blank_object_trips)))
+
+        head_trips = {k:v for k, v in 
+                      {**self.blank_subject_only_trips, **self.subjects_in_waiting}.items()
+                      if k in heads}
+
+        for s, trips in combined.items():
+            break
             # heads
             normalized = []
-            if (s not in self.named_blank_object_trips and
-                s not in self.unnamed_blank_object_trips and
-                isinstance(s, rdflib.BNode)):
+            #if (s not in self.named_blank_object_trips and
+                #s not in self.unnamed_blank_object_trips and
+                #isinstance(s, rdflib.BNode)):
+            if s in heads:
                 for s, p, o in trips:
-                    if not isinstance(o, rdflib.BNode):
-                        continue  # FIXME
+                    printD(s, p, o)
+                    #if not isinstance(o, rdflib.BNode):
+                        #raise TypeError('aaaaaaaaaa')
+                        #continue  # FIXME
                     #yield None, p, hashed_leaves[o]
                     pn = self.atomic(p)
-                    on = hashed_leaves[o]
+                    if o in hashed_leaves:
+                        on = hashed_leaves[o]
+                    elif o in hashed_branches:
+                        on = hashed_branches[o]
                     try:
                         normalized.append((None, pn, on))
                     except KeyError as e:
                         printD(e)
 
                 normalized = sorted(normalized, key=sortkey)
+                #printD(normalized)
                 hashed_leaves[s] = self.ordered_identity(*sorted(self.ordered_identity(*t)
                                                                   for t in normalized))
 
         printD(len(hashed_leaves))
-
-        # heads
-        for s in ((set(self.blank_subject_only_trips) |
-                   set(self.subjects_in_waiting)) -
-                  (set(self.named_blank_object_trips) |
-                   set(self.unnamed_blank_object_trips))):
+        for s in heads:
             if isinstance(s, rdflib.BNode):
-                printD(s, hashed_leaves[s][:10])
+                ident = hashed_leaves[s][:10]
+                printD(s, tc.red(str(ident)))
+                for trip in head_trips[s]:
+                    for t in sorted(yield_recursive(*trip, self._thing)):
+                        for e in t:
+                            pass
+                            #printD(e)
 
         embed()
 
