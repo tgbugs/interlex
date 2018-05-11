@@ -378,6 +378,8 @@ class IdentityBNode(rdflib.BNode):
                         else:  # named case
                             ident = self.triple_identity(s, p, object_ident)
                             self.named_subgraph_identities[s, p].append(ident)
+                            self.linked_object_identities[object_ident] = o
+
 
                         # there is only single triple where a
                         # bnode is an object so it is safe to pop
@@ -458,6 +460,7 @@ class IdentityBNode(rdflib.BNode):
 
             self.unnamed_subgraph_identities = {}
             self.named_subgraph_identities = defaultdict(list)
+            self.linked_object_identities = {}  # needed for proper identity calculation?
             self.resolve_bnode_idents()
 
             free = list(self.unnamed_subgraph_identities.values())
@@ -570,10 +573,10 @@ class InterLexLoad:
         # dupes = [u for u, c in Counter(_[1] for _ in values).most_common() if c > 1]  # picked up non-unique ilx which is not what we wanted
 
         bads = []
-        bads += [(a, b) for a, b in values if b in dupes]
+        bads += [(a, b) for a, b, _ in values if b in dupes]
         # TODO one of these is incorrect can't quite figure out which, so skipping entirely for now
 
-        for id_, iri in values:  # FIXME
+        for id_, iri, version in values:  # FIXME
             if ' ' in iri:  # sigh, skip these for now since pguri doesn't seem to handled them
                 bads.append((id_, iri))
         values = [v for v in values if v not in bads]

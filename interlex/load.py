@@ -4,6 +4,7 @@ import hashlib
 import requests
 import sqlalchemy as sa
 from pyontutils.core import rdf, owl
+from pyontutils.utils import TermColors as tc
 from pyontutils.ttlser import DeterministicTurtleSerializer
 from interlex.exc import hasErrors, LoadError
 from interlex.core import printD, permissions_sql, bnodes, makeParamsValues, IdentityBNode
@@ -467,14 +468,15 @@ class TripleLoader:
 
     @property
     def data_named(self):
-        for s, p, o in self.data:
-            if not isinstance(o, rdflib.BNode):
-                yield s, p, o
+        for t in self.data:
+            if not any(isinstance(e, rdflib.BNode) for e in t):
+                yield t
 
     @property
     def data_unnamed(self):
         for s, p, o in self.data:
-            if isinstance(o, rdflib.BNode):
+            if not isinstance(s, rdflib.BNode) and isinstance(o, rdflib.BNode):
+                # TODO this does not cover free trips
                 yield s, p, self._blank_identities[o]
 
     @property
@@ -709,11 +711,38 @@ class TripleLoader:
 
     def process_graph(self):
         datas = ('metadata', self.metadata), ('data', self.data)
-        normalize = lambda a:a
+
+        def normalize(cmax, t, existing):
+            for e in t:
+                if isinstance(e, rdflib.BNode):
+                    if e not in existing:
+                        cmax += 1
+                        existing[e] = cmax
+
+                    yield existing[e]
+                else:
+                    yield e
+
+            yield cmax
+
+        def sortkey(thing):
+            return tuple(IdentityBNode.sortlast if
+                         isinstance(e, rdflib.BNode) else
+                         e.encode(IdentityBNode.encoding)
+                         for e in thing)
+
+        def normgraph(trips):
+            cmax = -1
+            existing = {}
+            normalized = []
+            for trip in sorted(trips, key=sortkey):
+                cmax = normalize(cmax, trip, existing)
+            return tuple(normalized)  # do not reorder by number
+
         for name, data in datas:
             idents = IdentityBNode(data, debug=True)
 
-            free_subgraph_identities = {identity:normalize(idents.subgraph_mappings[s])
+            free_subgraph_identities = {identity:normgraph(idents.subgraph_mappings[s])
                                         for s, identity in idents.unnamed_subgraph_identities.items()}
 
             self._blank_identities = idents.blank_identities
@@ -722,15 +751,18 @@ class TripleLoader:
             if name == 'data':
                 self._free_subgraph_identities = free_subgraph_identities
 
-            linked_subgraph_identities = {identity:normalize(idents.subgraph_mappings[inverse[identity]])
-                                          for (s, p), identities in idents.named_subgraph_identities.items()
-                                          for identity in identities }
+            for identity, o in idents.linked_object_identities.items():
+                idents.subgraph_mappings[o]
+
+            linked_subgraph_identities = {identity:normgraph(idents.subgraph_mappings[o])
+                                          for identity, o in idents.linked_object_identities.items()}
 
             setattr(self, '_' + name + '_linked_subgraph_identities',
                     linked_subgraph_identities)
 
-            printD(self._blank_identities)
-            embed()
+            if self._blank_identities:
+                #printD(self._blank_identities)
+                embed()
 
     def make_load_records(self, ci, mi, di):
         # TODO resursive on type?
