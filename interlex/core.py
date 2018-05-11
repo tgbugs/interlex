@@ -269,6 +269,23 @@ class IdentityBNode(rdflib.BNode):
 
                         if isinstance(p, rdflib.BNode):
                             raise TypeError(f'predicates cannot be blank {thing}')
+                        elif p == rdf.rest:
+                            if o == rdf.nil:
+                                self.to_lift.add(thing)
+                            else:
+                                if o in self.find_heads:
+                                    raise ValueError('this should never happen')
+                                self.find_heads[o] = s
+                                self.to_skip.add(thing)
+                                self.bobjects.add(o)
+
+                            self.bsubjects.add(s)
+                            continue
+                        elif p == rdf.first:
+                            self.to_lift.add(thing)
+                            self.bsubjects.add(s)
+                            self.bobjects.add(o)
+                            continue
 
                         # TODO deal with things like rdf.rest that need to be flattened
                         if isinstance(s, rdflib.BNode) and isinstance(o, rdflib.BNode):
@@ -305,36 +322,43 @@ class IdentityBNode(rdflib.BNode):
                     raise ValueError('wat, dont know how to compute the identity of this thing')
 
     def resolve_bnode_idents(self):
-        # go through the bnode_identities list
-        # get all triples awaiting the identity of a given bnode # there should only ever be one... but a single triple may be awaiting multiple
-        # pop the existing
-        # compute the identity of the awaiting triples and add their subject
+        # resolve lifts and skips (super slow)
+
+        for t in self.to_lift:
+            s, p, o = t
+            assert isinstance(s, rdflib.BNode)
+            upstream = s
+            while upstream in self.find_heads:
+                upstream = self.find_heads[upstream]
+                assert isinstance(upstream, rdflib.BNode)
+
+            if isinstance(o, rdflib.BNode):
+                self.awaiting_object_identity[upstream].add((upstream, p, o))
+
+            else:
+                ident = self.ordered_identity(*self.recurse((None, p, o)))
+                self.bnode_identities[upstream].append(ident)
+                #assert s in self.unnamed_heads or s in self.linked_heads  # doesn't work
 
         def process_awaiting_triples(subject, triples, subject_idents=None):
             done = True
-            for t in list(triples):  # convert to list to allow removal of set elements during iteration
+            for t in list(triples):  # list to allow pop
                 s, p, o = t
                 assert s == subject, 'oops'
                 if o not in self.awaiting_object_identity and o in self.bnode_identities:
                     object_ident = self.bnode_identities[o]
                     if type(object_ident) == self.bnode_identities.default_factory:
-                        # we could try to deal with this here
-                        # but it is simpler and more consistent to deal with it
-                        # by allowing the while loop to run another time
-                        done = False
+                        done = False  # dealt with in while loop
                     else:
                         if subject_idents is not None:  # leaf case
                             ident = self.ordered_identity(*self.recurse((None, p, object_ident)))
-                            subject_idents.append(ident)  # FIXME identical subgraphs issue, just don't have the final collector be a set?
+                            subject_idents.append(ident)
                         elif isinstance(subject, rdflib.BNode):  # unnamed case
-                            subject_idents = self.bnode_identities[s]  # could be empty
+                            subject_idents = self.bnode_identities[s]
                             ident = self.ordered_identity(*self.recurse((None, p, object_ident)))
                             subject_idents.append(ident)  # FIXME code duplication from above :/
-                            #if s in self.unnamed_heads:  # this is dealt with in the while loop below
-                                #self.unnamed_subgraph_identities[s].update(subject_idents)
                         else:  # named case
                             self.named_subgraph_identities[s, p].add(self.ordered_identity(*self.recurse((s, p, object_ident))))  # FIXME still identical subgraphs issue
-                            #self.named_subgraph_identities[s].add((s, p))
 
                         gone = self.bnode_identities.pop(o)  # there should always only be a single parent triple where a bnode is an object so it is safe to pop
                         assert gone == object_ident, 'something weird is going on'
@@ -374,7 +398,7 @@ class IdentityBNode(rdflib.BNode):
                         assert gone == subject_idents, 'something weird is going on'
                     # the while loop walks up the list for us
                     if subject in self.unnamed_heads:  # FIXME does this ever run?
-                        printD('yes i run')
+                        #printD('yes i run')
                         # question: should we assign a single identity to each unnamed subgraph or just include the individual triples?
                         # answer: we need to assign a single identity otherwise we will have loads if identical identities since bnodes are all converted to null
                         self.unnamed_subgraph_identities[subject] = subject_identity
@@ -399,9 +423,13 @@ class IdentityBNode(rdflib.BNode):
             self.named_heads = set()
             self.bsubjects = set()
             self.bobjects = set()
+            self.to_skip = set()
+            self.to_lift = set()
+            self.find_heads = {}
             self.named_identities = tuple(self.recurse(triples_or_pairs_or_thing))  # memory :/
 
             self.unnamed_heads = self.bsubjects - self.bobjects
+            #self.linked_heads = set(o for s in self.named_heads for _, p, o in self.awaiting_object_identity[s])
 
             self.unnamed_subgraph_identities = defaultdict(set)  # unnamed_subgraph_
             self.named_subgraph_identities = defaultdict(set)  # named_subgraph_
