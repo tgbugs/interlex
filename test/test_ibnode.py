@@ -147,3 +147,8 @@ class TestIBNode(unittest.TestCase):
     def test_check(self):
         id1 = IdentityBNode(self.graph1)
         assert id1.check(self.graph2), 'check failed!'
+
+    def test_dropout(self):
+        # TODO
+        # test dropout of all but one subgraphs that share an identity
+        pass

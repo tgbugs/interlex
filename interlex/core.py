@@ -189,7 +189,6 @@ class IdentityBNode(rdflib.BNode):
             assert m1.digest() != m2.digest() , f'Cypher {self.cypher} is invariant to the number of updates'
 
     def to_bytes(self, thing):
-        # TODO sentinel
         if isinstance(thing, bytes):
             raise TypeError(f'{thing} is already bytes')
         elif type(thing) == str:
@@ -221,7 +220,6 @@ class IdentityBNode(rdflib.BNode):
                 thing = self.null_identity
             if type(thing) != bytes:
                 raise TypeError(f'{type(thing)} is not bytes, did you forget to call atomic first?')
-            #thing = self.atomic(thing)  # FIXME careful on double hash?
             m.update(thing)
 
         identity = m.digest()
@@ -232,39 +230,39 @@ class IdentityBNode(rdflib.BNode):
 
         return identity
 
+    def triple_identity(self, subject, predicate, object):
+        return self.ordered_identity(*self.recurse((subject, predicate, object)))
+
     def recurse(self, triples_or_pairs_or_thing, bnodes_ok=False):
         for thing in triples_or_pairs_or_thing:
             if thing is None:
                 yield self.null_identity
             elif isinstance(thing, bytes):
                 yield thing
-            elif type(thing) == str:  # exact match since all the rest are instances of string
+            elif type(thing) == str:  # exact match, the rest are instances of str
                 yield self.to_bytes(thing)
             elif isinstance(thing, rdflib.URIRef):
                 yield self.to_bytes(thing)
             elif isinstance(thing, rdflib.Literal):
                 # "http://asdf.asdf" != <http://asdf.asdf>
-                # TODO hash individual bits first or no?, I think no
-                # update, yes hash first for consistency, always recurse before calling an atomic
-                # need str(thing) here to break recursion on literal type
+                # need str(thing) breaks recursion on rdflib.Literal
                 yield self.ordered_identity(*self.recurse((str(thing), thing.datatype, thing.language)))
             elif isinstance(thing, IdLocalBNode) or isinstance(thing, IdentityBNode):
-                # TODO check that we aren't being lied to?
-                yield thing.identity
+                yield thing.identity # TODO check that we aren't being lied to?
             elif isinstance(thing, rdflib.BNode):
                 if bnodes_ok:
                     yield thing
                 else:
                     raise ValueError('BNodes only have names or collective identity...')
             else:
-                if len(thing) == 3 or len(thing) == 2:  # FIXME assumes contents are atomic
+                if len(thing) == 3 or len(thing) == 2:
                     if not any(isinstance(e, rdflib.BNode) for e in thing):
                         yield self.ordered_identity(*self.recurse(thing))
                     else:
                         if len(thing) == 3:
                             s, p, o = thing
                         elif len(thing) == 2:
-                            s = None  # this is safe because only isinstance(o, rdflib.BNode) will trigger below
+                            s = None  # safe, only isinstance(o, rdflib.BNode) will trigger below
                             p, o = thing
 
                         if isinstance(p, rdflib.BNode):
@@ -287,29 +285,18 @@ class IdentityBNode(rdflib.BNode):
                             self.bobjects.add(o)
                             continue
 
-                        # TODO deal with things like rdf.rest that need to be flattened
                         if isinstance(s, rdflib.BNode) and isinstance(o, rdflib.BNode):
                             self.bsubjects.add(s)
                             self.bobjects.add(o)
                             # we have to wait until the end to run this since we don't know
-                            # how many triples will have the object as a subject until we have looked at all of them
-                            # another fun issue with rdf...
-                            #self.awaiting_object_identity[o].add(thing)
-                            self.awaiting_object_identity[s].add(thing)  # FIXME or is it this one?
-                            # check for existing o
-                            # if it does not exist
-                            # add to the 'awaiting'
-                            # create an ibnode on ((b'0', p, b'1', I),) or ((None, p, I),) it is consistent to rehash the single element in the list
-                            #ident = self.ordered_identity(*self.recurse((None, p, I)))  # FIXME double hashing on I, is it consistent? (*self.recurse((None, p)), I)
+                            # how many triples will have the object as a subject until we have
+                            # looked at all of them ... another fun issue with rdf
+                            self.awaiting_object_identity[s].add(thing)
                         elif isinstance(s, rdflib.BNode):
                             self.bsubjects.add(s)
                             # leaves
                             ident = self.ordered_identity(*self.recurse((None, p, o)))
                             self.bnode_identities[s].append(ident)
-                            # check the awaiting dict
-                            #if s in self.awaiting_object_identity:
-                                #for thing in self.awaiting_object_identity.pop(s):
-                                    #self.recurse(thing)
                         elif isinstance(o, rdflib.BNode):
                             self.bobjects.add(o)
                             # named head
@@ -322,8 +309,7 @@ class IdentityBNode(rdflib.BNode):
                     raise ValueError('wat, dont know how to compute the identity of this thing')
 
     def resolve_bnode_idents(self):
-        # resolve lifts and skips (super slow)
-
+        # resolve lifts and skips
         for t in self.to_lift:
             s, p, o = t
             assert isinstance(s, rdflib.BNode)
@@ -334,15 +320,13 @@ class IdentityBNode(rdflib.BNode):
 
             if isinstance(o, rdflib.BNode):
                 self.awaiting_object_identity[upstream].add((upstream, p, o))
-
             else:
-                ident = self.ordered_identity(*self.recurse((None, p, o)))
+                ident = self.triple_identity(None, p, o)
                 self.bnode_identities[upstream].append(ident)
-                #assert s in self.unnamed_heads or s in self.linked_heads  # doesn't work
 
         def process_awaiting_triples(subject, triples, subject_idents=None):
             done = True
-            for t in list(triples):  # list to allow pop
+            for t in list(triples):  # list to allow remove from set
                 s, p, o = t
                 assert s == subject, 'oops'
                 if o not in self.awaiting_object_identity and o in self.bnode_identities:
@@ -351,18 +335,21 @@ class IdentityBNode(rdflib.BNode):
                         done = False  # dealt with in while loop
                     else:
                         if subject_idents is not None:  # leaf case
-                            ident = self.ordered_identity(*self.recurse((None, p, object_ident)))
+                            ident = self.triple_identity(None, p, object_ident)
                             subject_idents.append(ident)
                         elif isinstance(subject, rdflib.BNode):  # unnamed case
                             subject_idents = self.bnode_identities[s]
-                            ident = self.ordered_identity(*self.recurse((None, p, object_ident)))
-                            subject_idents.append(ident)  # FIXME code duplication from above :/
+                            ident = self.triple_identity(None, p, object_ident)
+                            subject_idents.append(ident)
                         else:  # named case
-                            self.named_subgraph_identities[s, p].add(self.ordered_identity(*self.recurse((s, p, object_ident))))  # FIXME still identical subgraphs issue
+                            ident = self.triple_identity(s, p, object_ident)
+                            self.named_subgraph_identities[s, p].append(ident)
 
-                        gone = self.bnode_identities.pop(o)  # there should always only be a single parent triple where a bnode is an object so it is safe to pop
+                        # there is only single triple where a
+                        # bnode is an object so it is safe to pop
+                        gone = self.bnode_identities.pop(o)
                         assert gone == object_ident, 'something weird is going on'
-                        triples.remove(t)  # triples is a set so it should be safe to remove during iteration
+                        triples.remove(t)
                 else:
                     done = False
 
@@ -370,13 +357,8 @@ class IdentityBNode(rdflib.BNode):
 
         count = 0
         while self.awaiting_object_identity:
-            count += 1
-            if count > 100:
-                embed()
-                raise ValueError('sigh')
-
             # first process all bnodes that already have identities
-            for subject, subject_idents in list(self.bnode_identities.items()):  # need to be able to modify the list
+            for subject, subject_idents in list(self.bnode_identities.items()):  # list to pop from dict
                 # it is safe to pop here only if all objects attached to the bnode are not in awaiting
                 if subject in self.awaiting_object_identity:
                     assert type(subject_idents) != bytes, 'hrm'
@@ -388,28 +370,29 @@ class IdentityBNode(rdflib.BNode):
                     subject_done = True
 
                 if subject_done:
-                    #printD(subject, subject_idents)
                     if type(subject_idents) == bytes:  # already calculated but not yet used
                         subject_identity = subject_idents
                     else:
                         # this is where we assign a single identity to a subgraph
-                        subject_identity = self.ordered_identity(*sorted(subject_idents), separator=False)  # when hashing ordered identities do not use a separator
+                        # when hashing ordered identities do not use a separator
+                        subject_identity = self.ordered_identity(*sorted(subject_idents), separator=False)
                         gone = self.bnode_identities.pop(subject)
                         assert gone == subject_idents, 'something weird is going on'
-                    # the while loop walks up the list for us
-                    if subject in self.unnamed_heads:  # FIXME does this ever run?
-                        #printD('yes i run')
-                        # question: should we assign a single identity to each unnamed subgraph or just include the individual triples?
-                        # answer: we need to assign a single identity otherwise we will have loads if identical identities since bnodes are all converted to null
+                    if subject in self.unnamed_heads:
+                        # question: should we assign a single identity to each unnamed subgraph
+                        #  or just include the individual triples?
+                        # answer: we need to assign a single identity otherwise we will have loads
+                        #  if identical identities since bnodes are all converted to null
                         self.unnamed_subgraph_identities[subject] = subject_identity
                     elif subject not in self.bnode_identities:  # we popped it off above
                         self.bnode_identities[subject] = subject_identity
 
-            for subject, triples in list(self.awaiting_object_identity.items()):  # need to be able to modify dict
-                #if not isinstance(subject, rdflib.BNode):
+            # second complete any nodes that have are fully identified
+            for subject, triples in list(self.awaiting_object_identity.items()):  # list to pop from dict
                 if process_awaiting_triples(subject, triples):
-                    # we do not need to consolidate identifiers for named subgraphs since the subject does it for us
-                    # in a way that is consistent with how we identify other named triples
+                    # we do not need to consolidate identifiers for named subgraphs
+                    # the subject does disambiguation for us in a way that is consistent
+                    # with how we identify other named triples
                     self.awaiting_object_identity.pop(subject)
 
     def identity_function(self, triples_or_pairs_or_thing):
@@ -418,8 +401,8 @@ class IdentityBNode(rdflib.BNode):
         elif isinstance(triples_or_pairs_or_thing, str):  # a node
             return next(self.recurse((triples_or_pairs_or_thing,)))
         else:
-            self.bnode_identities = defaultdict(list)
             self.awaiting_object_identity = defaultdict(set)
+            self.bnode_identities = defaultdict(list)
             self.named_heads = set()
             self.bsubjects = set()
             self.bobjects = set()
@@ -429,10 +412,9 @@ class IdentityBNode(rdflib.BNode):
             self.named_identities = tuple(self.recurse(triples_or_pairs_or_thing))  # memory :/
 
             self.unnamed_heads = self.bsubjects - self.bobjects
-            #self.linked_heads = set(o for s in self.named_heads for _, p, o in self.awaiting_object_identity[s])
 
-            self.unnamed_subgraph_identities = defaultdict(set)  # unnamed_subgraph_
-            self.named_subgraph_identities = defaultdict(set)  # named_subgraph_
+            self.unnamed_subgraph_identities = {}
+            self.named_subgraph_identities = defaultdict(list)
             self.resolve_bnode_idents()
 
             free = list(self.unnamed_subgraph_identities.values())
@@ -441,11 +423,7 @@ class IdentityBNode(rdflib.BNode):
             assert all(type(i) == bytes for i in linked), 'linked contains a non identity!'
             self.free_identities = free
             self.linked_identities = linked
-            #self.named_linked, self.linked_identities, self.free_identities = self.subgraph_identities(self.subgraphs)
-            # named linked are the 'head' triples that do not participate in the
-            # calculation of the linked identity but that we do need to map
-            #assert tuple(named_linked) == tuple(linked)
-            #asdf = self.sort_subgraphs()
+
             self.all_idents = sorted(self.named_identities +
                                     tuple(self.linked_identities) +
                                     tuple(self.free_identities))
