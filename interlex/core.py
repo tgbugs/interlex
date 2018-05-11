@@ -288,7 +288,7 @@ class IdentityBNode(rdflib.BNode):
                             self.bsubjects.add(s)
                             # leaves
                             ident = self.ordered_identity(*self.recurse((None, p, o)))
-                            self.bnode_identities[s].add(ident)
+                            self.bnode_identities[s].append(ident)
                             # check the awaiting dict
                             #if s in self.awaiting_object_identity:
                                 #for thing in self.awaiting_object_identity.pop(s):
@@ -317,17 +317,19 @@ class IdentityBNode(rdflib.BNode):
                 assert s == subject, 'oops'
                 if o not in self.awaiting_object_identity and o in self.bnode_identities:
                     object_ident = self.bnode_identities[o]
-                    if type(object_ident) == set:
+                    if type(object_ident) == self.bnode_identities.default_factory:
                         # we could try to deal with this here
                         # but it is simpler and more consistent to deal with it
                         # by allowing the while loop to run another time
                         done = False
                     else:
                         if subject_idents is not None:  # leaf case
-                            subject_idents.add(self.ordered_identity(*self.recurse((None, p, object_ident))))  # FIXME identical subgraphs issue, just don't have the final collector be a set?
+                            ident = self.ordered_identity(*self.recurse((None, p, object_ident)))
+                            subject_idents.append(ident)  # FIXME identical subgraphs issue, just don't have the final collector be a set?
                         elif isinstance(subject, rdflib.BNode):  # unnamed case
                             subject_idents = self.bnode_identities[s]  # could be empty
-                            subject_idents.add(self.ordered_identity(*self.recurse((None, p, object_ident))))  # FIXME code duplication from above :/
+                            ident = self.ordered_identity(*self.recurse((None, p, object_ident)))
+                            subject_idents.append(ident)  # FIXME code duplication from above :/
                             #if s in self.unnamed_heads:  # this is dealt with in the while loop below
                                 #self.unnamed_subgraph_identities[s].update(subject_idents)
                         else:  # named case
@@ -353,6 +355,7 @@ class IdentityBNode(rdflib.BNode):
             for subject, subject_idents in list(self.bnode_identities.items()):  # need to be able to modify the list
                 # it is safe to pop here only if all objects attached to the bnode are not in awaiting
                 if subject in self.awaiting_object_identity:
+                    assert type(subject_idents) != bytes, 'hrm'
                     triples = self.awaiting_object_identity[subject]
                     subject_done = process_awaiting_triples(subject, triples, subject_idents)
                     if subject_done:
@@ -391,7 +394,7 @@ class IdentityBNode(rdflib.BNode):
         elif isinstance(triples_or_pairs_or_thing, str):  # a node
             return next(self.recurse((triples_or_pairs_or_thing,)))
         else:
-            self.bnode_identities = defaultdict(set)
+            self.bnode_identities = defaultdict(list)
             self.awaiting_object_identity = defaultdict(set)
             self.named_heads = set()
             self.bsubjects = set()
@@ -403,7 +406,6 @@ class IdentityBNode(rdflib.BNode):
             self.unnamed_subgraph_identities = defaultdict(set)  # unnamed_subgraph_
             self.named_subgraph_identities = defaultdict(set)  # named_subgraph_
             self.resolve_bnode_idents()
-            #embed()
 
             free = list(self.unnamed_subgraph_identities.values())
             assert all(type(i) == bytes for i in free), 'free contains a non identity!'

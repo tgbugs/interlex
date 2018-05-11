@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 import rdflib
+from pyontutils.core import yield_recursive
 from pyontutils.config import devconfig
 from interlex.core import bnodes, IdentityBNode
 from IPython import embed
@@ -111,8 +112,35 @@ class TestIBNode(unittest.TestCase):
         idfi2 = sorted(id2.free_identities) 
         try:
             assert idfi1 == idfi2, 'free identities do not match'
-        except:
+        except AssertionError as e:
+            _ = [[print(e[:10]) for e in t] and print() for t in zip(idfi1, idfi2)]
+            lu1 = {v:k for k, v in id1.unnamed_subgraph_identities.items()}
+            lu2 = {v:k for k, v in id2.unnamed_subgraph_identities.items()}
+            s1 = set(id1.unnamed_subgraph_identities.values())
+            s2 = set(id2.unnamed_subgraph_identities.values())
+            diff = (s1 | s2) - (s1 & s2)
+            for d in diff:
+                if d in lu1:
+                    s = lu1[d]
+                    p, o = next(id1._thing[s])
+                    print('id1 extra')
+                    [print(t)
+                     for t in sorted(yield_recursive(s, p, o, id1._thing),
+                                     key=lambda t:t[::-1])]
+                else:
+                    s = lu2[d]
+                    p, o = next(id2._thing[s])
+                    print('id2 extra')
+                    [print(t)
+                     for t in sorted(yield_recursive(s, p, o, id2._thing),
+                                     key=lambda t:t[::-1])]
+
+            assert len(set(idfi1)) == len(idfi1), 'HRM 1'
+            assert len(set(idfi2)) == len(idfi2), 'HRM 2'
+            print(len(idfi1), len(idfi2))  # wow... terrifying that these don't match
+            print(e)
             embed()
+            raise e
 
         assert id1.identity == id2.identity, 'identities do not match'
 
