@@ -140,7 +140,6 @@ class IdentityBNode(rdflib.BNode):
     cypher_field_separator = ' '
     encoding = 'utf-8'
     sortlast = b'\xff' * 64
-    depth_invariant_predicates = rdf.rest,
 
     def __new__(cls, triples_or_pairs_or_thing, debug=False):
         self = super().__new__(cls)  # first time without value
@@ -150,7 +149,6 @@ class IdentityBNode(rdflib.BNode):
         m.update(self.to_bytes(self.cypher_field_separator))
         self.cypher_field_separator_hash = m.digest()  # prevent accidents
         self.cypher_check()
-        self.dip_idents = tuple(self.ordered_identity(self.to_bytes(p)) for p in self.depth_invariant_predicates)
         m = self.cypher()
         self.null_identity = m.digest()
         self._thing = triples_or_pairs_or_thing
@@ -161,7 +159,6 @@ class IdentityBNode(rdflib.BNode):
             
         real_self.debug = debug
         real_self.identity = self.identity
-        real_self.dip_idents = self.dip_idents
         real_self.null_identity = self.null_identity
         real_self.cypher_field_separator_hash = self.cypher_field_separator_hash
         return real_self
@@ -196,20 +193,6 @@ class IdentityBNode(rdflib.BNode):
         else:
             return str(thing).encode(self.encoding)
 
-    def atomic(self, thing_bytes):
-        raise ValueError('dont use this anymore, unhashed bytes are sufficient for atomic identity')
-        m = self.cypher()
-        if thing_bytes is not None:
-            m.update(thing_bytes)
-        else:
-            thing_bytes = None
-
-        identity = m.digest()
-        if self.debug:
-            self.id_lookup[identity] = thing_bytes
-
-        return identity
-
     def ordered_identity(self, *things, separator=True):
         """ this assumes that the things are ALREADY ordered correctly """
         m = self.cypher()
@@ -219,7 +202,7 @@ class IdentityBNode(rdflib.BNode):
             if thing is None:  # all null are converted to the starting hash
                 thing = self.null_identity
             if type(thing) != bytes:
-                raise TypeError(f'{type(thing)} is not bytes, did you forget to call atomic first?')
+                raise TypeError(f'{type(thing)} is not bytes, did you forget to call to_bytes first?')
             m.update(thing)
 
         identity = m.digest()
@@ -232,6 +215,53 @@ class IdentityBNode(rdflib.BNode):
 
     def triple_identity(self, subject, predicate, object):
         return self.ordered_identity(*self.recurse((subject, predicate, object)))
+
+    def add_to_subgraphs(self, thing, subgraphs, subgraph_mapping):
+        # useful for debug and load use cases
+        # DO NOT USE FOR COMPUTING IDENTITY
+        t = s, p, o = thing
+        if s in subgraph_mapping:
+            ss = subgraph_mapping[s]
+        else:
+            ss = False
+
+        if o in subgraph_mapping:
+            os = subgraph_mapping[o]
+        else:
+            os = False
+
+        if ss and os:
+            if ss is not os:  # this should only happen for 1:1 bnodes
+                new = ss + [t] + os
+                try:
+                    subgraphs.remove(ss)
+                    subgraphs.remove(os)
+                    subgraphs.append(new)
+                    for bn in bnodes(ss):
+                        subgraph_mapping[bn] = new
+                    for bn in bnodes(os):
+                        subgraph_mapping[bn] = new
+                except ValueError as e:
+                    printD(e)
+                    embed()
+                    raise e
+            else:
+                ss.append(t)
+        elif not (ss or os):
+            new = [t]
+            subgraphs.append(new)
+            if isinstance(s, rdflib.BNode):
+                subgraph_mapping[s] = new
+            if isinstance(o, rdflib.BNode):
+                subgraph_mapping[o] = new
+        elif ss:
+            ss.append(t)
+            if isinstance(o, rdflib.BNode):
+                subgraph_mapping[o] = ss
+        elif os:
+            os.append(t)
+            if isinstance(s, rdflib.BNode):
+                subgraph_mapping[s] = os
 
     def recurse(self, triples_or_pairs_or_thing, bnodes_ok=False):
         for thing in triples_or_pairs_or_thing:
@@ -259,6 +289,9 @@ class IdentityBNode(rdflib.BNode):
                     if not any(isinstance(e, rdflib.BNode) for e in thing):
                         yield self.ordered_identity(*self.recurse(thing))
                     else:
+                        if self.debug:
+                            self.add_to_subgraphs(thing, self.subgraphs, self.subgraph_mappings)
+
                         if len(thing) == 3:
                             s, p, o = thing
                         elif len(thing) == 2:
@@ -301,6 +334,7 @@ class IdentityBNode(rdflib.BNode):
                             self.bobjects.add(o)
                             # named head
                             self.named_heads.add(s)
+                            self.linked_heads.add(o)
                             self.awaiting_object_identity[s].add(thing)
                         else:
                             raise ValueError('should never get here')
@@ -348,6 +382,8 @@ class IdentityBNode(rdflib.BNode):
                         # there is only single triple where a
                         # bnode is an object so it is safe to pop
                         gone = self.bnode_identities.pop(o)
+                        if self.debug and o in self.linked_heads or o in self.unnamed_heads:
+                            self.blank_identities[o] = gone
                         assert gone == object_ident, 'something weird is going on'
                         triples.remove(t)
                 else:
@@ -378,6 +414,7 @@ class IdentityBNode(rdflib.BNode):
                         subject_identity = self.ordered_identity(*sorted(subject_idents), separator=False)
                         gone = self.bnode_identities.pop(subject)
                         assert gone == subject_idents, 'something weird is going on'
+
                     if subject in self.unnamed_heads:
                         # question: should we assign a single identity to each unnamed subgraph
                         #  or just include the individual triples?
@@ -401,8 +438,14 @@ class IdentityBNode(rdflib.BNode):
         elif isinstance(triples_or_pairs_or_thing, str):  # a node
             return next(self.recurse((triples_or_pairs_or_thing,)))
         else:
+            if self.debug:
+                self.subgraphs = []
+                self.subgraph_mappings = {}
+                self.blank_identities = {}
+
             self.awaiting_object_identity = defaultdict(set)
             self.bnode_identities = defaultdict(list)
+            self.linked_heads = set()
             self.named_heads = set()
             self.bsubjects = set()
             self.bobjects = set()

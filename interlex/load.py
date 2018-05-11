@@ -4,7 +4,6 @@ import hashlib
 import requests
 import sqlalchemy as sa
 from pyontutils.core import rdf, owl
-from pyontutils.utils import OrderInvariantHash
 from pyontutils.ttlser import DeterministicTurtleSerializer
 from interlex.exc import hasErrors, LoadError
 from interlex.core import printD, permissions_sql, bnodes, makeParamsValues, IdentityBNode
@@ -355,9 +354,8 @@ class TripleLoader:
     @property
     def bound_name_identity(self):
         if self._bound_name_identity is None:
-            m = self.cypher()
-            m.update(str(self.bound_name).encode(self.encoding))
-            self._bound_name_identity = m.digest()
+            ident = IdentityBNode(self.bound_name).identity
+            self._bound_name_identity = ident
 
         return self._bound_name_identity
 
@@ -448,37 +446,36 @@ class TripleLoader:
 
     @property
     def metadata(self):
-        yield from self.metadata_named
-        yield from self.metadata_unnamed
+        yield from self.graph[self.bound_name::]
 
     @property
     def metadata_named(self):
-        if self._metadata_named is None:
-            self.process_graph()
-        return self._metadata_named
+        for p, o in self.metadata:
+            if not isinstance(o, rdflib.BNode):
+                yield p, o
 
     @property
     def metadata_unnamed(self):
-        if self._metadata_unnamed is None:
-            self.process_graph()
-        return self._metadata_unnamed
+        for p, o in self.metadata:
+            if isinstance(o, rdflib.BNode):
+                yield p, self._blank_identities[o]
 
     @property
     def data(self):
-        yield from self.data_named
-        yield from self.data_unnamed
+        bn = self.bound_name
+        yield from (t for t in self.graph if t[0] != bn)
 
     @property
     def data_named(self):
-        if self._data_named is None:
-            self.process_graph()
-        return self._data_named
+        for s, p, o in self.data:
+            if not isinstance(o, rdflib.BNode):
+                yield s, p, o
 
     @property
     def data_unnamed(self):
-        if self._data_unnamed is None:
-            self.process_graph()
-        return self._data_unnamed
+        for s, p, o in self.data:
+            if isinstance(o, rdflib.BNode):
+                yield s, p, self._blank_identities[o]
 
     @property
     def subgraphs(self):
@@ -515,7 +512,7 @@ class TripleLoader:
 
     def digest(self, type_name):
         value = getattr(self, type_name)
-        return self.orderInvariantHash(value)
+        return IdentityBNode(value).identity
 
     def ident_exists(self, ident):
         # TODO check to make sure that the load succeeded
@@ -565,7 +562,7 @@ class TripleLoader:
 
         return self._identity_triple_count[identity]  # this should never key error
 
-    def process_graph(self):
+    def _process_graph(self):
         self.bound_name  # TODO what to do about graphs that don't have a bound name?
         printD('processing graph')
         dts = DeterministicTurtleSerializer(self.graph)
@@ -701,8 +698,6 @@ class TripleLoader:
         assert not [k for k, v in data_linked_subgraph_identities.items() if not v], 'HRM'
         assert not [k for k, v in free_subgraph_identities.items() if not v], 'HRM'
 
-            #normalized.append(tuple(sorted(subgraph, key=intlast)))  # FIXME do we really need to sort?
-
         # TODO dedupe metadata and data code so any bound data can be supported
         self._metadata_named = metadata_named
         self._metadata_unnamed = metadata_unnamed
@@ -711,7 +706,31 @@ class TripleLoader:
         self._metadata_linked_subgraph_identities = metadata_linked_subgraph_identities
         self._data_linked_subgraph_identities = data_linked_subgraph_identities
         self._free_subgraph_identities = free_subgraph_identities
-        return
+
+    def process_graph(self):
+        datas = ('metadata', self.metadata), ('data', self.data)
+        normalize = lambda a:a
+        for name, data in datas:
+            idents = IdentityBNode(data, debug=True)
+
+            free_subgraph_identities = {identity:normalize(idents.subgraph_mappings[s])
+                                        for s, identity in idents.unnamed_subgraph_identities.items()}
+
+            self._blank_identities = idents.blank_identities
+            inverse = {v:k for k, v in idents.blank_identities.items()}
+
+            if name == 'data':
+                self._free_subgraph_identities = free_subgraph_identities
+
+            linked_subgraph_identities = {identity:normalize(idents.subgraph_mappings[inverse[identity]])
+                                          for (s, p), identities in idents.named_subgraph_identities.items()
+                                          for identity in identities }
+
+            setattr(self, '_' + name + '_linked_subgraph_identities',
+                    linked_subgraph_identities)
+
+            printD(self._blank_identities)
+            embed()
 
     def make_load_records(self, ci, mi, di):
         # TODO resursive on type?
