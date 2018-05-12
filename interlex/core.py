@@ -69,17 +69,44 @@ def dbUri(user='interlex-user', host='localhost', port=5432, db='interlex_test')
     # engine = create_engine
     # return engine, inspect(engine)
 
-def makeParamsValues(values, constants=tuple()):
+def makeParamsValues(*value_sets, constants=tuple()):
+    # TODO variable sized records and
+    # common value names
     if constants and not all(':' in c for c in constants):
         raise ValueError(f'All constants must pass variables in via params {constants}')
-    proto_params = {tuple(f'values{i}_{j}'
-                          for j, e in enumerate(v)):v
-                    for i, v in enumerate(values)}
-    values_template = ', '.join('(' + ', '.join(constants + tuple(':' + e for e in v)) + ')'
-                                for v in proto_params)
-    params = {name:value for names, values in proto_params.items()
-                for name, value in zip(names, values)}
-    return values_template, params
+
+    class getName:
+        def __init__(self):
+            self.counter = 0
+            self.value_to_name = {}
+
+        def __call__(self, value):
+            if value in self.value_to_name:
+                return self.value_to_name[value]
+            else:
+                name = 'v' + str(self.counter)
+                self.counter += 1
+                self.value_to_name[value] = name
+                return name
+
+    getname = getName()
+
+    params = {}
+    for values in value_sets:
+        # proto_params doesn't need to be a dict
+        # values will be reduced when we create params as a dict
+        proto_params = [(tuple(getname(value) for value in row), row) for row in values]
+
+        values_template = ', '.join('(' + ', '.join(constants +
+                                                    tuple(':' + name
+                                                          for name in names)) + ')'
+                                    for names, _ in proto_params)
+        yield values_template
+        params.update({name:value
+                       for names, values in proto_params
+                       for name, value in zip(names, values)})
+
+    yield params
 
 
 class FakeSession:

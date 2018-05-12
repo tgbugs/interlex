@@ -1,4 +1,5 @@
 from pathlib import Path, PurePath
+from collections import defaultdict
 import rdflib
 import hashlib
 import requests
@@ -447,34 +448,50 @@ class TripleLoader:
 
     @property
     def metadata(self):
+        yield from self.metadata_named
+        yield from self.metadata_unnamed
+
+    @property
+    def metadata_raw(self):
         yield from self.graph[self.bound_name::]
 
     @property
     def metadata_named(self):
-        for p, o in self.metadata:
+        for p, o in self.metadata_raw:
             if not isinstance(o, rdflib.BNode):
                 yield p, o
 
     @property
     def metadata_unnamed(self):
-        for p, o in self.metadata:
+        if not hasattr(self, '_blank_identities'):
+            self.process_graph()
+
+        for p, o in self.metadata_raw:
             if isinstance(o, rdflib.BNode):
                 yield p, self._blank_identities[o]
 
     @property
     def data(self):
+        yield from self.data_named
+        yield from self.data_unnamed
+
+    @property
+    def data_raw(self):
         bn = self.bound_name
         yield from (t for t in self.graph if t[0] != bn)
 
     @property
     def data_named(self):
-        for t in self.data:
+        for t in self.data_raw:
             if not any(isinstance(e, rdflib.BNode) for e in t):
                 yield t
 
     @property
     def data_unnamed(self):
-        for s, p, o in self.data:
+        if not hasattr(self, '_blank_identities'):
+            self.process_graph()
+
+        for s, p, o in self.data_raw:
             if not isinstance(s, rdflib.BNode) and isinstance(o, rdflib.BNode):
                 # TODO this does not cover free trips
                 yield s, p, self._blank_identities[o]
@@ -710,7 +727,7 @@ class TripleLoader:
         self._free_subgraph_identities = free_subgraph_identities
 
     def process_graph(self):
-        datas = ('metadata', self.metadata), ('data', self.data)
+        datas = ('metadata', self.metadata_raw), ('data', self.data_raw)
 
         def normalize(cmax, t, existing):
             for e in t:
@@ -736,8 +753,9 @@ class TripleLoader:
             existing = {}
             normalized = []
             for trip in sorted(trips, key=sortkey):
-                cmax = normalize(cmax, trip, existing)
-            return tuple(normalized)  # do not reorder by number
+                *ntrip, cmax = normalize(cmax, trip, existing)
+                normalized.append(tuple(ntrip))  # today we learned that * -> list
+            return tuple(normalized)  # do not reorder by number?
 
         for name, data in datas:
             idents = IdentityBNode(data, debug=True)
@@ -764,67 +782,101 @@ class TripleLoader:
                 #printD(self._blank_identities)
                 embed()
 
-    def make_load_records(self, ci, mi, di):
+    def make_row(self, s, p, o, subgraph_identity=None):
+
+        def str_None(thing):
+            return str(thing) if thing is not None else thing
+
+        # assume p is uriref, issues should be caught before here
+        p = str(p)
+
+        if type(o) == bytes:
+            # if an identity is supplied as an object shift it automatically
+            subgraph_identity = o
+            o = 0
+
+        if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.URIRef):
+            columns = 's, p, o'
+            record = (str(s),
+                      p,
+                      str(o))
+
+        elif isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.Literal):
+            columns = 's, p, o_lit, datatype, language'
+            record = (str(s),
+                      p,
+                      str(o),
+                      str_None(o.datatype),
+                      str_None(o.language))
+
+        elif isinstance(s, rdflib.URIRef) and isinstance(o, int) and subgraph_identity is not None:
+            columns = 's, p, o_blank, subgraph_identity'
+            record = (str(s),
+                      p,
+                      o,
+                      subgraph_identity)
+
+        elif isinstance(s, int) and isinstance(o, int) and subgraph_identity is not None:
+            columns = 's_blank, p, o_blank, subgraph_identity'
+            record = (s,
+                      p,
+                      o,
+                      subgraph_identity)
+
+        elif isinstance(s, int) and isinstance(o, rdflib.URIRef) and subgraph_identity is not None:
+            columns = 's_blank, p, o, subgraph_identity'
+            record = (s,
+                      p,
+                      str(o),
+                      subgraph_identity)
+
+        elif isinstance(s, int) and isinstance(o, rdflib.Literal) and subgraph_identity is not None:
+            columns = 's_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity'
+            record = (s,
+                      p,
+                      str(o),
+                      str_None(o.datatype),
+                      str_None(o.language),
+                      subgraph_identity)
+        else:
+            raise ValueError(f'{s} {p} {o} {subgraph_identity} has an unknown or invalid type signature')
+
+        return columns, record
+
+    def make_load_records(self, curies_done, metadata_done, data_done):
         # TODO resursive on type?
         # s, s_blank, p, o, o_lit, datatype, language, subgraph_identity
-        if not ci:
-            ct = c, ccols, *_ = ([], 'serialization_identity, curie_prefix, iri_prefix',
-                                 (':ident',), {'ident':self.serialization_identity})
-            for curie_prefix, iri_prefix in self.curies:
-                c.append((curie_prefix, iri_prefix))
+        if not curies_done:
+            c = []
+            to_insert = {'serialization_identity, curie_prefix, iri_prefix':c}
+            for curie_prefix, iri_prefix in sorted(self.curies):  # FIXME ordering issue
+                c.append((self.serialization_identity, curie_prefix, iri_prefix))
 
-            yield ct,
+            yield 'INSERT INTO curies', '', to_insert
 
-        if not mi:
-            mt = m, mcols = [], 's, p, o'
-            mlt = ml, mlcols = [], 's, p, o_lit, datatype, language'
-            for p, o in self.metadata_named:
-                p = str(p)
-                if isinstance(o, rdflib.URIRef):
-                    m.append((self.bound_name, p, str(o)))
-                else:
-                    o_lit = o
-                    datatype = str(o.datatype) if o.datatype is not None else o.datatype
-                    ml.append((self.bound_name, p, str(o_lit), datatype, o.language))
+        def sortkey(triple):  # FIXME this a bad way to sort...
+            return tuple(e if isinstance(e, str) else str(e) for e in triple)
 
-            mbt = mb, mbcols = [], 's, p, o_blank, subgraph_identity'
-            for p, subgraph_identity in self.metadata_unnamed:
-                p = str(p)
-                mb.append((self.bound_name, p, 0, subgraph_identity))
+        prefix = 'INSERT INTO triples'
+        suffix = 'ON CONFLICT DO NOTHING'
+        bn = self.bound_name
+        if not metadata_done:
+            to_insert = defaultdict(list)  # should all be unique
+            for p, o in sorted(self.metadata, key=sortkey):  # FIXME resolve bnode ordering issue?
+                columns, record = self.make_row(bn, p,  o)
+                to_insert[columns].append(record)
 
-            yield mt, mlt, mbt
+            yield prefix, suffix, to_insert
 
-        if not di:
-            dt = d, dcols = [], 's, p, o'
-            dlt = dl, dlcols = [], 's, p, o_lit, datatype, language'
-            for s, p, o in self.data_named:
-                s, p = str(s), str(p)
-                if isinstance(o, rdflib.URIRef):
-                    d.append((s, p, str(o)))
-                else:
-                    o_lit = o
-                    datatype = str(o.datatype) if o.datatype is not None else o.datatype
-                    dl.append((s, p, str(o_lit), datatype, o.language))
+        if not data_done:
+            to_insert = defaultdict(list)  # should all be unique
+            for s, p, o in sorted(self.data, key=sortkey):  # FIXME resolve bnode ordering issue? or was it already?
+                columns, record = self.make_row(s, p, o)
+                to_insert[columns].append(record)
 
-            dbt = db, dbcols = [], 's, p, o_blank, subgraph_identity'
-            for s, p, subgraph_identity in self.data_unnamed:
-                s, p = str(s), str(p)
-                db.append((s, p, 0, subgraph_identity))
+            yield prefix, suffix, to_insert
 
-            sgt = sg, sgcols = [], 's_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity'
-            for subgraph_identity, subgraph in self.subgraph_identities.items():
-                for s, p, o in subgraph:
-                    p = str(p)
-                    if isinstance(o, rdflib.URIRef):
-                        sg.append((s, p, str(o), None, None, None, None, subgraph_identity))
-                    elif isinstance(o, int):
-                        sg.append((s, p, None, None, None, None, o, subgraph_identity))
-                    else:  # FIXME not clear we ever have these Literal cases...
-                        o_lit = o
-                        datatype = str(o.datatype) if o.datatype is not None else o.datatype
-                        sg.append((s, p, None, str(o_lit), datatype, o.language, None, subgraph_identity))
-
-            yield dt, dlt, dbt, sgt
+        # TODO free and linked subgraph insertions
 
     def load_event(self):
         # FIXME only insert on success...
@@ -835,10 +887,10 @@ class TripleLoader:
         # TODO always insert metadata first so that in-database integrity checks
         # can run afterward and verify roundtrip identity
         #ni = self.ident_exists(self.bound_name_identity)  # FIXME usually a waste
-        ci = self.ident_exists(self.curies_identity)
-        mi = self.ident_exists(self.metadata_identity)
-        di = self.ident_exists(self.data_identity)
-        sgi = {k:v in self._cache_identities for k, v in self.subgraph_identities.items()}
+        curies_done = self.ident_exists(self.curies_identity)
+        metadata_done = self.ident_exists(self.metadata_identity)
+        data_done = self.ident_exists(self.data_identity)
+        free_done = {k:v in self._cache_identities for k, v in self.subgraph_identities.items()}
 
         # (:s, 'hasPart', :o)
         # FIXME only insert the anon subgraphs and definitely better
@@ -883,11 +935,29 @@ class TripleLoader:
 
         # TODO get the qualifier id so that it can be 
 
+        def sortkey(kv):
+            k, v = kv
+            return k  # FIXME TODO this needs to be checked an improved to control insert order
+
+        value_sets = []
+        statements = []
+        for prefix, suffix, to_insert in self.make_load_records(curies_done, metadata_done, data_done):
+            for columns, values in sorted(to_insert.items(), key=sortkey):
+                value_sets.append(values)
+                statement = ' '.join((prefix, f'({columns}) VALUES', '{}', suffix))
+                statements.append(statement)
+
+        *value_templates, params = makeParamsValues(*value_sets)
+        sql = ';\n'.join(statements).format(*value_templates)
+        printD()
+        [print(k, v) for k, v in params.items()]
+        self.execute(sql, params)
+
+        return 'TODO\n'
+
         sql_base = 'INSERT INTO triples'
         suffix = ' ON CONFLICT DO NOTHING'
-        sqls = []
-
-        for sections in self.make_load_records(ci, mi, di):
+        for sections in self.make_load_records(curies_done, metadata_done, data_done):
             for values, sql_columns, *constParams in sections:
                 if constParams:
                     printD(constParams)

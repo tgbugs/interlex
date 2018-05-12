@@ -257,6 +257,7 @@ CREATE FUNCTION load_event_to_qualifier() RETURNS trigger AS $$
                  i.type = 'data' AND
                  ir.p = 'hasPart' AND
                  ir.s = NEW.serialization_identity;
+           RETURN NULL;
        END
 $$ language plpgsql;
 
