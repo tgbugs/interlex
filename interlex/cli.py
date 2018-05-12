@@ -1,4 +1,5 @@
 #!/usr/bin/env python3.6
+#!/usr/bin/env pypy3
 """ InterLex python implementaiton
 
 Usage:
@@ -6,7 +7,7 @@ Usage:
     interlex uri [options]
     interlex curies [options]
     interlex test [options]
-    interlex load [options]
+    interlex sync [options]
     interlex dbsetup [options]
     interlex post curies [options] <user>
     interlex post ontology [options] <user>
@@ -70,7 +71,7 @@ def main():
             resp = requests.post(url, json=j)
             printD(resp.text)
 
-    elif args['load']:
+    elif args['sync']:
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
         from interlex.load import TripleLoader
@@ -79,12 +80,9 @@ def main():
         ltl = type('TripleLoader', (TripleLoader,), {})
         Loader = ltl(db.session)
         il = InterLexLoad(Loader)
-        il.existing_ids()
-        try: il.triples()
-        except ValueError as e: pass
-        il.ids()
+        il.setup()
+        # il.load()  # do this one yourself
         self = il
-        # il.load(loader)  # do this one yourself
         embed()
 
     elif args['dbsetup']:

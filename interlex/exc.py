@@ -1,4 +1,5 @@
 from functools import wraps
+#import sqlalchemy as sa
 
 class IlxException(Exception):
     pass
@@ -28,9 +29,13 @@ def bigError(method):
     def wrapped(*args, **kwargs):
         try:
             return method(*args, **kwargs)
+        #except sa.exc.InternalError as e:
         except BaseException as e:
             if hasattr(e, 'orig'):
-                raise e.orig
-            else:
-                raise e
+                if len(e.statement) > 1000:
+                    e.statement = e.statement[:1000] + ' ... TRUNCATED'
+                if len(e.params) > 20:
+                    e.params = {}
+
+            raise e
     return wrapped

@@ -19,8 +19,8 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.routing import BaseConverter
 from pyontutils.config import devconfig
 from pyontutils.utils import TermColors as tc
-from pyontutils.core import PREFIXES as uPREFIXES, rdf, rdfs, owl, definition
-from pyontutils.core import makeGraph, yield_recursive
+from pyontutils.core import PREFIXES as uPREFIXES, rdf, rdfs, owl, definition, ILX, oboInOwl
+from pyontutils.core import makeGraph, yield_recursive, OntId
 from pyontutils.ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
 from interlex.exc import bigError
 from IPython import embed
@@ -490,8 +490,9 @@ class IdLocalBNode(rdflib.BNode):
 
 # get interlex
 class InterLexLoad:
-    def __init__(self, Loader):
+    def __init__(self, Loader, debug=False):
         self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex', 'uri.interlex.org')
+        self.debug = debug
         self.admin_engine = create_engine(dbUri(user='interlex-admin'), echo=True)
         self.admin_exec = self.admin_engine.execute
         from pyontutils.utils import mysql_conn_helper
@@ -506,8 +507,13 @@ class InterLexLoad:
         self.insp = inspect(self.engine)
         self.graph = None
 
+    def setup(self):
+        self.existing_ids()
+        self.make_triples()
+        self.ids()
+
     @bigError
-    def load(self):
+    def local_load(self):
         loader = self.loader
         self.loader.session.execute(self.ilx_sql, self.ilx_params)
         loader.session.execute(self.eid_sql, self.eid_params)
@@ -528,8 +534,14 @@ class InterLexLoad:
         if setup_ok is not None:
             raise LoadError(setup_ok)
         
+    @bigError
+    def remote_load(self):
         self.loader.load()
         printD('Yay!')
+
+    def load(self):
+        self.local_load()
+        self.remote_load()
 
     def ids(self):
         rows = self.engine.execute('SELECT DISTINCT ilx FROM terms ORDER BY ilx ASC')
@@ -539,12 +551,77 @@ class InterLexLoad:
         self.current = int(values[-1][0].strip('0'))
         printD(self.current)
 
+    def cull_bads(self, eternal_screaming, values, ind):
+        verwat = defaultdict(list)
+        for row in sorted(eternal_screaming, key=lambda r:r[ind('version')], reverse=True):
+            verwat[row[ind('ilx')][4:]].append(row)
+
+        vervals = list(verwat.values())
+
+        ver_curies = defaultdict(lambda:[None, set()])
+        for ilx, rows in verwat.items():
+            for row in rows:
+                iri = row[ind('iri')]
+                curie = row[ind('curie')]
+                ver_curies[iri][0] = ilx
+                ver_curies[iri][1].add(curie)
+
+        mult_curies = {k:v for k, v in ver_curies.items() if len(v[1]) > 1}
+
+        maybe_mult = defaultdict(list)
+        versions = defaultdict(list)
+        for ilx, iri, ver in sorted(values, key=lambda t:t[-1], reverse=True):
+            versions[ilx].append(ver)
+            maybe_mult[iri].append(ilx)
+
+        multiple_versions = {k:v for k, v in versions.items() if len(set(v)) > 1}
+
+        any_mult = {k:v for k, v in maybe_mult.items() if len(v) > 1}
+
+
+        dupe_report = {k:tuple(f'http://uri.interlex.org/base/ilx_{i}' for i in v)
+                       for k, v in maybe_mult.items()
+                       if len(set(v)) > 1}
+        readable_report = {OntId(k):tuple(OntId(e) for e in v) for k, v in dupe_report.items()}
+        _ = [print(repr(k), '\t', *(f'{e!r}' for e in v)) for k, v in sorted(readable_report.items())]
+
+        dupes = tuple(dupe_report) + tuple(mult_curies)
+
+        # dupes = [u for u, c in Counter(_[1] for _ in values).most_common() if c > 1]  # picked up non-unique ilx which is not what we wanted
+
+        skips = []
+        bads = []
+        bads += [(a, b) for a, b, _ in values if b in dupes]
+        # TODO one of these is incorrect can't quite figure out which, so skipping entirely for now
+        for id_, iri, version in values:  # FIXME
+            if ' ' in iri:  # sigh, skip these for now since pguri doesn't seem to handled them
+                bads.append((id_, iri))
+            elif 'neurolex.org/wiki' in iri:
+                skips.append((id_, iri))
+
+        bads = sorted(bads, key=lambda ab:ab[1])
+        ins_values = [(ilx, iri) for ilx, iri, ver in values if
+                      (ilx, iri) not in bads and
+                      (ilx, iri) not in skips]
+        #self.user_iris = [v for v in ins_values if 'interlex.org' in v[1]]  # TODO
+        ins_values = [v for v in ins_values if 'interlex.org' not in v[1]]
+        #ins_values += [(v[0], k) for k, v in mult_curies.items()]  # add curies back now fixed
+        if self.debug:
+            embed()
+        return ins_values, bads, skips
+
     def existing_ids(self):
         insp, engine = self.insp, self.engine
 
         terms = [c['name'] for c in insp.get_columns('terms')]
         term_existing_ids = [c['name'] for c in insp.get_columns('term_existing_ids')]
         header = term_existing_ids + terms
+
+        def ind(name):
+            if name in header:
+                return header.index(name)
+            else:
+                raise IndexError()
 
         query = engine.execute('SELECT * FROM term_existing_ids as teid JOIN terms as t ON t.id = teid.tid WHERE t.type != "cde"')
 
@@ -554,35 +631,13 @@ class InterLexLoad:
         #def datal(head):
             #return cdata[header.index(head)]
 
-        values = [(row.ilx[4:], row.iri, row.version) for row in query if row.ilx not in row.iri]
+        #values = [(row.ilx[4:], row.iri, row.version) for row in query if row.ilx not in row.iri]
+        eternal_screaming = list(query)
+        
+        start_values = [(row[ind('ilx')][4:], row[ind('iri')], row[ind('version')])
+                  for row in eternal_screaming if row[ind('ilx')] not in row[ind('iri')]]
 
-        asdf = {}
-        for ilx, iri, ver in values :
-            if iri not in asdf:
-                asdf[iri] = set()
-
-            asdf[iri].add(ilx)
-
-        dupe_report = {k:tuple(f'http://uri.interlex.org/base/ilx_{i}' for i in v)
-         for k, v in asdf.items()
-         if len(v) > 1}
-        _ = [print(k, '\t', *v) for k, v in sorted(dupe_report.items())]
-
-        dupes = tuple(dupe_report)
-
-        # dupes = [u for u, c in Counter(_[1] for _ in values).most_common() if c > 1]  # picked up non-unique ilx which is not what we wanted
-
-        bads = []
-        bads += [(a, b) for a, b, _ in values if b in dupes]
-        # TODO one of these is incorrect can't quite figure out which, so skipping entirely for now
-
-        for id_, iri, version in values:  # FIXME
-            if ' ' in iri:  # sigh, skip these for now since pguri doesn't seem to handled them
-                bads.append((id_, iri))
-        values = [v for v in values if v not in bads]
-        self.user_iris = [v for v in values if 'interlex.org' in v[1]]  # TODO
-        values = [v for v in values if 'interlex.org' not in v[1]]
-
+        values, bads, skips = self.cull_bads(eternal_screaming, start_values, ind)
 
         sql_base = 'INSERT INTO existing_iris (group_id, ilx_id, iri) VALUES '
         values_template, params = makeParamsValues(values, constants=('idFromGroupname(:group)',))
@@ -592,10 +647,12 @@ class InterLexLoad:
         self.eid_sql = sql
         self.eid_params = params
         self.eid_bads = bads
-        printD(bads)
+        self.eid_skips = skips
+        if self.debug:
+            printD(bads)
         return sql, params
 
-    def triples(self):
+    def make_triples(self):
         insp, engine = self.insp, self.engine
         #ilxq = ('SELECT * FROM term_existing_ids as teid '
                 #'JOIN terms as t ON t.id = teid.tid '
@@ -614,7 +671,7 @@ class InterLexLoad:
                 for name, query in queries.items()}
         ilx_index = {}
         id_type = {}
-        triples = []
+        triples = [(ILX[ilx], oboInOwl.hasDbXref, iri) for ilx, iri in self.eid_skips]
         type_to_owl = {'term':owl.Class,
                     'cde':owl.Class,
                     'annotation':owl.AnnotationProperty,
@@ -697,10 +754,11 @@ class InterLexLoad:
         #embed()
         self.triples = triples
         self.wat = bads, WTF, WTF2
-        if bads or WTF or WTF2:
+        if self.debug and (bads or WTF or WTF2):
             printD(bads[:10])
             printD(WTF[:10])
             printD(WTF2[:10])
+            embed()
             raise ValueError('BADS HAVE ENTERED THE DATABASE AAAAAAAAAAAA')
         return triples
 
