@@ -4,7 +4,7 @@ import rdflib
 import hashlib
 import requests
 import sqlalchemy as sa
-from pyontutils.core import rdf, owl
+from pyontutils.core import rdf, owl, OntId
 from pyontutils.utils import TermColors as tc
 from pyontutils.ttlser import DeterministicTurtleSerializer
 from interlex.exc import hasErrors, LoadError
@@ -187,6 +187,7 @@ class TripleLoader:
         def set_d(case):
             self.expected_bound_name = self.bound_name
 
+        # bound database expected
         bde_switch = make_switch((
             ((NOTN, NOTN, NOTN), all_nn),
             ((___n, ___n, ___n), all_none),  # fail if not on
@@ -198,8 +199,11 @@ class TripleLoader:
             ((NOTN, NOTN, ___n), pairs, 'bound name does not match existing expected bound name'),
             ))
 
+        if self.name is None:
+            embed()
+
         stop = bde_switch(self.bound_name, self.expected_bound_name, expected_bound_name)
-        if stop is not None:
+        if stop is not None:  # this is redundant but helps with type readability
             return stop
         
     def load(self):
@@ -247,6 +251,7 @@ class TripleLoader:
     @name.setter
     def name(self, value):
         # TODO
+        self._name = value  # set this first to preven accidentally not setting it
         if value not in self._cache_names or self._transaction_cache_names:
             try:
                 sql = 'INSERT INTO names VALUES (:name)'
@@ -256,7 +261,6 @@ class TripleLoader:
                 self.session.rollback()
 
             self._transaction_cache_names.add(value)
-            self._name = value
 
     @property
     def reference_name(self):
@@ -582,154 +586,7 @@ class TripleLoader:
 
         return self._identity_triple_count[identity]  # this should never key error
 
-    def _process_graph(self):
-        self.bound_name  # TODO what to do about graphs that don't have a bound name?
-        printD('processing graph')
-        dts = DeterministicTurtleSerializer(self.graph)
-        gsortkey = dts._globalSortKey
-        psortkey = lambda p: dts.predicate_rank[p]
-
-        def sortkey(triple):
-            s, p, o = triple
-            return gsortkey(s), psortkey(p), gsortkey(o)
-
-        def normalize(cmax, t, existing):
-            for e in t:
-                if isinstance(e, rdflib.BNode):
-                    if e not in existing:
-                        cmax += 1
-                        existing[e] = cmax
-
-                    yield existing[e]
-                else:
-                    yield e
-
-            yield cmax
-
-        def intlast(triple):
-            return tuple('zzzzzzzzzzzzzzzzzzzzzzz' + str(e)
-                            if isinstance(e, int)
-                            else e
-                            for e in triple)
-
-        subgraph_mapping = {}
-        subgraphs = []
-
-        metadata_named = []
-        data_named = []  # no uri uri blank triples
-        # sorted means that I always see the subject first ?
-        for t in sorted(self.graph, key=sortkey):
-            s, p, o = t
-            if not any(isinstance(e, rdflib.BNode) for e in t):
-                if s == self.bound_name:
-                    metadata_named.append((p, o))
-                else:
-                    data_named.append(t)
-            else:
-                if s in subgraph_mapping:
-                    ss = subgraph_mapping[s]
-                else:
-                    ss = False
-
-                if o in subgraph_mapping:
-                    os = subgraph_mapping[o]
-                else:
-                    os = False
-
-                if ss and os:
-                    if ss is not os:  # this should only happen for 1:1 bnodes
-                        new = ss + [t] + os
-                        try:
-                            subgraphs.remove(ss)
-                            subgraphs.remove(os)
-                            subgraphs.append(new)
-                            for bn in bnodes(ss):
-                                subgraph_mapping[bn] = new
-                            for bn in bnodes(os):
-                                subgraph_mapping[bn] = new
-                        except ValueError as e:
-                            print(e)
-                            embed()
-                        '''
-                        for t_ in ss: [print(e) for e in t_]
-                        print()
-                        [print(e) for e in t]
-                        print()
-                        for t_ in os: [print(e) for e in t_]
-                        '''
-                        # FIXME there are some ordering issues I think?
-                        # or maybe not and these are just the true bnodes
-                        # that do actually have no ambiguity
-
-                        #raise TypeError('wat')
-                    else:
-                        ss.append(t)
-                elif not (ss or os):
-                    new = [t]
-                    subgraphs.append(new)
-                    if isinstance(s, rdflib.BNode):
-                        subgraph_mapping[s] = new
-                    if isinstance(o, rdflib.BNode):
-                        subgraph_mapping[o] = new
-                elif ss:
-                    ss.append(t)
-                    if isinstance(o, rdflib.BNode):
-                        subgraph_mapping[o] = ss
-                elif os:
-                    os.append(t)
-                    if isinstance(s, rdflib.BNode):
-                        subgraph_mapping[s] = os
-
-        metadata_linked_subgraph_identities = {}
-        data_linked_subgraph_identities = {}
-        free_subgraph_identities = {}
-        metadata_unnamed = []
-        data_unnamed = []
-        #normalized = []
-        #bnode_to_identity = {}
-        #wat = {}
-        #[g for g in subgraphs if any(all(isinstance(e, rdflib.URIRef) for e in t) for t in g)]
-        for g in subgraphs:  # TODO make sure g is properly sorted, it should be from above
-            fs, fp, fo = ft = g[0]
-            if isinstance(fs, rdflib.BNode):
-                start = 0
-            else:
-                start = 1
-            cmax = -1
-            existing = {}
-            normalized = []
-            for t in g[start:]:
-                s, p, o, cmax = normalize(cmax, t, existing)
-                normalized.append((s, p, o))
-
-            normalized = tuple(sorted(normalized, key=intlast))
-            identity = self.orderInvariantHash(normalized)  # FIXME intlast... sort may be needed to be passed in?
-            if start:
-                if fs == self.bound_name:
-                    metadata_unnamed.append((fp, identity))
-                    metadata_linked_subgraph_identities[identity] = normalized
-                else:
-                    data_unnamed.append((fs, fp, identity))
-                    data_linked_subgraph_identities[identity] = normalized
-            else:
-                free_subgraph_identities[identity] = normalized  # (identity,) + 
-                
-        assert not [k for k, v in metadata_linked_subgraph_identities.items() if not v], 'HRM'
-        assert not [k for k, v in data_linked_subgraph_identities.items() if not v], 'HRM'
-        assert not [k for k, v in free_subgraph_identities.items() if not v], 'HRM'
-
-        # TODO dedupe metadata and data code so any bound data can be supported
-        self._metadata_named = metadata_named
-        self._metadata_unnamed = metadata_unnamed
-        self._data_named = data_named
-        self._data_unnamed = data_unnamed
-        self._metadata_linked_subgraph_identities = metadata_linked_subgraph_identities
-        self._data_linked_subgraph_identities = data_linked_subgraph_identities
-        self._free_subgraph_identities = free_subgraph_identities
-
     def process_graph(self):
-        datas = ('metadata', self.metadata_raw), ('data', self.data_raw)
-
         def normalize(cmax, t, existing):
             for e in t:
                 if isinstance(e, rdflib.BNode):
@@ -758,6 +615,7 @@ class TripleLoader:
                 normalized.append(tuple(ntrip))  # today we learned that * -> list
             return tuple(normalized)  # do not reorder by number?
 
+        datas = ('metadata', self.metadata_raw), ('data', self.data_raw)
         for name, data in datas:
             idents = IdentityBNode(data, debug=True)
 
@@ -878,7 +736,18 @@ class TripleLoader:
 
             yield prefix, suffix, to_insert
 
-        # TODO free and linked subgraph insertions
+        def intlast(triple):
+            # I find it hard to believe there will be a subgraph with more than 5 digits of bnodes
+            return tuple(f'zzzzz{e:0>5}' if isinstance(e, int) else e for e in triple)
+        # linked
+        for identity, subgraph in self.subgraph_identities.items():
+            printD(identity)
+            [print(*(OntId(e).curie if
+                     isinstance(e, rdflib.URIRef) else
+                     repr(e) for e in t))
+             for t in sorted(subgraph, key=intlast)]
+
+        # free
 
     def load_event(self):
         # FIXME only insert on success...
@@ -956,35 +825,8 @@ class TripleLoader:
             printD()
             [print(k, v) for k, v in params.items()]
 
-        return 'TODO\n'
-
-        sql_base = 'INSERT INTO triples'
-        suffix = ' ON CONFLICT DO NOTHING'
-        for sections in self.make_load_records(curies_done, metadata_done, data_done):
-            for values, sql_columns, *constParams in sections:
-                if constParams:
-                    printD(constParams)
-                    constants, const_params = constParams
-                else:
-                    constants, params = tuple(), {}
-
-                if values:
-                    values_template, params = makeParamsValues(values, constants=constants)
-                    params.update(const_params)
-                    if constants:
-                        # FIXME HACK resolve how we are going to represent and store curies
-                        # ie as (/<user>/curies iri_prefix curie) in triples or elsewhere
-                        # with a /<user>/curies rdf:type ilxr:Curies
-                        # or a /identities/curies or some such
-                        base = 'INSERT INTO curies '
-                        sql = base + f' ({sql_columns}) VALUES ' + values_template
-                    else:
-                        sql = sql_base + f' ({sql_columns}) VALUES ' + values_template + suffix
-                    self.execute(sql, params)
-
         # TODO create qualifiers
         return 'TODO\n'
-
 
 class InterLex(TripleLoader):
     def __call__(self, user, triples):
@@ -1015,6 +857,12 @@ class FileFromFile(FileFromBase):
         self.path = Path(name).resolve().absolute()
         name = self.path.as_uri()
         setup_ok = super().__call__(name, expected_bound_name)
+        # XXX leaving this as a warning don't pass graph in directly
+        # to this class it _should_ fail subclasss TripleLoader if you need that
+        # make sure we have populated values before unsetting path
+        # in the event that graph is patched in
+        # self.format
+        # self.serialization
         self.path = None  # avoid poluting the class namespace
         return setup_ok
 
