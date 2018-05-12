@@ -600,26 +600,37 @@ class TripleLoader:
 
             yield cmax
 
-        def sortkey(thing):
-            return tuple(IdentityBNode.sortlast if
-                         isinstance(e, rdflib.BNode) else
-                         e.encode(IdentityBNode.encoding)
-                         for e in thing)
+        def bnode_last(e):
+            return 'z' * 10 if isinstance(e, rdflib.BNode) else e
 
-        def normgraph(trips):
-            cmax = -1
-            existing = {}
+        def sortkey(triple):
+            s, p, o = triple
+            s = bnode_last(s)
+            o = bnode_last(o)
+            return p, o, s
+
+        def normgraph(head_subject, subgraph):
+            cmax = 0
+            existing = {head_subject:0}  # FIXME the head of a list is arbitrary :/
             normalized = []
-            for trip in sorted(trips, key=sortkey):
+            for trip in sorted(subgraph, key=sortkey):
+                s, p, o = trip
+                if o == head_subject:
+                    if not isinstance(s, rdflib.BNode):
+                        #printD(tc.red('Yep working'), trip, o)
+                        continue  # this has already been entered as part of data_unnamed
+                    else:
+                        raise TypeError('This should never happen!')
+
                 *ntrip, cmax = normalize(cmax, trip, existing)
                 normalized.append(tuple(ntrip))  # today we learned that * -> list
-            return tuple(normalized)  # do not reorder by number?
+            return tuple(normalized)
 
         datas = ('metadata', self.metadata_raw), ('data', self.data_raw)
         for name, data in datas:
             idents = IdentityBNode(data, debug=True)
 
-            free_subgraph_identities = {identity:normgraph(idents.subgraph_mappings[s])
+            free_subgraph_identities = {identity:normgraph(s, idents.subgraph_mappings[s])
                                         for s, identity in idents.unnamed_subgraph_identities.items()}
 
             self._blank_identities = idents.blank_identities
@@ -631,7 +642,7 @@ class TripleLoader:
             for identity, o in idents.linked_object_identities.items():
                 idents.subgraph_mappings[o]
 
-            linked_subgraph_identities = {identity:normgraph(idents.subgraph_mappings[o])
+            linked_subgraph_identities = {identity:normgraph(o, idents.subgraph_mappings[o])
                                           for identity, o in idents.linked_object_identities.items()}
 
             setattr(self, '_' + name + '_linked_subgraph_identities',
@@ -736,16 +747,31 @@ class TripleLoader:
 
             yield prefix, suffix, to_insert
 
-        def intlast(triple):
+        def int_str(e, pref=' ' * 5):
+            return pref + f'{e:0>5}' if isinstance(e, int) else e
+
+        def intfirst(triple):
             # I find it hard to believe there will be a subgraph with more than 5 digits of bnodes
-            return tuple(f'zzzzz{e:0>5}' if isinstance(e, int) else e for e in triple)
+            s, p, o = triple
+            si = s
+            s = int_str(s)
+            o = int_str(o)
+
+            if si == 0:
+                out = s, p, o
+            else:
+                #out = p, s, o
+                out = p, o, s
+
+            return out
+
         # linked
         for identity, subgraph in self.subgraph_identities.items():
             printD(identity)
             [print(*(OntId(e).curie if
                      isinstance(e, rdflib.URIRef) else
                      repr(e) for e in t))
-             for t in sorted(subgraph, key=intlast)]
+             for t in sorted(subgraph, key=intfirst)]
 
         # free
 
