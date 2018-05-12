@@ -30,6 +30,7 @@ class TripleLoader:
         return cls
 
     def __init__(self, group, user, reference_name, reference_host):
+        self.debug = False
         self.preinit()
         printD(group, user, reference_name, reference_host)
         self.reference_host = reference_host
@@ -780,7 +781,8 @@ class TripleLoader:
 
             if self._blank_identities:
                 #printD(self._blank_identities)
-                embed()
+                if self.debug:
+                    embed()
 
     def make_row(self, s, p, o, subgraph_identity=None):
 
@@ -949,9 +951,10 @@ class TripleLoader:
 
         *value_templates, params = makeParamsValues(*value_sets)
         sql = ';\n'.join(statements).format(*value_templates)
-        printD()
-        [print(k, v) for k, v in params.items()]
         self.execute(sql, params)
+        if self.debug:
+            printD()
+            [print(k, v) for k, v in params.items()]
 
         return 'TODO\n'
 
