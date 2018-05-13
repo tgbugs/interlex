@@ -6,19 +6,12 @@ import requests
 import sqlalchemy as sa
 from pyontutils.core import rdf, owl, OntId
 from pyontutils.utils import TermColors as tc
-from pyontutils.ttlser import DeterministicTurtleSerializer
-from interlex.exc import hasErrors, LoadError
+from interlex.exc import hasErrors, LoadError, NotGroup
 from interlex.core import printD, permissions_sql, bnodes, makeParamsValues, IdentityBNode
 from IPython import embed
 
-class TripleLoader:
-    _cache_names = set() # FIXME make sure that reference hosts don't get crossed up
-    _cache_identities = set()
-    formats = {
-        'ttl':'turtle',
-        'owl':'xml',
-        'n3':'n3',
-    }
+class BasicDB:
+    _cache_groups = {}
     def ___new__(cls, *args, **kwargs):
         return super().__new__(cls)
 
@@ -29,15 +22,68 @@ class TripleLoader:
         cls.__new__ = cls.___new__
         return cls
 
+    def __init__(self, group, user):
+        self.group = group
+        self.user = user
+
+    @property
+    def group(self):
+        return self._group
+
+    @group.setter
+    def group(self, value):
+        if hasattr(self, '_group'):
+            raise ValueError(f'{self} has already set group!')
+        id, role = self.check_group(value)
+        self._group = value
+        self.group_id = id
+        self.group_role = role
+
+    @property
+    def user(self):
+        return self._user
+
+    @user.setter
+    def user(self, value):
+        if hasattr(self, '_user'):
+            raise ValueError(f'{self} has already set user!')
+        id, role = self.check_group(value)
+        self._user = value
+        self.user_id = id
+        self.user_role = role
+
+    def check_group(self, group):
+        if group not in self._cache_groups:
+            sql = ('SELECT * FROM groups '
+                   "WHERE own_role < 'pending' AND groupname = :name")
+            try:
+                res = next(self.session.execute(sql, dict(name=group)))
+                self._cache_groups[group] = res.id, res.own_role
+                return res.id, res.own_role
+            except StopIteration:
+                raise NotGroup(f'{group} is not a group')
+        else:
+            return self._cache_groups[group]
+
+
+class TripleLoader(BasicDB):
+    scheme = 'http'  # sadface
+    _cache_names = set() # FIXME make sure that reference hosts don't get crossed up
+    _cache_identities = set()
+    formats = {
+        'text/turtle':'turtle',
+        'ttl':'turtle',
+        'owl':'xml',
+        'n3':'n3',
+    }
     def __init__(self, group, user, reference_name, reference_host):
+        super().__init__(group, user)
         self.debug = False
         self.preinit()
         printD(group, user, reference_name, reference_host)
         self.reference_host = reference_host
         self._reference_name = None
         self._reference_name_in_db = None
-        self.group = group
-        self.user = user
 
         # FIXME reference names should NOT have file type extensions
         # we can have a default file type and resolve types
@@ -53,8 +99,9 @@ class TripleLoader:
             #self.extension = ext[1:]
             # extension is set by name not reference_name
             # we might want to track this for stats reasons...
-            
-        self.reference_name = reference_name
+
+        if reference_name is not None:
+            self.reference_name = reference_name
 
     def preinit(self):
         self._name = None
@@ -84,7 +131,9 @@ class TripleLoader:
         self._serialization_identity = None  # ALA representation_identity
         self._curies_identity = None
         #self._subgraph_identities = None  # not used
-        self._linked_subgraph_identities = None
+        #self._linked_subgraph_identities = None  # not used
+        self._metadata_linked_subgraph_identities = None
+        self._data_linked_subgraph_identities = None
         self._free_subgraph_identities = None
         self._bound_name_identity = None
         self._metadata_identity = None
@@ -104,9 +153,8 @@ class TripleLoader:
         self.__enter__()  # the paranoia is real
         self._safe = False
         printD('exit')
-
     @hasErrors(LoadError)
-    def __call__(self, name, expected_bound_name=None):
+    def __call__(self, name, expected_bound_name):
         printD(name, expected_bound_name)
         # FIXME this is a synchronous interface
         # if we want it to be async it will require
@@ -121,27 +169,8 @@ class TripleLoader:
         else:
             self._safe = False
 
-        # expected_bound_name should only be supplied if it differes from name for the inital load
-        # self.name = name  # TODO this is not quite ready yet, loading from arbitrary uris/filenames needs one more level
-
-        if name == self.reference_name:
-            # FIXME this is if the iri is give, obviously the bound name will
-            # match and everything should work, do need to figure out how to
-            # handle this case properly though... name = None and _serialization already set
-            # NOTE for direct user contributions name should be their orcid
-            # or the interface/api endpoint they were using if we want to track that?
-            return 'you cannot load an ontology into itself from itself unless you are interlex itself', 400
-        elif self.reference_host in name:
-            # TODO provide an alternative
-            return 'you cannot copy content from one reference name to another in this way', 400
-
-        # TODO logic when bound_name = reference_name, seems to be handled below correctly...
-        if expected_bound_name is None:
-            expected_bound_name = name
-
         self.name = name
-        # in any case where this function is called name should not equal reference name
-        # it should either be a filename or something like that
+        self.expected_bound = expected_bound_name
 
         def ___n(value): return value is None
         def NOTN(value): return value is not None
@@ -296,14 +325,14 @@ class TripleLoader:
             #self._expected_bound_name = r.expected_bound_name
 
         return self._expected_bound_name
-    
+
     @expected_bound_name.setter
     def expected_bound_name(self, value):
-        if self.expected_bound_name is not None:
+        if self.expected_bound_name == value:
+            printD('WARNING: trying to set expected bound name again!')
+        elif self.expected_bound_name is not None:
             # NOTE this is also enforced in the database
             raise LoadError('Cannot change expected bound names once they have been set!')
-        elif self.expected_bound_name == value:
-            printD('WARNING: trying to set expected bound name again!')
         else:
             if self.reference_name_in_db:
                 sql = ('UPDATE reference_names SET expected_bound_name = :e WHERE name = :r')
@@ -315,6 +344,7 @@ class TripleLoader:
             # that shouldn't happen? are we sure?
             self.execute(sql, dict(r=self.reference_name, e=value, g=self.group))
             self._expected_bound_name = value
+            self._reference_name_in_db = True  # ok to set again
 
     # serialization type
     @property
@@ -537,6 +567,16 @@ class TripleLoader:
     def digest(self, type_name):
         value = getattr(self, type_name)
         return IdentityBNode(value).identity
+
+    def batch_ident_check(self, *idents):
+        sql = 'SELECT identity FROM identities WHERE identity IN '
+        values_template, params = makeParamsValues(idents)
+        res = self.session.execute(sql + values_template, params)
+        existing = set(r.identity for r in res)
+        self._cache_identities.update(existing)
+        embed()
+        for ident in idents:
+            yield ident in existing
 
     def ident_exists(self, ident):
         # TODO check to make sure that the load succeeded
@@ -765,15 +805,24 @@ class TripleLoader:
 
             return out
 
-        # linked
+        # linked and free
+        to_insert = defaultdict(list)  # should all be unique due to having already been identified
         for identity, subgraph in self.subgraph_identities.items():
-            printD(identity)
-            [print(*(OntId(e).curie if
-                     isinstance(e, rdflib.URIRef) else
-                     repr(e) for e in t))
-             for t in sorted(subgraph, key=intfirst)]
+            if self.debug:
+                printD(identity)
+                [print(*(OntId(e).curie if
+                         isinstance(e, rdflib.URIRef) else
+                         repr(e) for e in t))
+                 for t in sorted(subgraph, key=intfirst)]
 
-        # free
+            if not self.ident_exists(identity):  # we run a batch check before
+                for t in sorted(subgraph, key=intfirst):
+                    columns, record = self.make_row(*t, subgraph_identity=identity)
+                    to_insert[columns].append(record)
+                    # FIXME insertion order will be broken because of this
+                    # however the order can be reconstructed on the way out...
+                    # the trick however is to know which identities we need to
+                    # insert for free subgraphs?
 
     def load_event(self):
         # FIXME only insert on success...
@@ -784,10 +833,18 @@ class TripleLoader:
         # TODO always insert metadata first so that in-database integrity checks
         # can run afterward and verify roundtrip identity
         #ni = self.ident_exists(self.bound_name_identity)  # FIXME usually a waste
-        curies_done = self.ident_exists(self.curies_identity)
-        metadata_done = self.ident_exists(self.metadata_identity)
-        data_done = self.ident_exists(self.data_identity)
-        free_done = {k:v in self._cache_identities for k, v in self.subgraph_identities.items()}
+
+        sgids = tuple(self.subgraph_identities)
+        idents = (self.curies_identity,
+                  self.metadata_identity,
+                  self.data_identity,
+                  *sgids)
+
+        curies_done, metadata_done, data_done, *sg_done = self.batch_ident_check(*idents)
+
+        #curies_done = self.ident_exists(self.curies_identity)
+        #metadata_done = self.ident_exists(self.metadata_identity)
+        #data_done = self.ident_exists(self.data_identity)
 
         # (:s, 'hasPart', :o)
         # FIXME only insert the anon subgraphs and definitely better
@@ -906,6 +963,30 @@ class FileFromIRI(FileFromBase):
     lfmessage = (f'You appear to by trying to load a file bigger than {maxsize_mb}MB. '
                  'Please get in touch with us if you want this included in InterLex.')
 
+    @hasErrors(LoadError)
+    def __call__(self, name, expected_bound_name=None):
+        # expected_bound_name should only be supplied if it differes from name for the inital load
+        # self.name = name  # TODO this is not quite ready yet, loading from arbitrary uris/filenames needs one more level
+
+        # in any case where this function is called name should not equal reference name
+        # it should either be a filename or something like that
+        if name == self.reference_name:
+            # FIXME this is if the iri is give, obviously the bound name will
+            # match and everything should work, do need to figure out how to
+            # handle this case properly though... name = None and _serialization already set
+            # NOTE for direct user contributions name should be their orcid
+            # or the interface/api endpoint they were using if we want to track that?
+            return 'you cannot load an ontology into itself from itself unless you are interlex itself', 400
+        elif self.reference_host in name:
+            # TODO provide an alternative
+            return 'you cannot copy content from one reference name to another in this way', 400
+
+        # TODO logic when bound_name = reference_name, seems to be handled below correctly...
+        if expected_bound_name is None:
+            expected_bound_name = name
+
+        super().__call__(name, expected_bound_name)
+
     @property
     def header(self):
         if self._header is None:
@@ -977,8 +1058,66 @@ class FileFromIRI(FileFromBase):
         # graph.parse(filepath, format=format)
 
 
-class FileFromPost(FileFromIRI):  # FIXME vs InterLexFile ?
-    pass
+class FileFromPost(FileFromIRI):
+    def __init__(self, group, user, reference_host, reference_name=None):
+        super().__init__(group, user, reference_name, reference_host)
+
+    @hasErrors(LoadError)
+    def __call__(self, file, header, filename=None):
+        self._serialization = file
+        self._header = header
+        self.reference_name
+        super().__call__()
+
+    @property
+    def reference_name(self):
+        if self._reference_name is None and self.bound_name is not None:
+            # FIXME name_prefix should probably be usable more broadly
+            name_prefix = os.path.join(self.reference_host, self.group, 'ontologies')
+            if prefix in self.bound_name:
+                name_type = 'name'
+            elif self.reference_host in self.bound_name:
+                raise LoadError(f'Group does not match bound name group!\n'
+                                '{self.group} not in {self.bound_name}')
+            else:
+                name_type = 'expected_bound_name'
+
+            sql = ('SELECT name, expected_bound_name FROM reference_names '
+                   f'WHERE {name_type} = :name')
+            try:
+                res = next(self.session.execute(sql, dict(bound_name=self.bound_name)))
+                self._reference_name = res.name
+                self._expected_bound_name = res.expected_bound_name
+                self._reference_name_in_db = True
+            except StopIteration:
+                if self.create:
+                    # TODO proper group assignment for ownership
+                    # along with the proper notifications regarding
+                    # whether the user is acting on behalf of the group
+                    # or whether they are acting on their own in which
+                    # case the group is notified
+                    if name_type == 'name':
+                        self.reference_name = self.bound_name
+                        self.name = self.bound_name
+                    elif name_type == 'expected_bound_name':
+                        name_suffix = self.bound_name.split(name_prefix)[-1]
+                        name = f'{self.scheme}://' + os.path.join(name_prefix, name_suffix)
+                        self.reference_name = name
+                        self.expected_bound_name = self.bound_name  # FIXME a hack to trigger INSERT ...
+                    else:
+                        raise BaseException('wat this should never happen')
+
+                else:
+                    raise LoadError(f'bound_name {self.bound_name} has not been '
+                                    'attached to a reference_name and `{"create":true}` '
+                                    'was not set.\n'
+                                    'Please set create = true or POST directly to '
+                                    'the desired endpoint (reference_name).')
+                    self._reference_name_in_db = False
+                printD('WARNING reference name has not been created yet!\n')
+
+        return self._reference_name
+
 
 class FileFromVCS(TripleLoader):
     pass

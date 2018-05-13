@@ -4,6 +4,9 @@ from functools import wraps
 class IlxException(Exception):
     pass
 
+class NotGroup(IlxException):
+    pass
+
 class LoadError(IlxException):
     def __init__(self, message, code=400):
         self.message = message

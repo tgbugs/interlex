@@ -1,17 +1,18 @@
 import os
 import json
 import rdflib
+from functools import wraps
 from flask import Flask, request, redirect, url_for, abort
 from flask_sqlalchemy import SQLAlchemy
 from protcur.core import atag, htmldoc
 from protcur.server import table_style, details_style, render_table
 from pyontutils.core import makePrefixes, makeGraph
 from pyontutils.ttlser import CustomTurtleSerializer
-from interlex.exc import LoadError
+from interlex.exc import LoadError, NotGroup
 from interlex.core import printD
 from interlex.core import dbUri, permissions_sql
 from interlex.core import RegexConverter, make_paths, makeParamsValues
-from interlex.load import FileFromIRI, TripleLoader
+from interlex.load import FileFromIRI, FileFromPost, TripleLoader, BasicDB
 from interlex.dump import TripleExporter
 from IPython import embed
 
@@ -24,7 +25,7 @@ def uriStructure():
     versioned_ids = basic + ['curies', 'uris']
     intermediate_filename = ['<filename>.<extension>', '<filename>']
     parent_child = {
-        '<user>':              basic + branches + compare + ['contributions', 'prov'],
+        '<user>':              basic + branches + compare + ['contributions', 'upload', 'prov'],
         '<other_user>':        branches,  # no reason to access /user/own/otheruser/ilx_ since identical to /user/ilx_
         '<other_user_diff>':   basic + branches, 
         'readable':            ['<word>'],
@@ -49,6 +50,7 @@ def uriStructure():
         'identities':          ['<identity>'],
     }
     node_methods = {'curies_':['GET', 'POST'],
+                    'upload':['POST'],
                     #'<prefix_iri_curie>':[],  only prefixes can be updated...?
                     ilx_pattern:['GET', 'PATCH'],
                     '<word>':['GET', 'PATCH'],
@@ -69,6 +71,40 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
     app.url_map.converters['regex'] = RegexConverter
     ilx_pattern, parent_child, node_methods = structure()
 
+    def basic(function):
+        @wraps(function)
+        def basic_checks(self, *args, **kwargs):
+            # TODO auth goes here
+            user = kwargs['user']
+            db = self.getBasicInfo(user, user)
+            if db is None:
+                return abort(404)
+            return function(self, *args, **kwargs, db=db)
+
+        return basic_checks
+
+    def basic2(function):
+        @wraps(function)
+        def basic2_checks(self, *args, **kwargs):
+            # TODO auth goes here
+            user = kwargs['user']
+            if 'other_user' in kwargs:
+                other_user = kwargs['other_user']
+            elif 'other_user_diff' in kwargs:
+                other_user = kwargs['other_user_diff']
+
+            db = self.getBasicInfo(user, user)
+            db2 = self.getBasicInfo(other_user, other_user)
+            if db is None:
+                return abort(404)
+            if db2 is None:
+                return abort(404)
+
+            db.other = db2
+            return function(self, *args, **kwargs, db=db)
+
+        return basic2_checks
+
     class Endpoints:
         db = database
         reference_host = None
@@ -76,6 +112,16 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
             self.session = self.db.session
             effi = type('FileFromIRI', (FileFromIRI,), {})
             self.FileFromIRI = effi(self.session)  # FIXME need a way to pass ref host?
+            ffp = type('FileFromPost', (FileFromPost,), {})
+            self.FileFromPost = ffp(self.session)
+            bdb = type('BasicDB', (BasicDB,), {})
+            self.BasicDB = bdb(self.session)
+
+        def getBasicInfo(self, group, user):
+            try:
+                return self.BasicDB(group, user)
+            except NotGroup:
+                return None
 
         def reference_name(self, user, path):
             # need this for testing, in an ideal world we read from headers
@@ -124,6 +170,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                 'version':self.ontologies_version,  # FIXME collision prone?
                 'contributions_':self.contributions_,
                 'contributions':self.contributions,
+                'upload':self.upload,
                 'prov':self.prov,
             }
             for node in nodes[::-1]:
@@ -133,11 +180,13 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                 raise KeyError(f'could not find any value for {nodes}')
 
         # TODO PATCH
-        def ilx(self, user, id):
+        @basic
+        def ilx(self, user, id, db=None):
             # TODO allow PATCH here with {'add':[triples], 'delete':[triples]}
             # printD(tc.red('AAAAA'), user, id)
+
             if user != 'base' and user != 'latest':
-                args = dict(id=id, user=user)
+                #args = dict(id=id, user=user)
                 #sql = ('SELECT ou.username, t.id FROM interlex_ids as t, org_user_view as ou '
                        #'WHERE t.id = :id AND ou.username = :user')
                 #sql = ('SELECT id FROM interlex_ids WHERE id = :id UNION '
@@ -150,11 +199,13 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                 #sql = ('SELECT t.id, g.id FROM interlex_ids AS t, groups AS g '
                        #'WHERE t.id = :id AND g.validated = TRUE AND g.groupname = :user')
 
-                sql = ('SELECT t.id, g.id FROM interlex_ids AS t, groups AS g '
-                       "WHERE t.id = :id AND g.own_role < 'pending' AND g.groupname = :user")
+                #sql = ('SELECT t.id, g.id FROM interlex_ids AS t, groups AS g '
+                       #"WHERE t.id = :id AND g.own_role < 'pending' AND g.groupname = :user")
+                sql = 'SELECT id FROM interlex_ids WHERE id = :id'
                 try:
-                    id, gid = next(self.session.execute(sql, args))
-                    printD(id, gid)
+                    res = next(self.session.execute(sql, dict(id=id)))
+                    id = res.id
+                    #printD(id, db.group_id)
                 except StopIteration:
                     return abort(404)
 
@@ -180,6 +231,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                    #'OR t.o_blank = t.id '
                    #'AND tb1 = tb2)'
                    'WHERE e.ilx_id = :id')
+            # TODO user's view...
             sql = '''
             WITH graph AS (
                 SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity
@@ -220,18 +272,22 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                            styles=(table_style,))
 
         # TODO PATCH only admin can change the community readable mappings just like community curies
-        def readable(self, user, word):
+        @basic
+        def readable(self, user, word, db=None):
             return request.path
 
-        def contributions_(self, user):
+        @basic
+        def contributions_(self, user, db=None):
             # without at type lands at the additions and deletions page
             return 'TODO identity for user contribs directly to interlex'
 
+        @basic
         def contributions(self, *args, **kwargs):
             return 'TODO slicing on contribs ? or use versions?'
 
         # TODO POST ?private if private PUT (to change mapping) PATCH like readable 
-        def uris(self, user, uri_path):
+        @basic
+        def uris(self, user, uri_path, db=None):
             # owl:Class, owl:*Property
             # owl:Ontology
             # /<user>/ontologies/obo/uberon.owl << this way
@@ -239,7 +295,8 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
             return request.path
 
         # TODO POST PUT PATCH
-        def curies_(self, user):
+        @basic
+        def curies_(self, user, db=None):
             # TODO auth
             PREFIXES, g = self.getGroupCuries(user)
             if request.method == 'POST':
@@ -265,7 +322,8 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
             return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
         # TODO POST PATCH PUT
-        def curies(self, user, prefix_iri_curie):
+        @basic
+        def curies(self, user, prefix_iri_curie, db=None):
             PREFIXES, g = self.getGroupCuries(user)
             qname, expand = g.qname, g.expand
             if prefix_iri_curie.startswith('http') or prefix_iri_curie.startswith('file'):  # TODO decide about urlencoding
@@ -282,9 +340,9 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                 if 'local' in request.args and request.args['local'].lower() == 'true':
                     # FIXME super inefficient even with index?
                     sql = ('SELECT ilx_id FROM existing_iris AS e WHERE e.iri = :iri '
-                           'AND (e.group_id = idFromGroupname(:group) OR e.group_id = 1)')
+                           'AND (e.group_id = :group_id OR e.group_id = 1)')
                     try:
-                        resp = next(self.session.execute(sql, dict(iri=iri, group=user)))
+                        resp = next(self.session.execute(sql, dict(iri=iri, group_id=db.group_id)))
                         return redirect(url_for(f'Endpoints.ilx /<user>/{ilx_pattern}',
                                                 user=user, id=resp.ilx_id), code=302)
                     except StopIteration:
@@ -304,10 +362,34 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
 
                 return self.iriFromPrefix(prefix, *ordered_prefix_sets)
 
+        @basic
+        def upload(self, user, db=None):
+            """ Expects files """
+            # only POST
+            # TODO auth
+
+            names = []
+            # TODO load stats etc
+            try:
+                loader = self.FileFromPost(group, user, self.reference_host)
+            except NotGroup:
+                return abort(404)
+
+            for file in request.files:
+                filename = None  # TODO
+                embed()
+                setup_ok = loader(file, header, filename)
+                if setup_ok is not None:
+                    return setup_ok
+                names.append((reference_name, bound_name))
+
+            return json.dumps(names)
+
         # TODO enable POST here from users (via apikey) that are contributor or greater in a group admin is blocked from posting in this way
         # TODO curies from ontology files vs error on unknown? vs warn that curies were not added << last option best, warn that they were not added
         # TODO HEAD -> return owl:Ontology section
-        def ontologies(self, user, filename, extension=None, ont_path=''):
+        @basic
+        def ontologies(self, user, filename, extension=None, ont_path='', db=None):
             # on POST for new file check to make sure that that the ontology iri matches the post endpoint
             # response needs to include warnings about any parts of the file that could not be lifted to interlex
             # TODO for ?iri=external-iri validate that uri_host(external-iri) and /ontologies/... ... match
@@ -320,6 +402,10 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
             path = os.path.join('ontologies', match_path)  # FIXME get middle from request?
             #request_reference_name = request.headers['']
             reference_name = self.reference_name(group, path)
+            try:
+                loader = self.FileFromIRI(group, user, reference_name, self.reference_host)
+            except NotGroup:
+                return abort(404)
             printD(request.headers)
             if request.method == 'HEAD':
                 # TODO return bound_name + metadata
@@ -353,7 +439,6 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
                             if match_path not in name and match_path not in expected_bound_name:
                                 return f'No common name between {expected_bound_name} and {reference_name}', 400
 
-                            loader = self.FileFromIRI(group, user, reference_name, self.reference_host)
                             setup_ok = loader(name, expected_bound_name)
                             if setup_ok is not None:
                                 return setup_ok
@@ -380,57 +465,79 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
             # much easier to implement this way than current attempts
             return request.path + '\n'
 
+        @basic
         def ontologies_version(self, user, filename, epoch_verstr_ont,
-                               filename_terminal, extension=None, ont_path=''):
+                               filename_terminal, extension=None, ont_path='', db=None):
             if filename != filename_terminal:
                 return abort(404)
             else:
                 return 'TODO\n'
 
+        @basic
         def prov(self, *args, **kwargs):
+            """ Return all the identities that an org/user has uploaded 
+                Show users their personal uploads and then their groups.
+                Show groups all uploads with the user who did it
+            """
+            # in html
+            # reference_name, bound_name, identity, date, triple_count, parts
+            # if org: uploading_user
+            # if user: contribs per group
             return 'TODO\n'
 
 
     class Versions(Endpoints):
         # TODO own/diff here could make it much easier to view changes
-        def ilx(self, user, epoch_verstr_id, id):
+        @basic
+        def ilx(self, user, epoch_verstr_id, id, db=None):
             # TODO epoch and reengineer how ilx is implemented
             # so that queries can be conducted at a point in time
             # sigh dataomic
             # or just give up on the reuseabilty of the query structure?
             return super().ilx(user, id)
 
-        def readable(self, user, epoch_verstr_id, word):
+        @basic
+        def readable(self, user, epoch_verstr_id, word, db=None):
             return request.path
 
-        def uris(self, user, epoch_verstr_id, uri_path):
+        @basic
+        def uris(self, user, epoch_verstr_id, uri_path, db=None):
             return request.path
 
-        def curies_(self, user, epoch_verstr_id):
+        @basic
+        def curies_(self, user, epoch_verstr_id, db=None):
             PREFIXES, g = self.getGroupCuries(user, epoch_verstr=epoch_verstr_id)
             return 'TODO\n'
             return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
-        def curies(self, user, epoch_verstr_id, prefix_iri_curie):
+        @basic
+        def curies(self, user, epoch_verstr_id, prefix_iri_curie, db=None):
             return request.path
 
 
     class Own(Endpoints):
-        def uris(self, user, other_user, uri_path):
+        @basic2
+        def uris(self, user, other_user, uri_path, db=None):
             return request.path
 
-        def curies_(self, user, other_user):
+        @basic2
+        def curies_(self, user, other_user, db=None):
             PREFIXES, g = self.getGroupCuries(user)
             otherPREFIXES, g = self.getGroupCuries(other_user)
             return 'TODO\n'
             return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
-        def curies(self, user, other_user, prefix_iri_curie):
+        @basic2
+        def curies(self, user, other_user, prefix_iri_curie, db=None):
             return request.path
-        def ontologies(self, user, other_user, filename, extension=None, ont_path=''):
+
+        @basic2
+        def ontologies(self, user, other_user, filename, extension=None, ont_path='', db=None):
             return request.path
+
+        @basic2
         def ontologies_version(self, user, other_user, filename, epoch_verstr_ont,
-                               filename_terminal, extension=None, ont_path=''):
+                               filename_terminal, extension=None, ont_path='', db=None):
             if filename != filename_terminal:
                 return abort(404)
             else:
@@ -438,43 +545,57 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
 
 
     class OwnVersions(Own, Versions):
-        def ilx(self, user, other_user, epoch_verstr_id, id):
-            return request.path
-        def readable(self, user, other_user, epoch_verstr_id, word):
-            return request.path
-        def uris(self, user, other_user, epoch_verstr_id, uri_path):
+        @basic2
+        def ilx(self, user, other_user, epoch_verstr_id, id, db=None):
             return request.path
 
-        def curies_(self, user, other_user, epoch_verstr_id):
+        @basic2
+        def readable(self, user, other_user, epoch_verstr_id, word, db=None):
+            return request.path
+
+        @basic2
+        def uris(self, user, other_user, epoch_verstr_id, uri_path, db=None):
+            return request.path
+
+        @basic2
+        def curies_(self, user, other_user, epoch_verstr_id, db=None):
             PREFIXES, g = self.getGroupCuries(user)  # TODO OwnVersionsVersions for double diff (not used here)
             otherPREFIXES, g = self.getGroupCuries(other_user, epoch_verstr=epoch_verstr_id)
             return 'TODO\n'
             return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
-        def curies(self, user, other_user, epoch_verstr_id, prefix_iri_curie):
+        @basic2
+        def curies(self, user, other_user, epoch_verstr_id, prefix_iri_curie, db=None):
             return request.path
 
 
     class Diff(Endpoints):
-        def ilx(self, user, other_user_diff, id):
+        @basic2
+        def ilx(self, user, other_user_diff, id, db=None):
             return request.path
-        def readable(self, user, other_user_diff, word):
+        @basic2
+        def readable(self, user, other_user_diff, word, db=None):
             return request.path
-        def uris(self, user, other_user_diff, uri_path):
+        @basic2
+        def uris(self, user, other_user_diff, uri_path, db=None):
             return request.path
 
-        def curies_(self, user, other_user_diff):
+        @basic2
+        def curies_(self, user, other_user_diff, db=None):
             PREFIXES, g = self.getGroupCuries(user)  # TODO OwnVersionsVersions for double diff (not used here)
             otherPREFIXES, g = self.getGroupCuries(other_user_diff)
             return 'TODO\n'
             return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
-        def curies(self, user, other_user_diff, prefix_iri_curie):
+        @basic2
+        def curies(self, user, other_user_diff, prefix_iri_curie, db=None):
             return request.path
-        def ontologies(self, user, other_user_diff, filename, extension=None, ont_path=''):
+        @basic2
+        def ontologies(self, user, other_user_diff, filename, extension=None, ont_path='', db=None):
             return request.path
+        @basic2
         def ontologies_version(self, user, other_user_diff, filename,
-                               epoch_verstr_ont, filename_terminal, extension=None, ont_path=''):
+                               epoch_verstr_ont, filename_terminal, extension=None, ont_path='', db=None):
             if filename != filename_terminal:
                 return abort(404)
             else:
@@ -482,19 +603,24 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
 
 
     class DiffVersions(Diff, Versions):
+        @basic2
         def ilx(self, user, other_user_diff, epoch_verstr_id, id):
             return request.path
+        @basic2
         def readable(self, user, other_user_diff, epoch_verstr_id, word):
             return request.path
+        @basic2
         def uris(self, user, other_user_diff, epoch_verstr_id, uri_path):
             return request.path
 
+        @basic2
         def curies_(self, user, other_user_diff, epoch_verstr_id):
             PREFIXES, g = self.getGroupCuries(user)  # TODO OwnVersionsVersions for double diff (not used here)
             otherPREFIXES, g = self.getGroupCuries(other_user_diff, epoch_verstr=epoch_verstr_id)
             return 'TODO\n'
             return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
+        @basic2
         def curies(self, user, other_user_diff, epoch_verstr_id, prefix_iri_curie):
             return request.path
 

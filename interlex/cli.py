@@ -10,21 +10,23 @@ Usage:
     interlex sync [options]
     interlex dbsetup [options]
     interlex post curies [options] <user>
+    interlex post curies [options] <user> <filename>
     interlex post ontology [options] <user>
     interlex post ontology [options] <user> <name>
+    interlex post ontology [options] <user> <name> <filename>
 
 Options:
     -d --debug              enable debug mode
     -l --local              run against local
 
+    -f --input-file=FILE    load an individual file
+
     -a --api=API            SciGraph api endpoint
     -k --key=APIKEY         apikey for SciGraph instance
-    -f --input-file=FILE    don't use SciGraph, load an individual file instead
-    -o --outgoing           if not specified defaults to incoming
-    -b --both               if specified goes in both directions
 
 """
 
+from pathlib import Path
 from urllib.parse import urlparse
 import requests
 from pyontutils.core import PREFIXES as uPREFIXES
@@ -47,28 +49,58 @@ def main():
     elif args['post']:
         user = args['<user>']
         name = args['<name>']
+        filename = args['<filename>']
         if args['--local']:
             host = f'localhost:{port_uri}'
             scheme = 'http'
         else:
             host = 'uri.olympiangods.org'
             scheme = 'https'
+
         if args['curies']:
             url = f'{scheme}://{host}/{user}/curies/'  # https duh
             #printD(url, args)
             # FIXME /curies redirects to get...
-            resp = requests.post(url, json=uPREFIXES)
-            printD(resp.text)
-        elif args['ontology']:
-            j = {'name':'http://purl.obolibrary.org/obo/uberon.owl'}
-            if name is not None:
-                ontology_iri = name
+            if filename:
+                path = Path(filename).resolve().actual()
+                ext = path.suffix[1:]
+                with open(path.as_posix(), 'rt') as f:
+                    if ext == 'json':
+                        data = json.load(f)
+                    elif ext == 'ttl':
+                        graph = rdflib.Graph().parse(f, format='ttl')
+                        # TODO allow <url> a ilxr:Curies typed record
+                        data = {k:str(v) for k, v in graph.namespaces()}
+                    elif ext == 'yml' or ext == 'yaml':
+                        data = yaml.load(f)
+                    else:
+                        raise TypeError(f'Don\'t know how to handle {ext} files')
+
+                resp = requests.post(url, json=data)
             else:
-                ontology_iri = 'http://ontology.neuinfo.org/NIF/ttl/NIF-GrossAnatomy.ttl'
-            u = urlparse(ontology_iri)
-            j = {'name':ontology_iri}
-            url = f'{scheme}://{host}/{user}/ontologies/' + u.path[1:]
-            resp = requests.post(url, json=j)
+                resp = requests.post(url, json=uPREFIXES)
+            printD(resp.text)
+
+        elif args['ontology']:
+            if filename:
+                url = f'{scheme}://{host}/{user}/upload'  # use smart endpoint
+                mimetypes = {'ttl':'text/turtle'}  # TODO put this somewhere more practical
+                path = Path(filename).resolve().absolute()
+                mimetype = mimetypes.get(path.suffix[1:], None)
+                with open(path.as_posix(), 'rb') as f:
+                    files = {'file':(path.name, f, mimetype)}
+                    resp = requests.post(url, files=files)
+            else:
+                j = {'name':'http://purl.obolibrary.org/obo/uberon.owl'}
+                if name is not None:
+                    ontology_iri = name
+                else:
+                    ontology_iri = 'http://ontology.neuinfo.org/NIF/ttl/NIF-GrossAnatomy.ttl'
+                u = urlparse(ontology_iri)
+                j = {'name':ontology_iri}
+                url = f'{scheme}://{host}/{user}/ontologies/' + u.path[1:]
+                resp = requests.post(url, json=j)
+
             printD(resp.text)
 
     elif args['sync']:

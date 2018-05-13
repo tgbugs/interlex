@@ -11,6 +11,9 @@ from IPython import embed
 class FakeResultProxy:
     name = 'no one actually checks this value'
     expected_bound_name = None
+    _deadbeef = b'\xde\xad\xbe\xef'
+    identity = _deadbeef + (b'\xff' * (32 - len(_deadbeef)))
+
 
 def ident_exists(*args, **kwargs):
     return False

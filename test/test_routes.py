@@ -41,6 +41,7 @@ def makeTestRoutes(limit=1):
 
 class TestRoutes(unittest.TestCase):
     host='localhost:8505'  # FIXME
+    scheme = 'http'
     def test_routes(self):
         routes = makeTestRoutes()
         # TODO a way to mark expected failures
@@ -55,5 +56,5 @@ class TestRoutes(unittest.TestCase):
         url_blaster(urls, 0)
 
     def test_stress(self):
-        urls = [f"https://{self.host}/tgbugs/ilx_{id:0>7}" for id in range(100000,105000)]
+        urls = [f"{self.scheme}://{self.host}/tgbugs/ilx_{id:0>7}" for id in range(100000,105000)]
         url_blaster(urls, 0, method='get')
