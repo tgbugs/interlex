@@ -44,7 +44,7 @@ def uriStructure():
         'diff':                ['<other_user_diff>'],
 
         # TODO considerations here
-        'upload':              [None],  # smart endpoint that hunts down bound names or tracks unbound sets
+        #'upload':              [None],  # smart endpoint that hunts down bound names or tracks unbound sets
         'contributions':       [None, 'interlex', 'external', 'curation'],  # None implies any direct to own
         'prov':                ['identities'],
         'identities':          ['<identity>'],
@@ -368,20 +368,34 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
             # only POST
             # TODO auth
 
-            names = []
             # TODO load stats etc
             try:
-                loader = self.FileFromPost(group, user, self.reference_host)
+                loader = self.FileFromPost(user, user, self.reference_host)
             except NotGroup:
                 return abort(404)
 
-            for file in request.files:
-                filename = None  # TODO
-                embed()
-                setup_ok = loader(file, header, filename)
+            header = request.headers
+            create = request.form.get('create', False)
+            if isinstance(create, str):
+                create = create.lower()
+                if create == 'true':
+                    create = True
+                else:
+                    create = False
+                
+            names = []
+            for name, file in request.files.items():
+                setup_ok = loader(file, header, create)
                 if setup_ok is not None:
                     return setup_ok
-                names.append((reference_name, bound_name))
+                names.append({'reference_name':loader.reference_name,
+                              'bound_name':loader.bound_name})  # sigh json
+                load_ok = loader.load()
+                if load_ok is not None:
+                    msg, code = load_ok
+                    data = {'error':msg, 'names':names}
+                    sigh = json.dumps(data)
+                    return sigh, code, {'Content-Type':'application/json'}
 
             return json.dumps(names)
 
@@ -666,10 +680,10 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
         if nodes[-1] == '':
             if 'curies' in nodes:
                 nodes = tuple(nodes[::-2]) + ('curies_',)
-                printD('terminal nodes', nodes)
+                #printD('terminal nodes', nodes)
             if 'contributions' in nodes:
                 nodes = tuple(nodes[::-2]) + ('contributions_',)
-                printD('terminal nodes', nodes)
+                #printD('terminal nodes', nodes)
 
         function = inst.get_func(nodes)
         name = inst.__class__.__name__ + '.' + function.__name__ + ' ' + route
@@ -678,9 +692,10 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
         else:
             methods = ['GET', 'HEAD']
         app.add_url_rule(route, name, function, methods=methods)
+        printD(route, methods)
 
-    for k, v in app.view_functions.items():
-        printD(k, v)
+    #for k, v in app.view_functions.items():
+        #printD(k, v)
 
     return app
 

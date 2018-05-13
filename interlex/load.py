@@ -1,5 +1,7 @@
+import os
 from pathlib import Path, PurePath
 from collections import defaultdict
+from urllib.parse import urlparse
 import rdflib
 import hashlib
 import requests
@@ -235,6 +237,7 @@ class TripleLoader(BasicDB):
         if stop is not None:  # this is redundant but helps with type readability
             return stop
         
+    @hasErrors(LoadError)
     def load(self):
         output = ''
         try:
@@ -297,19 +300,7 @@ class TripleLoader(BasicDB):
 
     @reference_name.setter
     def reference_name(self, value):
-        if self._reference_name is None:
-            self._reference_name = value
-            sql = 'SELECT name, expected_bound_name FROM reference_names WHERE name = :name'
-            try:
-                res = next(self.session.execute(sql, dict(name=self._reference_name)))
-                self._expected_bound_name = res.expected_bound_name
-                self._reference_name_in_db = True
-            except StopIteration:
-                # set it by setting self.expected_bound_name = something (including None)
-                self._reference_name_in_db = False
-                printD('WARNING reference name has not been created yet!\n')
-        elif self._reference_name != value:
-            raise LoadError('cannot change reference names')
+        self.reference_name_setter(value)
 
     @property
     def reference_name_in_db(self):
@@ -554,6 +545,22 @@ class TripleLoader(BasicDB):
         yield from self.free_subgraph_identities.values()
 
     # functions
+
+    def reference_name_setter(self, value):  # ... setters don't inherit wat
+        if self._reference_name is None:
+            self._reference_name = value
+            sql = 'SELECT name, expected_bound_name FROM reference_names WHERE name = :name'
+            try:
+                res = next(self.session.execute(sql, dict(name=self._reference_name)))
+                self._expected_bound_name = res.expected_bound_name
+                self._reference_name_in_db = True
+            except StopIteration:
+                # set it by setting self.expected_bound_name = something (including None)
+                self._reference_name_in_db = False
+                printD('WARNING reference name has not been created yet!\n')
+        elif self._reference_name != value:
+            raise LoadError('cannot change reference names')
+
     def get_identity(self, type_name):
         real_name = '_' + type_name + '_identity'
         real_value = getattr(self, real_name)
@@ -570,11 +577,10 @@ class TripleLoader(BasicDB):
 
     def batch_ident_check(self, *idents):
         sql = 'SELECT identity FROM identities WHERE identity IN '
-        values_template, params = makeParamsValues(idents)
+        values_template, params = makeParamsValues((idents,))
         res = self.session.execute(sql + values_template, params)
-        existing = set(r.identity for r in res)
+        existing = set(r.identity.tobytes() for r in res)
         self._cache_identities.update(existing)
-        embed()
         for ident in idents:
             yield ident in existing
 
@@ -1063,18 +1069,32 @@ class FileFromPost(FileFromIRI):
         super().__init__(group, user, reference_name, reference_host)
 
     @hasErrors(LoadError)
-    def __call__(self, file, header, filename=None):
-        self._serialization = file
-        self._header = header
+    def __call__(self, file, header, create):
+        self.create = create
+
+        self.name = f'file://{file.filename}'
+        #self._extension = file.filename.rsplit('.', 1)[-1]
+        self._mimetype = file.mimetype
+        self._header = {k:v for k, v in header.items()}
+
+        self.file = file
         self.reference_name
-        super().__call__()
+        super().__call__(self.name, self.expected_bound_name)
+        self.file = None  # cleanup
+
+    @property
+    def serialization(self):
+        if self._serialization is None:
+            self._serialization = self.file.stream.read()  # we may need to parse more than once
+
+        return self._serialization
 
     @property
     def reference_name(self):
         if self._reference_name is None and self.bound_name is not None:
             # FIXME name_prefix should probably be usable more broadly
             name_prefix = os.path.join(self.reference_host, self.group, 'ontologies')
-            if prefix in self.bound_name:
+            if name_prefix in self.bound_name:
                 name_type = 'name'
             elif self.reference_host in self.bound_name:
                 raise LoadError(f'Group does not match bound name group!\n'
@@ -1085,7 +1105,7 @@ class FileFromPost(FileFromIRI):
             sql = ('SELECT name, expected_bound_name FROM reference_names '
                    f'WHERE {name_type} = :name')
             try:
-                res = next(self.session.execute(sql, dict(bound_name=self.bound_name)))
+                res = next(self.session.execute(sql, dict(name=self.bound_name)))
                 self._reference_name = res.name
                 self._expected_bound_name = res.expected_bound_name
                 self._reference_name_in_db = True
@@ -1100,9 +1120,11 @@ class FileFromPost(FileFromIRI):
                         self.reference_name = self.bound_name
                         self.name = self.bound_name
                     elif name_type == 'expected_bound_name':
-                        name_suffix = self.bound_name.split(name_prefix)[-1]
+                        name_suffix = urlparse(self.bound_name).path[1:]
                         name = f'{self.scheme}://' + os.path.join(name_prefix, name_suffix)
                         self.reference_name = name
+                        embed()
+                        # FIXME setter did not inherit?!??!
                         self.expected_bound_name = self.bound_name  # FIXME a hack to trigger INSERT ...
                     else:
                         raise BaseException('wat this should never happen')
@@ -1118,6 +1140,9 @@ class FileFromPost(FileFromIRI):
 
         return self._reference_name
 
+    @reference_name.setter
+    def reference_name(self, value):
+        super().reference_name_setter(value)
 
 class FileFromVCS(TripleLoader):
     pass

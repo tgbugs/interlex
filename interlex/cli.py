@@ -89,7 +89,11 @@ def main():
                 mimetype = mimetypes.get(path.suffix[1:], None)
                 with open(path.as_posix(), 'rb') as f:
                     files = {'file':(path.name, f, mimetype)}
-                    resp = requests.post(url, files=files)
+                    data = {'create':True}
+                    resp = requests.post(url,
+                                         data=data,
+                                         files=files,
+                                        )
             else:
                 j = {'name':'http://purl.obolibrary.org/obo/uberon.owl'}
                 if name is not None:
