@@ -61,7 +61,7 @@ def uriStructure():
     }
     return ilx_pattern, parent_child, node_methods
 
-def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
+def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
     app = Flask('InterLex uri server')
     app.config['SQLALCHEMY_DATABASE_URI'] = dburi
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -650,6 +650,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
     def runonce():
         # FIXME this is a reasonably safe way to make sure that we have a db connection
         Endpoints.reference_host = next(db.session.execute('SELECT reference_host()'))[0]
+        db.engine.echo = echo
         printD(Endpoints.reference_host)
 
     endpoints = Endpoints()
@@ -699,5 +700,5 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri()):
 
     return app
 
-def run_uri():
-    return server_uri(db=SQLAlchemy())
+def run_uri(echo=False):
+    return server_uri(db=SQLAlchemy(), echo=echo)

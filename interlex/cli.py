@@ -18,6 +18,7 @@ Usage:
 Options:
     -d --debug              enable debug mode
     -l --local              run against local
+    -g --gunicorn           run against local gunicorn
 
     -f --input-file=FILE    load an individual file
 
@@ -52,6 +53,9 @@ def main():
         filename = args['<filename>']
         if args['--local']:
             host = f'localhost:{port_uri}'
+            scheme = 'http'
+        elif args['--gunicorn']:
+            host = f'localhost:8606'
             scheme = 'http'
         else:
             host = 'uri.olympiangods.org'
@@ -153,7 +157,7 @@ def main():
             port = port_api
         elif args['uri']:
             from uri import run_uri
-            app = run_uri()
+            app = run_uri(echo=args['--debug'])
             port = port_uri
         elif args['curies']:
             from core import run_curies

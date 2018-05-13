@@ -85,7 +85,7 @@ class TripleLoader(BasicDB):
         printD(group, user, reference_name, reference_host)
         self.reference_host = reference_host
         self._reference_name = None
-        self._reference_name_in_db = None
+        self.reference_name_in_db = None
 
         # FIXME reference names should NOT have file type extensions
         # we can have a default file type and resolve types
@@ -304,7 +304,11 @@ class TripleLoader(BasicDB):
 
     @property
     def reference_name_in_db(self):
-        self._reference_name_in_db = True
+        return self._reference_name_in_db
+
+    @reference_name_in_db.setter
+    def reference_name_in_db(self, value):
+        self._reference_name_in_db = value
 
     @property
     def expected_bound_name(self):
@@ -329,13 +333,15 @@ class TripleLoader(BasicDB):
                 sql = ('UPDATE reference_names SET expected_bound_name = :e WHERE name = :r')
             else:
                 sql = ('INSERT INTO reference_names (name, expected_bound_name, group_id) '
-                       'VALUES (:r, :e, idFromGroupname(:g))')
+                       'VALUES (:r, :e, :group_id)')
 
             # FIXME this is not wrapped with a rollback because...
             # that shouldn't happen? are we sure?
-            self.execute(sql, dict(r=self.reference_name, e=value, g=self.group))
+            self.execute(sql, dict(r=self.reference_name, e=value, group_id=self.group_id))
             self._expected_bound_name = value
-            self._reference_name_in_db = True  # ok to set again
+            self.reference_name_in_db = True  # ok to set again
+            #printD('embedding')
+            #embed()
 
     # serialization type
     @property
@@ -553,10 +559,10 @@ class TripleLoader(BasicDB):
             try:
                 res = next(self.session.execute(sql, dict(name=self._reference_name)))
                 self._expected_bound_name = res.expected_bound_name
-                self._reference_name_in_db = True
+                self.reference_name_in_db = True
             except StopIteration:
                 # set it by setting self.expected_bound_name = something (including None)
-                self._reference_name_in_db = False
+                self.reference_name_in_db = False
                 printD('WARNING reference name has not been created yet!\n')
         elif self._reference_name != value:
             raise LoadError('cannot change reference names')
@@ -917,6 +923,7 @@ class TripleLoader(BasicDB):
         # TODO create qualifiers
         return 'TODO\n'
 
+
 class InterLex(TripleLoader):
     def __call__(self, user, triples):
         pass
@@ -1108,7 +1115,7 @@ class FileFromPost(FileFromIRI):
                 res = next(self.session.execute(sql, dict(name=self.bound_name)))
                 self._reference_name = res.name
                 self._expected_bound_name = res.expected_bound_name
-                self._reference_name_in_db = True
+                self.reference_name_in_db = True
             except StopIteration:
                 if self.create:
                     # TODO proper group assignment for ownership
@@ -1123,8 +1130,6 @@ class FileFromPost(FileFromIRI):
                         name_suffix = urlparse(self.bound_name).path[1:]
                         name = f'{self.scheme}://' + os.path.join(name_prefix, name_suffix)
                         self.reference_name = name
-                        embed()
-                        # FIXME setter did not inherit?!??!
                         self.expected_bound_name = self.bound_name  # FIXME a hack to trigger INSERT ...
                     else:
                         raise BaseException('wat this should never happen')
@@ -1135,7 +1140,7 @@ class FileFromPost(FileFromIRI):
                                     'was not set.\n'
                                     'Please set create = true or POST directly to '
                                     'the desired endpoint (reference_name).')
-                    self._reference_name_in_db = False
+                    self.reference_name_in_db = False
                 printD('WARNING reference name has not been created yet!\n')
 
         return self._reference_name
