@@ -13,7 +13,7 @@ from interlex.core import printD
 from interlex.core import dbUri, permissions_sql
 from interlex.core import RegexConverter, make_paths, makeParamsValues
 from interlex.load import FileFromIRI, FileFromPost, TripleLoader, BasicDB
-from interlex.dump import TripleExporter
+from interlex.dump import TripleExporter, Queries
 from IPython import embed
 
 def uriStructure():
@@ -117,37 +117,27 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             bdb = type('BasicDB', (BasicDB,), {})
             self.BasicDB = bdb(self.session)
 
+            self.queries = Queries(self.session)
+
         def getBasicInfo(self, group, user):
             try:
                 return self.BasicDB(group, user)
             except NotGroup:
                 return None
 
-        def reference_name(self, user, path):
-            # need this for testing, in an ideal world we read from headers
-            return os.path.join(f'https://{self.reference_host}', user, path) 
-
         def getGroupCuries(self, group, epoch_verstr=None):
-            # TODO retrieve base/default curies
-            params = dict(group=group)
-            if epoch_verstr is not None:
-                # TODO
-                sql = ('SELECT curie_prefix, iri_prefix FROM curies as c '
-                       'WHERE c.group_id = (SELECT id FROM groups WHERE groupname = :group)')
-            else:
-                sql = ('SELECT curie_prefix, iri_prefix FROM curies as c '
-                       'WHERE c.group_id = (SELECT id FROM groups WHERE groupname = :group)')  # FIXME idFromGroupname??
-            resp = self.session.execute(sql, params)
+            PREFIXES = self.queries.getGroupCuries(group, epoch_verstr)
             currentHost = request.headers['Host']
             PREFIXES = {cp:ip.replace('uri.interlex.org', currentHost) if app.debug else ip
                         # TODO app.debug should probably be switched out for something configurable
-                        for cp, ip in resp}
+                        for cp, ip in PREFIXES.items()}
             #printD(PREFIXES)
-            if not PREFIXES:
-                PREFIXES = makePrefixes('rdfs', 'owl')
             g = makeGraph(group + '_curies_helper', prefixes=PREFIXES)
             return PREFIXES, g
 
+        def reference_name(self, user, path):
+            # need this for testing, in an ideal world we read from headers
+            return os.path.join(f'https://{self.reference_host}', user, path) 
         @staticmethod
         def iriFromPrefix(prefix, *ordered_prefix_sets):
             for PREFIXES in ordered_prefix_sets:
@@ -157,7 +147,6 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
                     pass
             else:
                 return f'Unknown prefix {prefix}', 404
-
 
         def get_func(self, nodes):
             mapping = {
@@ -209,49 +198,12 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
                 except StopIteration:
                     return abort(404)
 
-            uri = f'http://uri.interlex.org/base/ilx_{id}'
-            args = dict(uri=uri, id=id)
-            #sql = ('SELECT e.iri, c.p, c.o, c.qualifier_id, c.transform_rule_id '
-                   #'FROM existing_iris as e JOIN core as c ON c.s = e.iri OR c.s = :uri '
-                   #'WHERE e.ilx_id = :id')
-            #sql = ('SELECT e.iri, tu.p, tu.o::text FROM existing_iris as e '
-                   #'JOIN triples_uri as tu ON tu.s = e.iri OR tu.s = :uri '
-                   #'UNION '
-                   #'SELECT e.iri, tl.p, tl.o FROM existing_iris as e '
-                   #'JOIN triples_literal as tl ON tl.s = e.iri OR tl.s = :uri')
-
-            # don't use t.s because it will include the base iri? or no
-            _sql = ('SELECT t.s, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank '
-                   'FROM existing_iris as e '
-                   'JOIN triples as t '
-                   #'JOIN triples as tb'  # TODO efficient subgraph retrieval?
-                   #'JOIN triples as tb2 '
-                   'ON t.s = e.iri '
-                   'OR t.s = :uri '
-                   #'OR t.o_blank = t.id '
-                   #'AND tb1 = tb2)'
-                   'WHERE e.ilx_id = :id')
-            # TODO user's view...
-            sql = '''
-            WITH graph AS (
-                SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity
-                FROM triples as t JOIN existing_iris as e
-                ON s = iri OR s = :uri
-                WHERE ilx_id = :id
-            ), subgraphs AS (
-                SELECT sg.s, sg.s_blank, sg.p, sg.o,
-                       sg.o_lit, sg.datatype, sg.language,
-                       sg.o_blank, sg.subgraph_identity
-                FROM triples as sg, graph as g
-                WHERE sg.subgraph_identity = g.subgraph_identity AND sg.s is NULL
-            )
-            SELECT * FROM graph UNION SELECT * from subgraphs;
-            '''
-            resp = list(self.session.execute(sql, args))
             #printD(resp)
             PREFIXES, g = self.getGroupCuries(user)
+            resp = self.queries.getById(id, user)
             te = TripleExporter()
             _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
+
             cts = CustomTurtleSerializer(g.g)
             gsortkey = cts._globalSortKey
             psortkey = lambda p: cts.predicate_rank[p]
