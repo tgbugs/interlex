@@ -73,6 +73,7 @@ def makeRecords(graph, user):
                       types=[],
                       all_labels=set(),
                       synonyms=set(),
+                      abbreviations=set(),
                       all_definitions=set(),
                       predicate_objects=[],
                       subClassOf=[],  # TODO transitive closure
@@ -105,6 +106,8 @@ def makeRecords(graph, user):
                 # FIXME has related synonym pulls in misnomers... sigh
                 # FIXME synonym types... for raking...
                 record['synonyms'].add(o)
+            elif p in (NIFRID.abbrev, NIFRID.acronym):
+                record['abbreviations'].add(o)  # TODO get this from annotations on synonyms...
             elif p in (definition, skos.definition):
                 if 'definition' not in record:
                     record['definition'] = o
@@ -115,6 +118,8 @@ def makeRecords(graph, user):
                 record['comment'] = o
             elif p == rdfs.subClassOf:
                 record['subClassOf'].append(o)
+            elif 'Date' in p:
+                continue  # FIXME need to debug why es treats string dates as date type instead of string...
             else:
                 record['predicate_objects'].append({'predicate':p.toPython(), 'object':o})
 
@@ -141,8 +146,8 @@ def simple_query(string):
     return {'query':{'multi_match':{'query':string,
                                     #'type':'best_fields',
                                     'type':'phrase',
-                                    'fields':['label^3', 'synonyms.literal^3',
-                                              'definition^2',
+                                    'fields':['label^4', 'synonyms.literal^4',
+                                              'definition^1.2',
                                               'predicate_objects.object'
                                               'existing_curies', 'existing_iris',
                                               'curie^1.2', 'iri',
@@ -215,11 +220,12 @@ def main():
     #success = [addById(f'{i:0>7}', user)  # FIXME super slow, should batch...
     #for i in range(100100, 100500)]
 
+    es.indices.delete('test_index')
     record = [byId(f'{i:0>7}', user)  # FIXME super slow to get the bnodes :/
               for i in range(100100, 100101)]
 
     uri_base = 'http://uri.interlex.org/base/ilx_{}'
-    resp = [[uri_base.format(id)] + rest for id, *rest in q.getAll()]
+    resp = [[uri_base.format(id) if 'http' not in id else id] + rest for id, *rest in q.getAll()]
     # FIXME getAll needs to use qualifiers, the current implementation has nasty issues with
     # conflating subjects in ways that are inappropriate and often extremely confusing
     existing = [(uri_base.format(id), iri, group_id) for id, iri, group_id in q.getExistingIris()]

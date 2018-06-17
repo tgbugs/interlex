@@ -63,7 +63,12 @@ class Queries:
                'FROM existing_iris as e '
                'JOIN triples as t '
                'ON t.s = e.iri')
-        resp = list(self.session.execute(sql))
+        # wow it seems way faster not to use UNION here
+        sql2 = ('SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity '
+                'FROM triples AS t '
+                # iri should be distinct...
+                'WHERE t.s IS NOT NULL AND t.s NOT IN (SELECT iri FROM existing_iris)')
+        resp = list(self.session.execute(sql)) + list(self.session.execute(sql2))
         return resp
 
     def getExistingIris(self):
