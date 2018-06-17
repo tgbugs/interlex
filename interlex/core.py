@@ -554,9 +554,10 @@ class InterLexLoad:
         self.loader._graph = self.graph
         name = 'http://toms.ilx.dump/TODO'
         self.loader._bound_name = name
-        self.loader.expected_bound_name = name
+        #self.loader.expected_bound_name = name
         self.loader._serialization = repr((name, self.triples)).encode()
-        setup_ok = self.loader(name)
+        expected_bound_name = name
+        setup_ok = self.loader(name, expected_bound_name)
 
         if setup_ok is not None:
             raise LoadError(setup_ok)
@@ -574,7 +575,7 @@ class InterLexLoad:
         rows = self.engine.execute('SELECT DISTINCT ilx FROM terms ORDER BY ilx ASC')
         values = [(row.ilx[4:],) for row in rows]
         vt, self.ilx_params = makeParamsValues(values)
-        self.ilx_sql = 'INSERT INTO interlex_ids VALUES ' + vt
+        self.ilx_sql = 'INSERT INTO interlex_ids VALUES ' + vt + ' ON CONFLICT DO NOTHING'
         self.current = int(values[-1][0].strip('0'))
         printD(self.current)
 
@@ -669,7 +670,7 @@ class InterLexLoad:
         sql_base = 'INSERT INTO existing_iris (group_id, ilx_id, iri) VALUES '
         values_template, params = makeParamsValues(values, constants=('idFromGroupname(:group)',))
         params['group'] = 'base'
-        sql = sql_base + values_template
+        sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'
         self.eid_values = values
         self.eid_sql = sql
         self.eid_params = params

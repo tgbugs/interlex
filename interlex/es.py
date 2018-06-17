@@ -1,3 +1,4 @@
+import json
 import rdflib
 from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk
@@ -5,8 +6,8 @@ from flask_sqlalchemy import SQLAlchemy
 from flask import Flask
 from interlex.uri import dbUri
 from interlex.dump import TripleExporter
-from pyontutils.core import makeGraph, OntId, qname
-from pyontutils.core import NIFRID, rdf, rdfs, skos, definition, ilxtr
+from pyontutils.core import makeGraph, OntId, qname, PREFIXES as uPREFIXES  # FIXME get base prefixes...
+from pyontutils.core import NIFRID, rdf, rdfs, skos, definition, ilxtr, oboInOwl
 from dump import Queries
 from IPython import embed
 
@@ -20,6 +21,17 @@ es.index(index='test_index', doc_type='rdf:type record', id=1, body={
     'synonyms':['yet another test'],
     'definition':'this term is used for testing things',
 })
+
+with open('es-settings.json', 'rt') as f:
+    # other options
+    # "catenate_words": true
+    # TODO consider using not_analyzed for curies
+    index_settings = json.load(f)
+
+#embed()
+es.indices.close('test_index')
+es.indices.put_settings(index_settings, 'test_index')
+es.indices.open('test_index')
 
 def get(id):
     return es.get(index='test_index', doc_type='rdf:type record', id=id)
@@ -51,11 +63,69 @@ def makeRecord(graph, user, id=None):
 def makeRecords(graph, user):
     for iri in set(graph.subjects()):
         user_iri = iri.replace('/base/', f'/{user}/')
+        record = dict(iri=iri,
+                      curie=qname(iri),
+                      user_iri=user_iri,
+                      existing_iris=[],
+                      existing_curies=[],
+                      alts=[],
+                      xrefs=[],
+                      types=[],
+                      all_labels=set(),
+                      synonyms=set(),
+                      all_definitions=set(),
+                      predicate_objects=[],
+                      subClassOf=[],  # TODO transitive closure
+        )
+        for p, o in graph[iri]:
+            if isinstance(o, rdflib.BNode):
+                continue
+            o = str(o)  # es chockes on dates I think
+            if p == ilxtr.hasExistingIri:
+                record['existing_iris'].append(o)
+                qn = qname(o)
+                if qn != o:
+                    record['existing_curies'].append(qn)
+            elif p == oboInOwl.hasAlternativeId:
+                # FIXME these are existing ids that should be resolved but not issued
+                record['alts'].append(o)
+            elif p == oboInOwl.hasDbXref:
+                # TODO these are a mix of ontology and non-ontology identifiers
+                # when coming from obo the ontology ids should be lifted to existing
+                # as part of the standard interlex transform/lifing process
+                record['xrefs'].append(o)
+            elif p == rdf.type:
+                record['types'].append(o)
+            elif p in (rdfs.label, skos.prefLabel, skos.altLabel):  # TODO alts
+                if 'label' not in record:  # FIXME first one should be from qualified latest base
+                    record['label'] = o
+                record['all_labels'].add(o)
+            elif p in (NIFRID.synonym, oboInOwl.hasExactSynonym,
+                       oboInOwl.hasRelatedSynonym, oboInOwl.hasNarrowSynonym):
+                # FIXME has related synonym pulls in misnomers... sigh
+                # FIXME synonym types... for raking...
+                record['synonyms'].add(o)
+            elif p in (definition, skos.definition):
+                if 'definition' not in record:
+                    record['definition'] = o
+                record['all_definitions'].add(o)
+            elif p == skos.editorialNote:  # TODO alts
+                record['note'] = o
+            elif p == rdfs.comment:
+                record['comment'] = o
+            elif p == rdfs.subClassOf:
+                record['subClassOf'].append(o)
+            else:
+                record['predicate_objects'].append({'predicate':p.toPython(), 'object':o})
+
+        """
         record = dict(iri = iri,
                       curie = OntId(iri).curie,
                       user_iri = user_iri,  # FIXME TODO retrieve info on whether they have any differences
-                      existing_iris = list(graph[iri:ilxtr.hasExistingId]),
-                      existing_curies = [qname(o) for o in graph[iri:ilxtr.hasExistingId] if o != qname(o)],
+                      existing_iris = list(graph[iri:ilxtr.hasExistingIri]),
+                      existing_curies = [qname(o) for o in graph[iri:ilxtr.hasExistingIri] if o != qname(o)],
+                      #xrefs = [x.toPython() for x in graph[iri:oboInOwl.hasDbXref]],
+                      xrefs = list(graph[iri:oboInOwl.hasDbXref]),
                       # FIXME OntId.curie breaks on some of our iris here...
                       types = list(graph[iri:rdf.type]),
                       label = trynext(graph[iri:rdfs.label]),  # FIXME > 1 issue as always
@@ -63,17 +133,38 @@ def makeRecords(graph, user):
                       definition = trynext(graph[iri:definition]),
                       note = trynext(graph[iri:skos.editorialNote]),
                       comment = trynext(graph[iri:rdfs.comment]),)
-        yield record
+        """
+        yield {k:sorted(v) if isinstance(v, set) else v
+               for k, v in record.items()}
 
 def simple_query(string):
     return {'query':{'multi_match':{'query':string,
-                                    'type':'best_fields',
-                                    'fields':['existing_curies', 'existing_iris',
-                                              'curie', 'iri',
-                                              'label', 'synonyms', 'definition'],
+                                    #'type':'best_fields',
+                                    'type':'phrase',
+                                    'fields':['label^3', 'synonyms.literal^3',
+                                              'definition^2',
+                                              'predicate_objects.object'
+                                              'existing_curies', 'existing_iris',
+                                              'curie^1.2', 'iri',
+                                    ],
                                     'tie_breaker':.3,}}}
 
-def search(string):
+def ident_query(string):
+    return {'query':{'multi_match':{'query':string,
+                                    #'type':'best_fields',
+                                    'type':'phrase',
+                                    'fields':['existing_curies', 'existing_iris',
+                                              'curie^3', 'iri^2',
+                                              'label^4', 'synonyms', 'definition'],
+                                    'tie_breaker':.3,}}}
+
+
+def search(string, prefixes=uPREFIXES):
+    if ':' in string:
+        prefix, suffix = string.split(':')
+        if prefix in prefixes:
+            return es.search(index='test_index', body=ident_query(string))['hits']['hits']
+
     return es.search(index='test_index', body=simple_query(string))['hits']['hits']
 
 def getAll():
@@ -82,7 +173,7 @@ def getAll():
         'size':10000,
         'from':0,
         'query':{'match_all':{}}})
-    
+
 
 def getDb(dburi):
     app = Flask('fake server')
@@ -129,13 +220,15 @@ def main():
 
     uri_base = 'http://uri.interlex.org/base/ilx_{}'
     resp = [[uri_base.format(id)] + rest for id, *rest in q.getAll()]
+    # FIXME getAll needs to use qualifiers, the current implementation has nasty issues with
+    # conflating subjects in ways that are inappropriate and often extremely confusing
     existing = [(uri_base.format(id), iri, group_id) for id, iri, group_id in q.getExistingIris()]
     # TODO merge with existing ids
     def graphFromResp(resp, existing):
         g = makeGraph('temp', prefixes=PREFIXES)
         te = TripleExporter()
         _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
-        _ = [g.g.add((rdflib.URIRef(id), ilxtr.hasExistingId, rdflib.URIRef(iri)))
+        _ = [g.g.add((rdflib.URIRef(id), ilxtr.hasExistingIri, rdflib.URIRef(iri)))
              for id, iri, _ in existing]
 
         return g

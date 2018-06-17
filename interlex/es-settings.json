@@ -1,0 +1,111 @@
+{
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "record_analyzer": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "filter": [
+            "standard",
+            "lowercase",
+            "record_filter"
+          ]
+        }
+      },
+      "filter": {
+        "record_filter": {
+          "type": "word_delimiter",
+          "generate_word_parts": true,
+          "preserve_original": true,
+          "generate_number_parts": true
+        }
+      }
+    }
+  },
+  "mappings": {
+    "record": {
+      "properties": {
+        "iri": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "curie": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "user_iri": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "existing_iris": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "existing_curies": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "alts": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "xrefs": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "types": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "subClassOf": {
+          "properties": {
+            "iri": {
+              "type": "string",
+              "analyzer": "record_analyzer"
+            }
+          }
+        },
+        "subclasses": {
+          "properties": {
+            "iri": {
+              "type": "string",
+              "analyzer": "record_analyzer"
+            }
+          }
+        },
+        "label": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "all_labels": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "synonyms": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "definition": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "all_definitions": {
+          "type": "string",
+          "analyzer": "record_analyzer"
+        },
+        "predicate_objects": {
+          "properties": {
+            "predicate": {
+              "type": "string",
+              "analyzer": "record_analyzer"
+            },
+            "object": {
+              "type": "string",
+              "analyzer": "record_analyzer"
+            }
+          }
+        }
+      }
+    }
+  }
+}
