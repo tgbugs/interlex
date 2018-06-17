@@ -11,6 +11,11 @@ from pyontutils.core import NIFRID, rdf, rdfs, skos, definition, ilxtr, oboInOwl
 from dump import Queries
 from IPython import embed
 
+if True:
+    from desc.prof import profile_me
+else:
+    profile_me = lambda f:f
+
 connSpec = [{'host':'localhost', 'port':9200}]
 es = Elasticsearch(connSpec)
 
@@ -60,9 +65,12 @@ def makeRecord(graph, user, id=None):
                   comment = trynext(o for _, o in graph[:rdfs.comment]),)
     return record
 
-def makeRecords(graph, user):
+def makeRecords(graph, user=None):  # as usual this is stupidly faster in pypy3
     for iri in set(graph.subjects()):
-        user_iri = iri.replace('/base/', f'/{user}/')
+        if user is not None:
+            user_iri = iri.replace('/base/', f'/{user}/')
+        else:
+            user_iri = iri
         record = dict(iri=iri,
                       curie=qname(iri),
                       user_iri=user_iri,
@@ -123,22 +131,6 @@ def makeRecords(graph, user):
             else:
                 record['predicate_objects'].append({'predicate':p.toPython(), 'object':o})
 
-        """
-        record = dict(iri = iri,
-                      curie = OntId(iri).curie,
-                      user_iri = user_iri,  # FIXME TODO retrieve info on whether they have any differences
-                      existing_iris = list(graph[iri:ilxtr.hasExistingIri]),
-                      existing_curies = [qname(o) for o in graph[iri:ilxtr.hasExistingIri] if o != qname(o)],
-                      #xrefs = [x.toPython() for x in graph[iri:oboInOwl.hasDbXref]],
-                      xrefs = list(graph[iri:oboInOwl.hasDbXref]),
-                      # FIXME OntId.curie breaks on some of our iris here...
-                      types = list(graph[iri:rdf.type]),
-                      label = trynext(graph[iri:rdfs.label]),  # FIXME > 1 issue as always
-                      synonyms = list(graph[iri:NIFRID.synonym]),
-                      definition = trynext(graph[iri:definition]),
-                      note = trynext(graph[iri:skos.editorialNote]),
-                      comment = trynext(graph[iri:rdfs.comment]),)
-        """
         yield {k:sorted(v) if isinstance(v, set) else v
                for k, v in record.items()}
 
@@ -146,7 +138,9 @@ def simple_query(string):
     return {'query':{'multi_match':{'query':string,
                                     #'type':'best_fields',
                                     'type':'phrase',
-                                    'fields':['label^4', 'synonyms.literal^4',
+                                    'fields':['label^4',
+                                              #'synonyms.literal^4',
+                                              'synonyms^2',
                                               'definition^1.2',
                                               'predicate_objects.object'
                                               'existing_curies', 'existing_iris',
@@ -163,14 +157,23 @@ def ident_query(string):
                                               'label^4', 'synonyms', 'definition'],
                                     'tie_breaker':.3,}}}
 
+def search(string, prefixes=uPREFIXES, debug=False):
+    def dq(res):
+        if debug:
+            return res
+        else:
+            return res['hits']['hits']
 
-def search(string, prefixes=uPREFIXES):
     if ':' in string:
         prefix, suffix = string.split(':')
         if prefix in prefixes:
-            return es.search(index='test_index', body=ident_query(string))['hits']['hits']
+            q = ident_query(string)
+            if debug: print(q)
+            return dq(es.search(index='test_index', body=q))
 
-    return es.search(index='test_index', body=simple_query(string))['hits']['hits']
+    q = simple_query(string)
+    if debug: print(q)
+    return dq(es.search(index='test_index', body=q))
 
 def getAll():
     #TransportError: TransportError(500, 'search_phase_execution_exception', 'Result window is too large, from + size must be less than or equal to: [10000] but was [100000]. See the scroll api for a more efficient way to request large data sets. This limit can be set by changing the [index.max_result_window] index level setting.')
@@ -178,7 +181,6 @@ def getAll():
         'size':10000,
         'from':0,
         'query':{'match_all':{}}})
-
 
 def getDb(dburi):
     app = Flask('fake server')
@@ -194,13 +196,63 @@ def convert_for_bulk(records, index_name, doc_type_name):
                '_id': record['user_iri'],
                '_source': record}
 
-def main():
-    db = getDb(dbUri())
-    q = Queries(db.session)
+class Thing:
+    def __init__(self, queries, es):
+        self.queries = queries
+        self.es = es
 
+    def allGraph(self, user='base', unmapped=False):
+        # TODO qualifier etc
+        prefixes = self.queries.getGroupCuries(user)
+        uri_base = 'http://uri.interlex.org/base/ilx_{}'
+        resp = [[uri_base.format(id) if 'http' not in id else id] + rest
+                for id, *rest in self.queries.getAll(unmapped=unmapped)]
+        # FIXME getAll needs to use qualifiers, the current implementation has nasty issues with
+        # conflating subjects in ways that are inappropriate and often extremely confusing
+        existing = [(uri_base.format(id), iri, group_id)
+                    for id, iri, group_id in self.queries.getExistingIris()]
+        # TODO merge with existing ids
+        @profile_me
+        def graphFromResp(resp, existing):
+            g = makeGraph('temp', prefixes=prefixes)
+            te = TripleExporter()
+            # this whole thing is going to fit in memory basically forever
+            # so just get everything all at once
+            _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
+            _ = [g.g.add((rdflib.URIRef(id), ilxtr.hasExistingIri, rdflib.URIRef(iri)))
+                for id, iri, _ in existing]
+
+            return g
+
+        g = graphFromResp(resp, existing)
+        self.g = g
+        return g
+
+    @profile_me
+    def reindex(self, index='test_index'):
+        records = makeRecords(self.g.g)
+        print('records done')
+        #es.indices.delete('test_index')
+        success, maybefail = bulk(self.es, convert_for_bulk(records, index, 'rdf:type record'))
+        print(success)
+
+    def tests(self):
+        assert search('brain')[0]['_source']['curie'] == 'ILX:0101431'
+        assert search('Alzheimer')[0]['_source']['curie'] in ('DOID:10652', 'ILX:0100524')
+        assert search('Alzheimers')[0]['_source']['curie'] in ('DOID:10652', 'ILX:0100524')
+        assert search('Alzheimer\'s')[0]['_source']['curie'] in ('DOID:10652', 'ILX:0100524')
+        search('hippocampus')[0]  # a complete CF
+        assert search('hippocampal formation')[0]['_source']['curie'] == 'ILX:0105009'
+
+        # roundtrips
+        # TODO pick 100 curies at random
+        # [qname(s) for s in pick100(g.g.subjects())]
+        for curie in curies:
+            assert search(curie)[0]['_source']['curie'] == curie
+
+
+def _main():
     user = 'tgbugs'
-    PREFIXES = q.getGroupCuries(user)
-
     def byId(id, user):
         resp = q.getById(id, user)
         g = makeGraph('temp', prefixes=PREFIXES)
@@ -213,42 +265,38 @@ def main():
         record = byId(id, user)
         return esAdd(**record)
 
-    asdf = search('test')
-    print(asdf)
-    out = byId('0100100', user)
-    print(out)
+    #asdf = search('test')
+    #print(asdf)
+    #out = byId('0100100', user)
+    #print(out)
     #success = [addById(f'{i:0>7}', user)  # FIXME super slow, should batch...
     #for i in range(100100, 100500)]
-
-    es.indices.delete('test_index')
+    # single shot?
     record = [byId(f'{i:0>7}', user)  # FIXME super slow to get the bnodes :/
               for i in range(100100, 100101)]
 
-    uri_base = 'http://uri.interlex.org/base/ilx_{}'
-    resp = [[uri_base.format(id) if 'http' not in id else id] + rest for id, *rest in q.getAll()]
-    # FIXME getAll needs to use qualifiers, the current implementation has nasty issues with
-    # conflating subjects in ways that are inappropriate and often extremely confusing
-    existing = [(uri_base.format(id), iri, group_id) for id, iri, group_id in q.getExistingIris()]
-    # TODO merge with existing ids
-    def graphFromResp(resp, existing):
-        g = makeGraph('temp', prefixes=PREFIXES)
-        te = TripleExporter()
-        _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
-        _ = [g.g.add((rdflib.URIRef(id), ilxtr.hasExistingIri, rdflib.URIRef(iri)))
-             for id, iri, _ in existing]
-
-        return g
-
-    g = graphFromResp(resp, existing)
-    records = makeRecords(g.g, user)
-
-    print('records done')
-    #es.indices.delete('test_index')
-    success, maybefail = bulk(es, convert_for_bulk(records, 'test_index', 'rdf:type record'))
-    print(success)
-    stats = es.indices.stats()
     derp = search('UBERON:0000955')  # FIXME now this is broken, can't even hit the exact match >_<
-    print(derp[:3])
+    #print(derp[:3])
+
+def main():
+    db = getDb(dbUri())
+    q = Queries(db.session)
+    stats = es.indices.stats()
+
+    user = 'tgbugs'
+    PREFIXES = q.getGroupCuries(user)
+
+    thing = Thing(q, es)
+    list = profile_me(list)
+    g = thing.allGraph()
+    recs = list(makeRecords(g.g))
+    ga = thing.allGraph(unmapped=True)  # -> about 15 seconds in pypy3 after fetch for 1mil trips
+    recsa = list(makeRecords(ga.g))  # -> aboug 30 seconds in pypy3 for 1mil trips
+
+    # delete index
+    #es.indices.delete('test_index')
+    # reindex
+    #g = thing.reindex()
 
     embed()
 

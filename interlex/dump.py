@@ -51,12 +51,14 @@ class Queries:
                     'WHERE c.group_id = (SELECT id FROM groups WHERE groupname = :group)')  # FIXME idFromGroupname??
         resp = self.session.execute(sql, params)
         PREFIXES = {cp:ip for cp, ip in resp}
-        if not PREFIXES:
-            PREFIXES = makePrefixes('rdfs', 'owl')
+        if not PREFIXES:  # we get the base elsewhere
+            PREFIXES = {'rdf':str(rdflib.RDF),
+                        'rdfs':str(rdflib.RDFS),
+                        'owl':str(rdflib.OWL)}
 
         return PREFIXES
 
-    def getAll(self, qualifier=None):  # TODO qualit
+    def getAll(self, qualifier=None, unmapped=False):  # TODO qualit
         # NOTE no blanknodes, but this is for indexing, so it is ok
         sql = ('SELECT e.ilx_id, '
                't.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity '
@@ -68,7 +70,9 @@ class Queries:
                 'FROM triples AS t '
                 # iri should be distinct...
                 'WHERE t.s IS NOT NULL AND t.s NOT IN (SELECT iri FROM existing_iris)')
-        resp = list(self.session.execute(sql)) + list(self.session.execute(sql2))
+        resp = list(self.session.execute(sql))
+        if unmapped:
+            resp += list(self.session.execute(sql2))
         return resp
 
     def getExistingIris(self):
