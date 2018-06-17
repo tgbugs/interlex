@@ -341,7 +341,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
                 if setup_ok is not None:
                     return setup_ok
                 names.append({'reference_name':loader.reference_name,
-                              'bound_name':loader.bound_name})  # sigh json
+                              'bound_name':loader.Loader.bound_name})  # sigh json
                 load_ok = loader.load()
                 if load_ok is not None:
                     msg, code = load_ok
