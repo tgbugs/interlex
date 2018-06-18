@@ -26,41 +26,41 @@
     "record": {
       "properties": {
         "iri": {
-          "type": "string",
+          "type": "text",
           "analyzer": "record_analyzer"
         },
         "curie": {
-          "type": "string",
+          "type": "text",
           "analyzer": "record_analyzer"
         },
         "user_iri": {
-          "type": "string",
+          "type": "text",
           "analyzer": "record_analyzer"
         },
         "existing_iris": {
-          "type": "string",
+          "type": "text",
           "analyzer": "record_analyzer"
         },
         "existing_curies": {
-          "type": "string",
+          "type": "text",
           "analyzer": "record_analyzer"
         },
         "alts": {
-          "type": "string",
+          "type": "text",
           "analyzer": "record_analyzer"
         },
         "xrefs": {
-          "type": "string",
+          "type": "text",
           "analyzer": "record_analyzer"
         },
         "types": {
-          "type": "string",
+          "type": "text",
           "analyzer": "record_analyzer"
         },
         "subClassOf": {
           "properties": {
             "iri": {
-              "type": "string",
+              "type": "text",
               "analyzer": "record_analyzer"
             }
           }
@@ -68,39 +68,35 @@
         "subclasses": {
           "properties": {
             "iri": {
-              "type": "string",
+              "type": "text",
               "analyzer": "record_analyzer"
             }
           }
         },
         "label": {
-          "type": "string",
-          "analyzer": "record_analyzer"
+          "type": "text"
         },
         "all_labels": {
-          "type": "string",
-          "analyzer": "record_analyzer"
+          "type": "text"
         },
         "synonyms": {
-          "type": "string",
+          "type": "text",
           "analyzer": "record_analyzer"
         },
         "definition": {
-          "type": "string",
-          "analyzer": "record_analyzer"
+          "type": "text"
         },
         "all_definitions": {
-          "type": "string",
-          "analyzer": "record_analyzer"
+          "type": "text"
         },
         "predicate_objects": {
           "properties": {
             "predicate": {
-              "type": "string",
+              "type": "text",
               "analyzer": "record_analyzer"
             },
             "object": {
-              "type": "string",
+              "type": "text",
               "analyzer": "record_analyzer"
             }
           }

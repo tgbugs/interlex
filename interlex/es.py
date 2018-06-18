@@ -11,10 +11,21 @@ from pyontutils.core import NIFRID, rdf, rdfs, skos, definition, ilxtr, oboInOwl
 from dump import Queries
 from IPython import embed
 
-if True:
+if False:
     from desc.prof import profile_me
 else:
     profile_me = lambda f:f
+
+# json benchmarking for elasticsearch bulk upload
+def profile_json(recs):
+    import simplejson
+    import rapidjson
+    a = profile_me(json.dumps)
+    b = profile_me(simplejson.dumps)
+    c = profile_me(lambda t:rapidjson.dumps(t))
+    t1 = a(recs)  # pypy3 14 python >30
+    t2 = b(recs)  # pypy3 21 python 2
+    t3 = c(recs)  # pypy3 24 python >10
 
 connSpec = [{'host':'localhost', 'port':9200}]
 es = Elasticsearch(connSpec)
@@ -64,76 +75,6 @@ def makeRecord(graph, user, id=None):
                   definition = trynext(o for _, o in graph[:definition]),
                   comment = trynext(o for _, o in graph[:rdfs.comment]),)
     return record
-
-def makeRecords(graph, user=None):  # as usual this is stupidly faster in pypy3
-    for iri in set(graph.subjects()):
-        if user is not None:
-            user_iri = iri.replace('/base/', f'/{user}/')
-        else:
-            user_iri = iri
-        record = dict(iri=iri,
-                      curie=qname(iri),
-                      user_iri=user_iri,
-                      existing_iris=[],
-                      existing_curies=[],
-                      alts=[],
-                      xrefs=[],
-                      types=[],
-                      all_labels=set(),
-                      synonyms=set(),
-                      abbreviations=set(),
-                      all_definitions=set(),
-                      predicate_objects=[],
-                      subClassOf=[],  # TODO transitive closure
-        )
-        for p, o in graph[iri]:
-            if isinstance(o, rdflib.BNode):
-                continue
-            o = str(o)  # es chockes on dates I think
-            if p == ilxtr.hasExistingIri:
-                record['existing_iris'].append(o)
-                qn = qname(o)
-                if qn != o:
-                    record['existing_curies'].append(qn)
-            elif p == oboInOwl.hasAlternativeId:
-                # FIXME these are existing ids that should be resolved but not issued
-                record['alts'].append(o)
-            elif p == oboInOwl.hasDbXref:
-                # TODO these are a mix of ontology and non-ontology identifiers
-                # when coming from obo the ontology ids should be lifted to existing
-                # as part of the standard interlex transform/lifing process
-                record['xrefs'].append(o)
-            elif p == rdf.type:
-                record['types'].append(o)
-            elif p in (rdfs.label, skos.prefLabel, skos.altLabel):  # TODO alts
-                if 'label' not in record:  # FIXME first one should be from qualified latest base
-                    record['label'] = o
-                record['all_labels'].add(o)
-            elif p in (NIFRID.synonym, oboInOwl.hasExactSynonym,
-                       oboInOwl.hasRelatedSynonym, oboInOwl.hasNarrowSynonym):
-                # FIXME has related synonym pulls in misnomers... sigh
-                # FIXME synonym types... for raking...
-                record['synonyms'].add(o)
-            elif p in (NIFRID.abbrev, NIFRID.acronym):
-                record['abbreviations'].add(o)  # TODO get this from annotations on synonyms...
-            elif p in (definition, skos.definition):
-                if 'definition' not in record:
-                    record['definition'] = o
-                record['all_definitions'].add(o)
-            elif p == skos.editorialNote:  # TODO alts
-                record['note'] = o
-            elif p == rdfs.comment:
-                record['comment'] = o
-            elif p == rdfs.subClassOf:
-                record['subClassOf'].append(o)
-            elif 'Date' in p:
-                continue  # FIXME need to debug why es treats string dates as date type instead of string...
-            else:
-                record['predicate_objects'].append({'predicate':p.toPython(), 'object':o})
-
-        yield {k:sorted(v) if isinstance(v, set) else v
-               for k, v in record.items()}
-
 def simple_query(string):
     return {'query':{'multi_match':{'query':string,
                                     #'type':'best_fields',
@@ -196,10 +137,12 @@ def convert_for_bulk(records, index_name, doc_type_name):
                '_id': record['user_iri'],
                '_source': record}
 
-class Thing:
+class DbToEs:
     def __init__(self, queries, es):
         self.queries = queries
         self.es = es
+        self.label_index = None
+        self.records = None
 
     def allGraph(self, user='base', unmapped=False):
         # TODO qualifier etc
@@ -226,14 +169,109 @@ class Thing:
 
         g = graphFromResp(resp, existing)
         self.g = g
+        self.label_index = None
+        self.records = None
         return g
+
+    def _label_index(self):
+        graph = self.g.g
+        self.label_index = {iri:str(label) for iri, label in graph[:rdfs.label]}  # this eems to slow stuff down quite a bit...
+        return self.label_index
+
+    def makeRecords(self, graph, user=None):  # as usual this is stupidly faster in pypy3
+        if not self.label_index:
+            self._label_index()
+        for iri in set(graph.subjects()):
+            record = self.makeRecord(graph, iri, user)
+            yield {k:sorted(v) if isinstance(v, set) else v
+                for k, v in record.items()}
+
+    def makeRecord(self, graph, iri, user=None):
+        if user is not None:
+            user_iri = iri.replace('/base/', f'/{user}/')
+        else:
+            user_iri = iri
+
+        record = dict(iri=iri,
+                    curie=qname(iri),
+                    user_iri=user_iri,
+                    existing_iris=[],
+                    existing_curies=[],
+                    alts=[],
+                    xrefs=[],
+                    types=[],
+                    all_labels=set(),
+                    synonyms=set(),
+                    abbreviations=set(),
+                    all_definitions=set(),
+                    predicate_objects=[],
+                    subClassOf=set(),
+        )
+        record['subclasses'] = [{'iri':str(n),'label':self.label_index.get(n, None)}
+                                for n in graph.transitive_subjects(rdfs.subClassOf, iri) if
+                                isinstance(n, rdflib.URIRef)][1:]
+        record['subClassOf_all'] = [{'iri':str(n),'label':self.label_index.get(n, None)}
+                                    for n in graph.transitive_objects(iri, rdfs.subClassOf) if
+                                    isinstance(n, rdflib.URIRef)][1:]
+        for p, o in graph[iri]:
+            if isinstance(o, rdflib.BNode):
+                continue
+            o = str(o)  # es chockes on dates I think
+            if p == ilxtr.hasExistingIri:
+                record['existing_iris'].append(o)
+                qn = qname(o)
+                if qn != o:
+                    record['existing_curies'].append(qn)
+            elif p == oboInOwl.hasAlternativeId:
+                # FIXME these are existing ids that should be resolved but not issued
+                record['alts'].append(o)
+            elif p == oboInOwl.hasDbXref:
+                # TODO these are a mix of ontology and non-ontology identifiers
+                # when coming from obo the ontology ids should be lifted to existing
+                # as part of the standard interlex transform/lifing process
+                record['xrefs'].append(o)
+            elif p == rdf.type:
+                record['types'].append(o)
+            elif p in (rdfs.label, skos.prefLabel, skos.altLabel):  # TODO alts
+                if 'label' not in record:  # FIXME first one should be from qualified latest base
+                    record['label'] = o
+                record['all_labels'].add(o)
+            elif p in (NIFRID.synonym, oboInOwl.hasExactSynonym,
+                    oboInOwl.hasRelatedSynonym, oboInOwl.hasNarrowSynonym):
+                # FIXME has related synonym pulls in misnomers... sigh
+                # FIXME synonym types... for raking...
+                record['synonyms'].add(o)
+            elif p in (NIFRID.abbrev, NIFRID.acronym):
+                record['abbreviations'].add(o)  # TODO get this from annotations on synonyms...
+            elif p in (definition, skos.definition):
+                if 'definition' not in record:
+                    record['definition'] = o
+                record['all_definitions'].add(o)
+            elif p == skos.editorialNote:  # TODO alts
+                record['note'] = o
+            elif p == rdfs.comment:
+                record['comment'] = o
+            elif p == rdfs.subClassOf:
+                record['subClassOf'].add(o)
+            elif 'Date' in p:
+                continue  # FIXME need to debug why es treats string dates as date type instead of string...
+            else:
+                record['predicate_objects'].append({'predicate':p.toPython(), 'object':o})
+
+        return record
+
+    @profile_me
+    def _records(self):
+        self.records = list(self.makeRecords(self.g.g))
+        return self.records
 
     @profile_me
     def reindex(self, index='test_index'):
-        records = makeRecords(self.g.g)
+        if self.records is None:
+            self._records()
         print('records done')
         #es.indices.delete('test_index')
-        success, maybefail = bulk(self.es, convert_for_bulk(records, index, 'rdf:type record'))
+        success, maybefail = bulk(self.es, convert_for_bulk(self.records, index, 'rdf:type record'))
         print(success)
 
     def tests(self):
@@ -286,12 +324,14 @@ def main():
     user = 'tgbugs'
     PREFIXES = q.getGroupCuries(user)
 
-    thing = Thing(q, es)
-    list = profile_me(list)
+    thing = DbToEs(q, es)
+    listp = profile_me(list)
     g = thing.allGraph()
-    recs = list(makeRecords(g.g))
-    ga = thing.allGraph(unmapped=True)  # -> about 15 seconds in pypy3 after fetch for 1mil trips
-    recsa = list(makeRecords(ga.g))  # -> aboug 30 seconds in pypy3 for 1mil trips
+    recs = thing._records()
+    thing.reindex()
+    thing2 = DbToEs(q, es)
+    ga = thing2.allGraph(unmapped=True)  # -> about 15 seconds in pypy3 after fetch for 1mil trips when profiling
+    recsa = thing2._records()  # -> aboug 30 seconds in pypy3 for 1mil trips when profiling
 
     # delete index
     #es.indices.delete('test_index')
