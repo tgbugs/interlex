@@ -31,7 +31,7 @@ def uriStructure():
         'readable':            ['<word>'],
         'versions':            ['<epoch_verstr_id>'],
         '<epoch_verstr_id>':   versioned_ids + version_compare,
-        'ontologies':          ['<path:ont_path>'] + intermediate_filename,  # TODO /ontologies/external/<iri> ? how? where?
+        'ontologies':          [None, '<path:ont_path>'] + intermediate_filename,  # TODO /ontologies/external/<iri> ? how? where?
         # TODO distinguish between ontology _files_ and 'ontologies' which are the import closure?
         # ya, identified vs unidentified imports, owl only supports unidentified imports
         '<path:ont_path>':     intermediate_filename,  # FIXME this would seem to only allow a single extension?
@@ -155,6 +155,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
                 'uris':self.uris,
                 'curies_':self.curies_,
                 'curies':self.curies,
+                'ontologies_':self.ontologies_,
                 'ontologies':self.ontologies,
                 'version':self.ontologies_version,  # FIXME collision prone?
                 'contributions_':self.contributions_,
@@ -354,6 +355,10 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
         # TODO enable POST here from users (via apikey) that are contributor or greater in a group admin is blocked from posting in this way
         # TODO curies from ontology files vs error on unknown? vs warn that curies were not added << last option best, warn that they were not added
         # TODO HEAD -> return owl:Ontology section
+        @basic
+        def ontologies_(self, user, db=None):
+            return json.dumps('your list sir')
+
         @basic
         def ontologies(self, user, filename, extension=None, ont_path='', db=None):
             # on POST for new file check to make sure that that the ontology iri matches the post endpoint
@@ -633,6 +638,9 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
         if nodes[-1] == '':
             if 'curies' in nodes:
                 nodes = tuple(nodes[::-2]) + ('curies_',)
+                #printD('terminal nodes', nodes)
+            if 'ontologies' in nodes:
+                nodes = tuple(nodes[::-2]) + ('ontologies_',)
                 #printD('terminal nodes', nodes)
             if 'contributions' in nodes:
                 nodes = tuple(nodes[::-2]) + ('contributions_',)

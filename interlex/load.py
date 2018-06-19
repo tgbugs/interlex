@@ -14,13 +14,39 @@ from interlex.exc import hasErrors, LoadError, NotGroup
 from interlex.core import printD, permissions_sql, bnodes, makeParamsValues, IdentityBNode
 from IPython import embed
 
-def rapperAccel(serialization):
-    p = subprocess.Popen(['rapper', '-i', 'rdfxml', '-o', 'ntriples', '-', 'DEADBEEF'],
+def rapper(serialization, input='rdfxml', output='ntriples'):
+    """
+    -i FORMAT, --input FORMAT   Set the input format/parser to one of:
+    rdfxml          RDF/XML (default)
+    ntriples        N-Triples
+    turtle          Turtle Terse RDF Triple Language
+    trig            TriG - Turtle with Named Graphs
+    rss-tag-soup    RSS Tag Soup
+    grddl           Gleaning Resource Descriptions from Dialects of Languages
+    guess           Pick the parser to use using content type and URI
+    rdfa            RDF/A via librdfa
+    nquads          N-Quads
+
+    -o FORMAT, --output FORMAT  Set the output format/serializer to one of:
+    ntriples        N-Triples (default)
+    turtle          Turtle Terse RDF Triple Language
+    rdfxml-xmp      RDF/XML (XMP Profile)
+    rdfxml-abbrev   RDF/XML (Abbreviated)
+    rdfxml          RDF/XML
+    rss-1.0         RSS 1.0
+    atom            Atom 1.0
+    dot             GraphViz DOT format
+    json-triples    RDF/JSON Triples
+    json            RDF/JSON Resource-Centric
+    html            HTML Table
+    nquads          N-Quads """
+    p = subprocess.Popen(['rapper', '-i', input, '-o', output, '-', 'DEADBEEF'],
                          stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE,
                          stderr=subprocess.DEVNULL)
     out, err = p.communicate(input=serialization)
     return out
+
 
 def timestats(times):
     deltas = {}
@@ -875,7 +901,7 @@ class TripleLoader(BasicDB):
             self._graph = rdflib.Graph()
             try:
                 if self.format == 'xml':
-                    data = rapperAccel(self.serialization)
+                    data = rapper(self.serialization)
                     self._graph.parse(data=data, format='nt')
                 else:
                     self._graph.parse(data=self.serialization, format=self.format)
