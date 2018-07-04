@@ -3,9 +3,10 @@ import json
 import rdflib
 from functools import wraps
 from flask import Flask, request, redirect, url_for, abort
+from flask_restplus import Api, Resource, Namespace, fields
 from flask_sqlalchemy import SQLAlchemy
-from protcur.core import atag, htmldoc
 from protcur.server import table_style, details_style, render_table
+from pyontutils.htmlfun import atag, htmldoc
 from pyontutils.core import makePrefixes, makeGraph
 from pyontutils.ttlser import CustomTurtleSerializer
 from interlex.exc import LoadError, NotGroup
@@ -29,7 +30,7 @@ def uriStructure():
         '<other_user>':        branches,  # no reason to access /user/own/otheruser/ilx_ since identical to /user/ilx_
         '<other_user_diff>':   basic + branches, 
         'readable':            ['<word>'],
-        'versions':            ['<epoch_verstr_id>'],
+        'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
         '<epoch_verstr_id>':   versioned_ids + version_compare,
         'ontologies':          [None, '<path:ont_path>'] + intermediate_filename,  # TODO /ontologies/external/<iri> ? how? where?
         # TODO distinguish between ontology _files_ and 'ontologies' which are the import closure?
@@ -70,6 +71,17 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
     database = db
     app.url_map.converters['regex'] = RegexConverter
     ilx_pattern, parent_child, node_methods = structure()
+    api = Api(app,
+              version='0.0.1',
+              title='InterLex URI structure API',
+              description='Resolution, update, and compare for ontologies and ontology identifiers.',
+              default='URIs',
+              default_label='User URIs',)
+    #ns_user = api.namespace('{user}')
+    #ns = api.namespace('api')
+    #blueprint = Blueprint(ns.name, 'uri_api', url_prefix=ns.path)
+    #api.init_app(blueprint)
+    #app.register_blueprint(blueprint)
 
     def basic(function):
         @wraps(function)
@@ -617,6 +629,18 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
     diff = Diff()
     diffversions = DiffVersions()
 
+    doc_namespaces = {
+        # NOTE creation order here translates to the swagger docs, it also affects sorts first
+        'curies':api.namespace('Curies', 'User curies', '/'),
+        'ontologies':api.namespace('Ontologies', 'URIs for serializations of subsets of InterLex, virtualized files', '/'),
+        'contributions':api.namespace('Contributions', 'User contributions', '/'),
+        'versions':api.namespace('Versions', 'View data associated with any ilx: URI at a given timepoint or version', '/'),
+        'diff':api.namespace('Diff', 'Compare users', '/'),
+        'own':api.namespace('Own', 'See one user\'s view of another user\'s personalized IRIs', '/'),
+    }
+    extra = {name + '_':ns for name, ns in doc_namespaces.items() if name in ('curies', 'contributions', 'ontologies')}
+    doc_namespaces = {**extra, **doc_namespaces}  # make sure the extras come first for priority ordering
+
     routes = list(make_paths(parent_child))
     for route in routes:
         nodes = route.split('/')
@@ -637,22 +661,51 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
 
         if nodes[-1] == '':
             if 'curies' in nodes:
-                nodes = tuple(nodes[::-2]) + ('curies_',)
+                nodes = tuple(nodes[:-2]) + ('curies_',)
                 #printD('terminal nodes', nodes)
             if 'ontologies' in nodes:
-                nodes = tuple(nodes[::-2]) + ('ontologies_',)
+                nodes = tuple(nodes[:-2]) + ('ontologies_',)
                 #printD('terminal nodes', nodes)
             if 'contributions' in nodes:
-                nodes = tuple(nodes[::-2]) + ('contributions_',)
+                nodes = tuple(nodes[:-2]) + ('contributions_',)
                 #printD('terminal nodes', nodes)
 
         function = inst.get_func(nodes)
         name = inst.__class__.__name__ + '.' + function.__name__ + ' ' + route
-        if nodes[-1] in node_methods:
+        if 'diff' not in nodes and 'version' not in nodes and 'versions' not in nodes and nodes[-1] in node_methods:
             methods = node_methods[nodes[-1]]
         else:
             methods = ['GET', 'HEAD']
         app.add_url_rule(route, name, function, methods=methods)
+        cname = inst.__class__.__name__ + '_' + function.__name__
+        #model = api.model('Model', {})#{'thing': fields.String})
+        #print(function)
+        def __init__(self, *args, **kwargs):
+            super(self.__class__, self).__init__(*args, **kwargs)
+            self.__class__.__bases__[-1].__init__(self)  # FIXME doubles instances...
+            #embed()
+
+        newclass = type(cname,
+                        (
+                            Resource,
+                            #inst.__class__,
+                        ),
+                        {#'__init__': __init__,
+                         #**{m.lower():api.route(ns.path + route, endpoint=ns.name + name)(getattr(inst.__class__, function.__name__))
+                         #**{m.lower():ns.doc(params={'a':'b'})(getattr(inst.__class__, function.__name__))
+                         **{m.lower():function
+                            for m in methods
+                            if m != 'HEAD'  # skip head since it is implied?
+                           }})
+        #print(newclass)
+        #print(ns.name, route)
+        for name, ns in list(doc_namespaces.items())[::-1]:  # reversted so versions diff etc get their endpoints  # also ICK :/
+            if name in nodes:
+                ns.route(route)(newclass)
+                break
+        else:
+            api.route(route)(newclass)
+
         printD(route, methods)
 
     #for k, v in app.view_functions.items():
