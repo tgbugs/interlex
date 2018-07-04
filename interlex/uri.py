@@ -76,7 +76,8 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
               title='InterLex URI structure API',
               description='Resolution, update, and compare for ontologies and ontology identifiers.',
               default='URIs',
-              default_label='User URIs',)
+              default_label='User URIs',
+              doc='/docs',)
     #ns_user = api.namespace('{user}')
     #ns = api.namespace('api')
     #blueprint = Blueprint(ns.name, 'uri_api', url_prefix=ns.path)

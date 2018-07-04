@@ -62,6 +62,8 @@ INSERT INTO groups (own_role, groupname)
                          'anita',
                          'maryann',
 
+                         'swagger',
+                         'swaggerui',
                          'readable',
                          'contributions',
                          'ontology',
