@@ -8,6 +8,7 @@ from flask_sqlalchemy import SQLAlchemy
 from protcur.server import table_style, details_style, render_table
 from pyontutils.htmlfun import atag, htmldoc
 from pyontutils.core import makePrefixes, makeGraph
+from pyontutils.utils import TermColors as tc
 from pyontutils.ttlser import CustomTurtleSerializer
 from interlex.exc import LoadError, NotGroup
 from interlex.core import printD
@@ -129,7 +130,6 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             self.FileFromPost = ffp(self.session)
             bdb = type('BasicDB', (BasicDB,), {})
             self.BasicDB = bdb(self.session)
-
             self.queries = Queries(self.session)
 
         def getBasicInfo(self, group, user):
@@ -233,8 +233,12 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
 
             # TODO list users with variants from base and/org curated
             # we need an 'uncurated not latest' or do we?
+            if user == 'base':
+                title = f'ILX:{id}'
+            else:
+                title = f'ilx.{user}:ilx_{id}'
             return htmldoc(render_table(trips, 'subject', 'predicate', 'object'),
-                           title=f'ilx.{user}:ilx_{id}',
+                           title=title,
                            styles=(table_style,))
 
         # TODO PATCH only admin can change the community readable mappings just like community curies
@@ -622,6 +626,8 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
         Endpoints.reference_host = next(db.session.execute('SELECT reference_host()'))[0]
         db.engine.echo = echo
         printD(Endpoints.reference_host)
+        for group in Queries(db.session).getBuiltinGroups():  # FIXME inelegant way around own_role < 'pending'
+            BasicDB._cache_groups[group.groupname] = group.id, group.own_role
 
     endpoints = Endpoints()
     versions = Versions()

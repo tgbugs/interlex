@@ -39,6 +39,9 @@ class Queries:
     def __init__(self, session):
         self.session = session
 
+    def getBuiltinGroups(self):
+        return list(self.session.execute("SELECT * FROM groups WHERE own_role = 'builtin'"))
+
     def getGroupCuries(self, group, epoch_verstr=None):
         # TODO retrieve base/default curies
         params = dict(group=group)
