@@ -152,15 +152,15 @@ def main():
 
     else:
         if args['api']:
-            from core import run_api
+            from interlex.core import run_api
             app = run_api()
             port = port_api
         elif args['uri']:
-            from uri import run_uri
+            from interlex.uri import run_uri
             app = run_uri(echo=args['--debug'])
             port = port_uri
         elif args['curies']:
-            from core import run_curies
+            from interlex.core import run_curies
             app = run_curies()
             port = port_curies
 
