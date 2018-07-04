@@ -199,6 +199,21 @@ CREATE TYPE source_process AS ENUM ('FileFromIRI',  -- transitive closure be imp
 CREATE TYPE identity_relation AS ENUM ('hasPart', 'dereferencedTo'); -- , 'named', 'pointedTo', 'resolvedTo');
 -- dereferencedTo history can be reconstructed for names -> serialization without a bound name
 
+CREATE TYPE qualifier_relations AS ENUM('includes',
+                                        'excludes',
+                                        'hasPrev', -- hasNext? there are multiple possible nexts
+                                        'break');
+
+CREATE TYPE qualifier_types AS ENUM('group',
+                                    'reference_name',  -- aka source qualifier
+                                    'computed'
+                                    -- computed and static could be used for things like latest
+                                    -- where there is a static rule that is used to generate
+                                    -- the triple set and versions are generated on change
+                                    -- for the old version...
+                                    'static_create_new_on_version',
+);
+
 CREATE TABLE identity_relations(
        s bytea NOT NULL,
        p identity_relation,
@@ -485,6 +500,66 @@ CREATE INDEX search_index ON triples USING GIN (to_tsvector('english', o_lit)) W
 -- what about (?? null ?? owl:onProperty null null BFO:0000050 null null ???)
 -- we cannot reuse subgraph triples, we can reuse entire subgraphs starting from (s, p, o_blank)
 
+CREATE TABLE qualifier_triples(
+       triple_id integer NOT NULL,
+       qualifier_id integer NOT NULL,
+       CONSTRAINT fk__qualifier_triples__triple_id__triples
+                  FOREIGN KEY (triple_id)
+                  REFERENCES triples (id),
+       CONSTRAINT fk__qualifier_triple__qualifier_id__qualifiers
+                  FOREIGN key (qualifier_id)
+                  REFERENCES qualifiers (id) match simple
+);
+
+/*
+-- this implementation is also bad, we do not need the exclude table
+-- because we can just create an exclude relationship between qualifiers
+-- this keeps all sets of triples in the same table and semantically
+-- equivalent, the only issue is resolving inclusion/exclusion when
+-- a triple is added in both include and exclude and there is only a
+-- temporal ordering on the include and exclude, no explicit sequence
+-- relation, an includes relation where the object triple ids occur in
+-- the subject triple ids + the object qualifier datetime > for subject
+-- might be sufficient for modelling removal of triples between versions
+-- removedFrom(A, B) :- includes(A, B), before(A, B), excludes(C, B), 
+-- removedFrom(A,B) :- includes(A,B), before(A,B), excludes(C,B), nextVersionOf(C, A) .
+CREATE TABLE include_triples(
+       triple_id integer NOT NULL,
+       qualifier_id integer NOT NULL,
+       CONSTRAINT fk__include_triples__triple_id__triples
+                  FOREIGN KEY (triple_id)
+                  REFERENCES triples (id),
+       CONSTRAINT fk__include_triple__qualifier_id__qualifiers
+                  FOREIGN key (qualifier_id)
+                  REFERENCES qualifiers (id) match simple
+
+);
+
+CREATE TABLE exclude_triples(
+       -- A note on how to 'reset' a user or how to mass include
+       -- When creating a new account, a user can choose by default
+       -- to start with an empty world, that is to say that they start
+       -- with a qualifier that includes only the null set qualifier (0)
+       -- they could also choose the qualifier that always points to the
+       -- latest as a starting point
+       -- when a user decides to make a 'breaking' change to their
+       -- environment then we simply have 2 relationships on the new
+       -- qualifier 1. 
+       triple_id integer NOT NULL,
+       qualifier_id integer NOT NULL,
+       CONSTRAINT fk__exclude_triples__triple_id__triples
+                  FOREIGN KEY (triple_id)
+                  REFERENCES triples (id),
+       CONSTRAINT fk__exclude_triple__qualifier_id__qualifiers
+                  FOREIGN key (qualifier_id)
+                  REFERENCES qualifiers (id) match simple
+);
+*/
+
+/*
+
+-- old implementation
+
 CREATE TABLE triple_qualifiers(
        triple_id integer NOT NULL,
        qualifier_id integer NOT NULL,
@@ -525,6 +600,7 @@ CREATE TABLE deletions(
                   FOREIGN key (previous_qualifier_id)
                   REFERENCES qualifiers (id) match simple
 );
+*/
 
 CREATE TABLE annotations(
        triple_id integer NOT NULL,  -- ah, and now we see the problem with having 3 tables

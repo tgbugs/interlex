@@ -1,0 +1,137 @@
+* Explaining InterLex
+  There are n central parts of interlex that are needed to understand what is going on
+  1. a set of globally unique reference names
+     https://uri.interlex.org/base/ilx_1234567
+  2. a set of locally unique user/group names back by a globally unique set of private keys/secrets
+     https://uri.interlex.org/{group}
+  3. a set of globally unique qualifiers
+     https://uri.interlex.org/qualifiers/{0..+inf.0}
+  4. a reference set of names for all discrete named collections of data
+     https://uri.interlex.org/base/ontologies/{0..+inf.0}
+     ILX.ONT:0
+  5. a single set of conventional locally readable names
+     https://uri.interlex.org/base/readable/{word}
+  6. per user locally unique human readable names
+     https://uri.interlex.org/{user}/uris/readable
+* v2
+  The set of all triples is immutable.
+  No triple is ever deleted, just ignored.
+  1. identities
+     pick your favorite identity function (e.g. sha256)
+     1. and atomic identity function for any piece or organization of data
+        1. a string
+        2. an integer
+        3. an ordered list of strings
+        4. an unordered list of strings
+        5. a byte string (aka raw data) or a bit string
+     2. a function with deterministic semantics that maps composite data structures to an identity
+        If I don't care about the order of the elements of strings then I('ab') == I('ba') is an
+        example of a semantically useful identity function. In RDF an identity function which
+        varies based on the serialization is bad, as is an identity function that varies based on
+        the identity of blank nodes.
+  2. reference names (a set of reference names for)
+     the set of all finite strings in all finite alphabets
+     1. qualifiers
+        proxies for context
+        a subset of these map 1:1 with users, and names, and possibly with entities, though the
+        semantics for individual entities is not as clear as it is for users and source names
+        users are treated as their own source and sources with bound names that match their name (pointer)
+        can be aggregated etc.
+     2. names (sources of data) source names?
+        the place where something was retrieved from, could be a local identifier + a user
+        consider whether we could reconcile a string that was the 1st edition of penguine shakespear
+        with a structured data equivalent? there is a intervening in
+     3. users, agents, or executors
+        in the prov model these are called agents, in protc I call them executors
+     4. entities
+        things in the world, beings, qualities, etc.,
+        as well as things outside the world, such as existences
+        subjects, predicates, and objects
+        owl:Class owl:ObjectProperty owl:AnnotationProperty etc...
+        things that can be named
+        for existences such as the thing pointed to by the symbol =1= they are as 'pan-universal'
+        in their meaning as the system that implements their behavior under a variety of functions 
+        most of these should not receive names, because, for example the real numbers ($\mathbb{R}$)
+        contain entities which cannot be named
+     5. local names
+        curies, or shortening rules/templates that are only locally unique but that are
+        accompanied by, or in a context where, a unique mapping from local -> global exists
+        and is specified
+  3. all names
+     equivalents for references names 2 and 4
+  4. relationships between names
+     mappings that have to be maintained because there is no more compact function that can be used
+     1. all entity names -> entity reference names
+     2. all source names -> source reference names
+     3. qualifier -> qualifier
+        derived from, next version of, etc. these provide operational semantics for inclusion/exclusion criteria
+        merge of
+        TODO how to prevent reuse of qualifiers that have temporal semantics? <<< !!!
+        transaction qualifiers vs source qualifiers
+* qualifier relations :noexport:
+** 1-ary cardinality = 1
+*** isVersionOf
+    semantics -- bounds the set of all names for the computation of the current or preferred referent
+    there must be an ordering rule on all subjects sharing the same object
+
+    relation between a canonical source id e.g. http://purl.obolibrary.org/obo/uberon.owl
+    and some specific realization of the referent of that name, e.g. http://purl.obolibrary.org/obo/uberon/version/2018-01-01/uberon.owl
+    even bound version ids are useless because they cannot be independently verified
+   
+    note that these would be the 'source' of a qualifier since the qualifier would just be an integer
+*** prevVersion
+    1. transitively retrieve all prior qualifiers
+    2. for each pair, remove any triples in the remove list
+       for example consider this remove table
+       | triple id | qualifier 1 | qualifier 2 |
+       |-----------+-------------+-------------|
+       |         1 | 1           | 2           |
+       |         2 | any         | any         |
+       |           |             |             |
+       this is inefficient because we don't actually need to know
+       q1 at all, we simply say that t1 should not be in q2 and
+       in many cases this would imply that t1 was in another qualifier
+       that has a temporally prior relationship with q2
+       
+       this exclude table is much more efficient
+       we simply list all triples that need to be explicitly excluded
+       from a qualifier based on its history
+       | qualifier | triple |
+       |-----------+--------|
+       |      1231 |    231 |
+       the 'latest' thus only has to maintain the list of most recently
+       removed triples, and we can get the list of all removed triples
+       (which can be added back by since removals do not propagate)
+       by pulling out all qualifiers with inclusion relations for a
+       given qualifier and then checking all those triple ids in the
+       qualifiers table to see if there is a qualifier greater than
+       the highest exclude qualifier for that triple
+       =SELECT * FROM exclude as e JOIN include as i ON e.triple = i.triple AND i.qualifier > e.qualifier WHERE e.triple=
+       or something like that. This is not quite correct.
+*** nextVersion
+** 1-ary cardinality = n
+*** hasVersion
+*** containedBy
+    subset-of
+*** contains
+    superset-of
+*** complement-of
+** n-ary (in theory cardinality = n if there are multiple ways to construct)
+*** unionOf
+*** intersectionOf
+* qualifier relations
+** 1-ary
+*** include
+**** includeAll
+**** includeOnly
+     singleton, equivalent to prior version
+*** exclude
+    in theory we could construct qualifiers for the set of all triples removed from a given
+    version, that way we would no longer need to have the exclude table at all, we would only
+    have an exclude relation between qualifiers... this seems like it would be a better way...
+*** null
+# *** 1-card
+# *** n-card
+** n-ary
+*** 1-card
+*** n-card
