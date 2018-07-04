@@ -51,7 +51,8 @@ def rapper(serialization, input='rdfxml', output='ntriples'):
 def timestats(times):
     deltas = {}
     deltas['total'] = times['end'] - times['begin']
-    deltas['init'] = times['init_end'] - times['init_begin']
+    if 'init_end' in times:  # FIXME how do we miss this!?
+        deltas['init'] = times['init_end'] - times['init_begin']
     if 'fetch_end' in times:
         deltas['fetch'] = times['fetch_end'] - times['fetch_begin']
     if 'graph_end' in times:
@@ -507,7 +508,7 @@ class GraphLoader(GraphIdentities):
 
         # linked and free
         to_insert = defaultdict(list)  # should all be unique due to having already been identified
-        for identity, subgraph in self.subgraph_identities.items():
+        for identity, subgraph in self.Loader.subgraph_identities.items():
             if self.debug:
                 printD(identity)
                 [print(*(OntId(e).curie if
@@ -524,7 +525,10 @@ class GraphLoader(GraphIdentities):
                     # the trick however is to know which identities we need to
                     # insert for free subgraphs?
 
-
+        prefix = 'INSERT INTO triples'
+        suffix = 'ON CONFLICT DO NOTHING'
+        if to_insert:
+            yield prefix, suffix, {k:v for k, v in to_insert.items()}
 
 
 class BasicDB:
@@ -869,7 +873,7 @@ class TripleLoader(BasicDB):
         if self._format is None:
             if self.extension not in self.formats and self.mimetype not in self.formats:
                 # TODO use ttlfmt parser attempter
-                raise LoadError(f"Don't know how to parse either {extension} or {mimetype}")
+                raise LoadError(f"Don't know how to parse either {self.extension} or {self.mimetype}")
             elif self.extension not in self.formats:
                 self._format = self.formats[self.mimetype]
             else:
@@ -1046,6 +1050,7 @@ class TripleLoader(BasicDB):
         vt, params_i = makeParamsValues(values, constants=(':rn',))
         params_i['rn'] = self.reference_name
         sql_ident = sql_ident_base + vt + ' ON CONFLICT DO NOTHING'  # TODO FIXME
+        embed()
         self.session.execute(sql_ident, params_i)
 
         sql_ident_rel_base = 'INSERT INTO identity_relations (p, s, o) VALUES '
