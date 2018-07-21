@@ -1,0 +1,53 @@
+* Setting up a new InterLex
+** Requirements
+   1. >=dev-db/postgresql-10
+   2. >=app-misc/elasticsearch-6.3.0
+   3. >=dev-lang/python-3.6
+   4. >=dev-python/pipenv-2018.6.25
+** Set up a virtual environment
+   In the working directory of this repository (usually the 'outer' interlex folder)
+   1. run =pipenv install= (may complain about version issues)
+   2. run =pipenv shell=
+      NOTE: if you have a local development version of pyontutils installed
+      in =PYTHONPATH= pipenv will point to those files for the source, HOWEVER
+      the command line scripts installed by pipenv will point to the venv which
+      could cause major confusion. The simplest solution is to only run interlex
+      and interlex commands inside the venv and run any pyontutils commands outside
+      the venv.
+** Set up the database
+   1. From the working directly run =opt/dbsetup.sh $PORT $DBNAME=
+      NOTE: if you change =$DBNAME= from =interlex_test= make sure you also
+      change it in the python code since this has not been abstracted yet.
+   2. You may need to set the passwords for =interlex-admin= and =interlex-user= manually.
+   3. Add the passwords for =interlex-admin= and =interlex-user= to =~/.pgpass= if they
+      where not added automatically.
+* Load content
+** Sync with mysql
+   At this point you should be able to synchronize the database with the existing mysql interlex installation.
+   1. Make sure you create a =~/.mypass= file that conforms to the syntax of =~/.pgpass=
+      i.e. each line should look like =server.url.org:port:dbname:user:password=.
+   2. You may need to adjust the port defined in
+      [[https://github.com/tgbugs/interlex/blob/b458901a9abd2e3e36cd102caaf8e5c321a0e874/interlex/core.py#L528][core.py]]
+      to match your system.
+   3. Inside the venv run =interlex sync=
+   4. Once you drop into the IPython embed shell run =self.load()= and the load should commence.
+      NOTE: there is no user auth at the moment so the code pretends to be =tgbugs=.
+** Start the uri server
+*** For development
+    run =interlex uri= in the venv.
+*** For production
+    run =opt/guni-uri.sh= from 
+    *WARNING:* if you run in this way you will not be able to use =embed= to debug and you will
+    get strange errors.
+** Load ontologies
+   If you are running interlex via =guni-uri.sh= replace the =-l= from these commands with =-g=.
+   1. In the venv run =interlex post ontology -l $YOURUSERNAME http://purl.obolibrary.org/obo/bfo.owl=
+   2. Repeat for as many ontologies as you want, for example =http://ontology.neuinfo.org/NIF/ttl/nif.ttl=
+      NOTE: currently this does not pull in the transitive closure.
+** Load curies
+   1. In the venv run =interlex post curies -l base= and then =interlex post curies -l $YOURUSERNAME=
+* Run tests
+  1. From the working directly run =nosetests=
+     (you may need to install it first e.g. via =pipenv install nose=)
+     NOTE: this will run stress tests.
+
