@@ -2,14 +2,15 @@ import os
 import json
 import rdflib
 from functools import wraps
+import sqlalchemy as sa
 from flask import Flask, request, redirect, url_for, abort
 from flask_restplus import Api, Resource, Namespace, fields
 from flask_sqlalchemy import SQLAlchemy
-from protcur.server import table_style, details_style, render_table
 from pyontutils.htmlfun import atag, htmldoc
 from pyontutils.core import makePrefixes, makeGraph
 from pyontutils.utils import TermColors as tc
 from pyontutils.ttlser import CustomTurtleSerializer
+from pyontutils.htmlfun import table_style, details_style, render_table
 from interlex.exc import LoadError, NotGroup
 from interlex.core import printD
 from interlex.core import dbUri, permissions_sql
