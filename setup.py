@@ -14,6 +14,7 @@ setup(name='InterLex',
       keywords='interlex neurolex lexicon quadstore rdf owl linked-data',
       packages=['interlex'],
       install_requires=[
+          'elasticsearch',
           'flask',
           'flask_restplus',
           'flask_sqlalchemy',
