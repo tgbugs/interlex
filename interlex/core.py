@@ -1021,11 +1021,12 @@ def server_curies(db=None):
     app = Flask('InterLex curies server')
     @app.route('/<prefix_curie>')
     def curie(prefix_curie):
-        return redirect('http://uri.interlex.org/base/curies/{prefix_curie}', 301)
+        return redirect(f'http://uri.olympiangods.org/base/curies/{prefix_curie}', 301)
+        return redirect(f'http://uri.interlex.org/base/curies/{prefix_curie}', 301)  # TODO
     return app
 
 def run_api():
     return server_api(db=SQLAlchemy())
 
 def run_curies():
-    return server_uris(db=SQLAlchemy())
+    return server_curies(db=SQLAlchemy())

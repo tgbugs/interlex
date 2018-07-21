@@ -51,7 +51,6 @@ port_curies = 8510
 def main():
     from docopt import docopt
     args = docopt(__doc__, version='interlex 0.0.0')
-    print(args)
     if args['post']:
         user = args['<user>']
         name = args['<name>']
