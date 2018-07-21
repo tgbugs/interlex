@@ -6,14 +6,26 @@ Usage:
     interlex api [options]
     interlex uri [options]
     interlex curies [options]
-    interlex test [options]
-    interlex sync [options]
+
     interlex dbsetup [options]
+    interlex sync [options]
+
     interlex post curies [options] <user>
     interlex post curies [options] <user> <filename>
     interlex post ontology [options] <user>
     interlex post ontology [options] <user> <name>
     interlex post ontology [options] <user> <name> <filename>
+
+Commands:
+    api             start a server running the api endpoint (WARNING: OLD)
+    uri             start a server for uri.interlex.org
+    curies          start a server for curies.interlex.org
+
+    dbsetup         run some initial setup BROKEN must uncomment things and change info
+    sync            run sync with the old mysql database
+
+    post curies     post curies for a given user
+    post ontology   post an ontology file by uploading or url
 
 Options:
     -d --debug              enable debug mode
@@ -41,13 +53,7 @@ port_curies = 8510
 def main():
     from docopt import docopt
     args = docopt(__doc__, version='interlex 0.0.0')
-    if args['test']:
-        from core import test
-        if args['--debug']:
-            embed()
-        else:
-            test()
-    elif args['post']:
+    if args['post']:
         user = args['<user>']
         name = args['<name>']
         filename = args['<filename>']
