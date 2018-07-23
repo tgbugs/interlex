@@ -135,23 +135,15 @@ def main():
         app = run_uri()
         db = SQLAlchemy(app)
         session = db.session
-        sql_new_id = 'INSERT INTO interlex_ids DEFAULT VALUES RETURNING id'
-
-        sql_group = 'INSERT INTO groups (groupname) VALUES (:username) RETURNING id'
-        args_group = dict(username='tgbugs')
-        session.execute(sql_group, args_group)
-        sql_new_user = 'INSERT INTO new_users (id, putative_orcid, putative_email) VALUES (:id, :orcid, :email)'
-        args_new_user = dict(id=1,
+        sql_verify_user = (
+            'INSERT INTO user_emails (user_id, email, email_primary) VALUES (:id, :email, :email_primary);'
+            'INSERT INTO user_orcid (user_id, orcid) VALUES (:id, :orcid);'
+        )
+        args_verify_user = dict(id=1,
                              orcid='https://orcid.org/0000-0002-7509-4801',
-                             email='tgbugs@gmail.com')
-        session.execute(sql_new_user, args_new_user)
-
-        # TODO use a trigger for this, should never do this from python...
-        sql = 'INSERT INTO users (id, username, orcid) VALUES (:id, :username, :orcid)'
-        args = dict(id=1,
-                    username='tgbugs',
-                    orcid='https://orcid.org/0000-0002-7509-4801')
-        session.execute(sql, args)
+                             email='tgbugs@gmail.com',
+                             email_primary=True)
+        session.execute(sql_verify_user, args_verify_user)
         session.commit()
         embed()
 
