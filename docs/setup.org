@@ -18,9 +18,11 @@
    1. From the working directly run =opt/dbsetup.sh $PORT $DBNAME=
       NOTE: if you change =$DBNAME= from =interlex_test= make sure you also
       change it in the python code since this has not been abstracted yet.
-   2. You may need to set the passwords for =interlex-admin= and =interlex-user= manually.
+   2. You will need to set the passwords for =interlex-admin= and =interlex-user= manually
+      and then run =opt/dbsetup.sh $PORT $DBNAME= again.
    3. Add the passwords for =interlex-admin= and =interlex-user= to =~/.pgpass= if they
       where not added automatically.
+   4. Run =interlex dbsetup= to add an initial 'authenticated' user.
 * Load content
 ** Sync with mysql
    At this point you should be able to synchronize the database with the existing mysql interlex installation.

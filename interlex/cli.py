@@ -19,7 +19,7 @@ Commands:
     uri             start a server for uri.interlex.org
     curies          start a server for curies.interlex.org
 
-    dbsetup         run some initial setup BROKEN must uncomment things and change info
+    dbsetup         step through creation of a user (currently tgbugs)
     sync            run sync with the old mysql database
 
     post curies     post curies for a given user
@@ -130,28 +130,29 @@ def main():
         embed()
 
     elif args['dbsetup']:
-        #dburi = dbUri()
-        # app.config['SQLALCHEMY_DATABASE_URI']
-        #engine, insp = database()
-        #meta = MetaData(engine)
-        #db = SQLAlchemy()
-        #meta.reflect()
-        # Session = sessionmaker(engine)
-        # TODO use sessions to manage transations for safety
+        from flask_sqlalchemy import SQLAlchemy
+        from interlex.uri import run_uri
+        app = run_uri()
+        db = SQLAlchemy(app)
+        session = db.session
         sql_new_id = 'INSERT INTO interlex_ids DEFAULT VALUES RETURNING id'
 
-        sql_group = 'INSERT INTO groups (groupname) VALUES (%s) RETURNING id'
-        args_group = 'tgbugs'
-        engine.execute(sql_group, args_group)
-        sql_new_user = 'INSERT INTO new_users (id, putative_orcid, putative_email) VALUES (%s, %s, %s)'
-        args_new_user = 1, 'https://orcid.org/0000-0002-7509-4801', 'tgbugs@gmail.com'
-        engine.execute(sql_new_user, args_new_user)
+        sql_group = 'INSERT INTO groups (groupname) VALUES (:username) RETURNING id'
+        args_group = dict(username='tgbugs')
+        session.execute(sql_group, args_group)
+        sql_new_user = 'INSERT INTO new_users (id, putative_orcid, putative_email) VALUES (:id, :orcid, :email)'
+        args_new_user = dict(id=1,
+                             orcid='https://orcid.org/0000-0002-7509-4801',
+                             email='tgbugs@gmail.com')
+        session.execute(sql_new_user, args_new_user)
 
         # TODO use a trigger for this, should never do this from python...
-        sql = 'INSERT INTO users (id, username, orcid) VALUES (%s, %s, %s)'
-        args = 1, 'tgbugs', 'https://orcid.org/0000-0002-7509-4801'
-        engine.execute(sql, args)
-
+        sql = 'INSERT INTO users (id, username, orcid) VALUES (:id, :username, :orcid)'
+        args = dict(id=1,
+                    username='tgbugs',
+                    orcid='https://orcid.org/0000-0002-7509-4801')
+        session.execute(sql, args)
+        session.commit()
         embed()
 
     else:
