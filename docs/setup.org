@@ -4,6 +4,22 @@
    2. >=app-misc/elasticsearch-6.3.0
    3. >=dev-lang/python-3.6
    4. >=dev-python/pipenv-2018.6.25
+   5. dev-db/pguri
+      - Gentoo
+        =dev-db/pguri-9999.ebuild= is available in [[https://github.com/tgbugs/tgbugs-overlay]]
+        #+BEGIN_SRC bash
+          layman -a tgbugs-overlay
+          emerge pguri
+        #+END_SRC
+      - Ubuntu
+        #+BEGIN_SRC bash
+          sudo apt-get install liburiparser-dev
+          export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig
+          git clone https://github.com/petere/pguri.git
+          cd pguri
+          make PG_CONFIG=/usr/bin/pg_config
+          sudo make PG_CONFIG=/usr/bin/pg_config install
+        #+END_SRC
 ** Set up a virtual environment
    In the working directory of this repository (usually the 'outer' interlex folder)
    1. run =pipenv install= (may complain about version issues)
