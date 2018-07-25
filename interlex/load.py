@@ -1053,7 +1053,7 @@ class TripleLoader(BasicDB):
         vt, params_i = makeParamsValues(values, constants=(':rn',))
         params_i['rn'] = self.reference_name
         sql_ident = sql_ident_base + vt + ' ON CONFLICT DO NOTHING'  # TODO FIXME
-        embed()
+        #embed()  # TODO
         self.session.execute(sql_ident, params_i)
 
         sql_ident_rel_base = 'INSERT INTO identity_relations (p, s, o) VALUES '
