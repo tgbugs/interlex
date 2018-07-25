@@ -13,6 +13,12 @@ Usage:
     interlex post ontology [options] <user>
     interlex post ontology [options] <user> <name>
     interlex post ontology [options] <user> <name> <filename>
+    interlex post triple <subject> <predicate> <object>
+    interlex post triple [options] <subject> <predicate> <object>
+
+Examples:
+    interlex post triple ILX:1234567 rdfs:label "not-a-term"
+    interlex post triple ILX:1234567 definition: "A meaningless example term"
 
 Commands:
     api             start a server running the api endpoint (WARNING: OLD)
