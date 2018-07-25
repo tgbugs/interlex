@@ -15,10 +15,10 @@ Usage:
     interlex post ontology [options] <user> <name> <filename>
     interlex post triple <subject> <predicate> <object>
     interlex post triple [options] <subject> <predicate> <object>
-
-Examples:
-    interlex post triple ILX:1234567 rdfs:label "not-a-term"
-    interlex post triple ILX:1234567 definition: "A meaningless example term"
+    interlex post entity <rdf:type> <rdfs:subClassOf> <rdfs:label> [<definition:>]
+    interlex post entity [options] <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>]
+    interlex post class <rdfs:subClassOf> <rdfs:label> [<definition:>]
+    interlex post class [options] <rdfs:subClassOf> <rdfs:label> [<definition:>]
 
 Commands:
     api             start a server running the api endpoint (WARNING: OLD)
@@ -30,8 +30,19 @@ Commands:
 
     post curies     post curies for a given user
     post ontology   post an ontology file by uploading or url
+    post triple
+    post entity
+    post class
+
+Examples:
+    export INTERLEX_API_KEY=$(cat path/to/my/api/key)
+    interlex post triple ILX:1234567 rdfs:label "not-a-term"
+    interlex post triple ILX:1234567 definition: "A meaningless example term"
+    interlex post entity -r ilxtr:myNewProperty owl:AnnotationProperty _ 'my annotation property' 'use for stuff'
+    interlex post class -r ilxtr:myNewClass ilxtr:myExistingClass 'new class' 'some new thing'
 
 Options:
+    -r --readable           user/uris/readable iri/curie
     -d --debug              enable debug mode
     -l --local              run against local
     -g --gunicorn           run against local gunicorn
