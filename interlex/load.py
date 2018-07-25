@@ -442,19 +442,22 @@ class GraphLoader(GraphIdentities):
                       subgraph_identity)
 
         elif isinstance(s, int) and isinstance(o, rdflib.Literal) and subgraph_identity is not None:
-            columns = 's_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity'
+            columns = 's_blank, p, o_lit, datatype, language, subgraph_identity'
             record = (s,
                       p,
                       str(o),
                       str_None(o.datatype),
                       str_None(o.language),
                       subgraph_identity)
+
         else:
             raise ValueError(f'{s} {p} {o} {subgraph_identity} has an unknown or invalid type signature')
 
+        #lc, lr = len(columns.split(', ')), len(record)
+        #assert lc == lr, f'lengths {lc} != {lr} do not match {columns!r} {record}'
         return columns, record
 
-    def make_load_records(self, curies_done, metadata_done, data_done, ident_exists):
+    def make_load_records(self, serialization_identity, curies_done, metadata_done, data_done, ident_exists):
         # if you need to test pass in lambda i:False for ident_exists
         # TODO resursive on type?
         # s, s_blank, p, o, o_lit, datatype, language, subgraph_identity
@@ -462,7 +465,7 @@ class GraphLoader(GraphIdentities):
             c = []
             to_insert = {'serialization_identity, curie_prefix, iri_prefix':c}
             for curie_prefix, iri_prefix in sorted(self.curies):  # FIXME ordering issue
-                c.append((self.serialization_identity, curie_prefix, iri_prefix))
+                c.append((serialization_identity, curie_prefix, iri_prefix))
 
             yield 'INSERT INTO curies', '', to_insert
 
@@ -508,7 +511,7 @@ class GraphLoader(GraphIdentities):
 
         # linked and free
         to_insert = defaultdict(list)  # should all be unique due to having already been identified
-        for identity, subgraph in self.Loader.subgraph_identities.items():
+        for identity, subgraph in self.subgraph_identities.items():
             if self.debug:
                 printD(identity)
                 [print(*(OntId(e).curie if
@@ -1080,7 +1083,8 @@ class TripleLoader(BasicDB):
 
         value_sets = []
         statements = []
-        for prefix, suffix, to_insert in self.Loader.make_load_records(curies_done, metadata_done,
+        for prefix, suffix, to_insert in self.Loader.make_load_records(self.serialization_identity,
+                                                                       curies_done, metadata_done,
                                                                        data_done, self.ident_exists):
             for columns, values in sorted(to_insert.items(), key=sortkey):
                 value_sets.append(values)
