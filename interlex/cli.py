@@ -15,7 +15,7 @@ Usage:
     interlex post ontology [options] <user> <name> <filename>
     interlex post triple <subject> <predicate> <object>
     interlex post triple [options] <subject> <predicate> <object>
-    interlex post entity <rdf:type> <rdfs:subClassOf> <rdfs:label> [<definition:>]
+    interlex post entity <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>]
     interlex post entity [options] <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>]
     interlex post class <rdfs:subClassOf> <rdfs:label> [<definition:>]
     interlex post class [options] <rdfs:subClassOf> <rdfs:label> [<definition:>]
