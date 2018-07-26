@@ -553,7 +553,7 @@ class InterLexLoad:
             [mg.add_trip(*t) for t in self.triples]
         self.loader._graph = self.graph
         name = 'http://toms.ilx.dump/TODO'
-        self.loader._bound_name = name
+        self.loader.Loader._bound_name = name
         #self.loader.expected_bound_name = name
         self.loader._serialization = repr((name, self.triples)).encode()
         expected_bound_name = name
