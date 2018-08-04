@@ -8,17 +8,17 @@ Usage:
     interlex curies [options]
     interlex dbsetup [options]
     interlex sync [options]
-    interlex post curies [options] <user>
-    interlex post curies [options] <user> <filename>
-    interlex post ontology [options] <user>
-    interlex post ontology [options] <user> <name>
-    interlex post ontology [options] <user> <name> <filename>
-    interlex post triple <subject> <predicate> <object>
+    interlex post ontology [options] <ontology-filename> ...
+    interlex post triples  [options] (<reference-name> <triples-filename>) ...
+    interlex post curies   [options] [<curies-filename>]
+    interlex post resource [options] <rdf-iri>
+    interlex post class  [options] <rdfs:subClassOf> <rdfs:label> [<definition:>] [<synonym:> ...]
+    interlex post entity [options] <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>] [<synonym:> ...]
     interlex post triple [options] <subject> <predicate> <object>
-    interlex post entity <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>]
-    interlex post entity [options] <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>]
-    interlex post class <rdfs:subClassOf> <rdfs:label> [<definition:>]
-    interlex post class [options] <rdfs:subClassOf> <rdfs:label> [<definition:>]
+    interlex id     [options] <match-curie-or-iri> ...
+    interlex label  [options] <match-label> ...
+    interlex term   [options] <match-label-or-synonym> ...
+    interlex search [options] <match-full-text> ...
 
 Commands:
     api             start a server running the api endpoint (WARNING: OLD)
@@ -28,11 +28,18 @@ Commands:
     dbsetup         step through creation of a user (currently tgbugs)
     sync            run sync with the old mysql database
 
+    post ontology   post an ontology file by uploading directly to interlex
+    post triples    post an file with triples, but no ontology header to a specific reference name (want?)
     post curies     post curies for a given user
-    post ontology   post an ontology file by uploading or url
-    post triple
-    post entity
+    post resource   post a link to an rdf 'file' for interlex to retrieve
     post class
+    post entity
+    post triple
+
+    id              get the interlex record for a curie or iri
+    label           get all interlex records where the rdfs:label matches a string
+    term            get all interlex records where any label or synonym matches a string
+    search          get all interlex records where the search index returns a match for a string
 
 Examples:
     export INTERLEX_API_KEY=$(cat path/to/my/api/key)
@@ -40,17 +47,20 @@ Examples:
     interlex post triple ILX:1234567 definition: "A meaningless example term"
     interlex post entity -r ilxtr:myNewProperty owl:AnnotationProperty _ 'my annotation property' 'use for stuff'
     interlex post class -r ilxtr:myNewClass ilxtr:myExistingClass 'new class' 'some new thing'
+    interlex id -u base -n tgbugs ilxtr:brain
 
 Options:
+    -u --user=USER          the user whose data should be returned [default: from-api-key]
+    -n --names-user=NUSER   the user whose naming conventions should be used [default: from-api-key]
+
     -r --readable           user/uris/readable iri/curie
-    -d --debug              enable debug mode
-    -l --local              run against local
-    -g --gunicorn           run against local gunicorn
+    -l --limit=LIMIT        limit the number of results [default: 10]
 
     -f --input-file=FILE    load an individual file
 
-    -a --api=API            SciGraph api endpoint
-    -k --key=APIKEY         apikey for SciGraph instance
+    -l --local              run against local
+    -g --gunicorn           run against local gunicorn
+    -d --debug              enable debug mode
 
 """
 
@@ -68,10 +78,10 @@ port_curies = 8510
 def main():
     from docopt import docopt
     args = docopt(__doc__, version='interlex 0.0.0')
+    print(args)
     if args['post']:
         user = args['<user>']
         name = args['<name>']
-        filename = args['<filename>']
         if args['--local']:
             host = f'localhost:{port_uri}'
             scheme = 'http'
@@ -83,6 +93,7 @@ def main():
             scheme = 'https'
 
         if args['curies']:
+            filename = args['<curies-filename>']
             url = f'{scheme}://{host}/{user}/curies/'  # https duh
             #printD(url, args)
             # FIXME /curies redirects to get...
@@ -107,30 +118,31 @@ def main():
             printD(resp.text)
 
         elif args['ontology']:
-            if filename:
-                url = f'{scheme}://{host}/{user}/upload'  # use smart endpoint
-                mimetypes = {'ttl':'text/turtle'}  # TODO put this somewhere more practical
-                path = Path(filename).resolve().absolute()
-                mimetype = mimetypes.get(path.suffix[1:], None)
-                with open(path.as_posix(), 'rb') as f:
-                    files = {'file':(path.name, f, mimetype)}
-                    data = {'create':True}
-                    resp = requests.post(url,
-                                         data=data,
-                                         files=files,
-                                        )
-            else:
-                j = {'name':'http://purl.obolibrary.org/obo/uberon.owl'}
-                if name is not None:
-                    ontology_iri = name
+            for name, filename in zip(args['<name>'], args['<ontology-filename>']):
+                if filename:
+                    url = f'{scheme}://{host}/{user}/upload'  # use smart endpoint
+                    mimetypes = {'ttl':'text/turtle'}  # TODO put this somewhere more practical
+                    path = Path(filename).resolve().absolute()
+                    mimetype = mimetypes.get(path.suffix[1:], None)
+                    with open(path.as_posix(), 'rb') as f:
+                        files = {'file':(path.name, f, mimetype)}
+                        data = {'create':True}
+                        resp = requests.post(url,
+                                             data=data,
+                                             files=files,
+                        )
                 else:
-                    ontology_iri = 'http://ontology.neuinfo.org/NIF/ttl/NIF-GrossAnatomy.ttl'
-                u = urlparse(ontology_iri)
-                j = {'name':ontology_iri}
-                url = f'{scheme}://{host}/{user}/ontologies/' + u.path[1:]
-                resp = requests.post(url, json=j)
+                    if name is not None:
+                        ontology_iri = name
+                    else:
+                        ontology_iri = 'http://ontology.neuinfo.org/NIF/ttl/NIF-GrossAnatomy.ttl'
+                        #ontology_iri = 'http://purl.obolibrary.org/obo/uberon.owl'
+                    u = urlparse(ontology_iri)
+                    j = {'name':ontology_iri}
+                    url = f'{scheme}://{host}/{user}/ontologies/' + u.path[1:]
+                    resp = requests.post(url, json=j)
 
-            printD(resp.text)
+                printD(resp.text)
 
     elif args['sync']:
         from flask_sqlalchemy import SQLAlchemy
