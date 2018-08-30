@@ -7,10 +7,11 @@ from flask import Flask, request, redirect, url_for, abort
 from flask_restplus import Api, Resource, Namespace, fields
 from flask_sqlalchemy import SQLAlchemy
 from pyontutils.htmlfun import atag, htmldoc
-from pyontutils.core import makePrefixes, makeGraph
+from pyontutils.core import makePrefixes, makeGraph, rdf, rdfs, owl
 from pyontutils.utils import TermColors as tc
 from pyontutils.ttlser import CustomTurtleSerializer
 from pyontutils.htmlfun import table_style, details_style, render_table
+from pyontutils.qnamefix import cull_prefixes
 from interlex.exc import LoadError, NotGroup
 from interlex.core import printD
 from interlex.core import dbUri, permissions_sql
@@ -19,10 +20,80 @@ from interlex.load import FileFromIRI, FileFromPost, TripleLoader, BasicDB
 from interlex.dump import TripleExporter, Queries
 from IPython import embed
 
+
+class TripleRender:
+    def __init__(self):
+        self.mimetypes = {'text/html':self.html,
+                          'application/json':self.json,
+                          'text/ttl':self.ttl,  # not real
+                          'text/turtle':self.ttl,}
+
+    def __call__(self, request, mgraph, user, id, title=None):
+        mimetype = request.mimetype if request.mimetype else 'text/html'
+        try:
+            self.request = request
+            self.user = user
+            self.id = id
+            self.mgraph = mgraph
+            self.title = title
+            out = self.mimetypes[mimetype]()
+            return out, 200, {'Content-Type': mimetype}
+        except KeyError:
+            print(mimetype)
+            return abort(400)
+        finally:
+            self.request = None
+            self.user = None
+            self.id = None
+            self.mgraph = None
+            self.title = None
+
+    def html(self):
+        graph = self.mgraph.g
+        cts = CustomTurtleSerializer(graph)
+        gsortkey = cts._globalSortKey
+        psortkey = lambda p: cts.predicate_rank[p]
+        def sortkey(triple):
+            s, p, o = triple
+            return gsortkey(s), psortkey(p), gsortkey(o)
+
+        trips = (tuple(atag(e, self.mgraph.qname(e))
+                       if isinstance(e, rdflib.URIRef) and e.startswith('http')
+                       else str(e)
+                       for e in t)
+                    for t in sorted(graph, key=sortkey))
+
+        return htmldoc(render_table(trips, 'subject', 'predicate', 'object'),
+                       title=self.title,
+                       styles=(table_style,))
+
+    def ttl(self):
+        graph = self.mgraph.g
+        current_qualifier = 'TODO'
+        ontid = rdflib.URIRef(f'http://uri.interlex.org/{self.user}/qualifiers/{current_qualifier}')
+        graph.add((ontid, rdf.type, owl.Ontology))
+        graph.add((ontid, rdfs.comment, rdflib.Literal(f'InterLex query result at qualifier {current_qualifier}')))
+        # TODO consider data identity?
+        ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
+        return ng.g.serialize(format='nifttl')
+
+    def json(self):
+        # lol
+        graph = self.mgraph.g
+        ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
+        out = {'prefixes': {k:v for k, v in ng.g.namespaces()},
+               'triples': [[self.mgraph.qname(e)
+                            if isinstance(e, rdflib.URIRef) and e.startswith('http')
+                            else str(e)
+                            for e in t ]
+                           for t in graph]}
+        return json.dumps(out)
+
+
 def uriStructure():
     ilx_pattern = 'ilx_<regex("[0-9]{7}"):id>'
     basic = [ilx_pattern, 'readable']
-    branches = ['uris', 'curies', 'ontologies', 'versions']
+    branches = ['uris', 'curies', 'ontologies', 'versions']  # 'prov'
     compare = ['own', 'diff']
     version_compare = []  # TODO? probably best to deal with the recursion in make_paths
     versioned_ids = basic + ['curies', 'uris']
@@ -30,7 +101,7 @@ def uriStructure():
     parent_child = {
         '<user>':              basic + branches + compare + ['contributions', 'upload', 'prov'],
         '<other_user>':        branches,  # no reason to access /user/own/otheruser/ilx_ since identical to /user/ilx_
-        '<other_user_diff>':   basic + branches, 
+        '<other_user_diff>':   basic + branches,
         'readable':            ['<word>'],
         'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
         '<epoch_verstr_id>':   versioned_ids + version_compare,
@@ -47,10 +118,12 @@ def uriStructure():
         'diff':                ['<other_user_diff>'],
 
         # TODO considerations here
+        # TODO get ontologies by qualifier and by data subgraph? also allow direct access via and identities endpoint since we have those?
         #'upload':              [None],  # smart endpoint that hunts down bound names or tracks unbound sets
         'contributions':       [None, 'interlex', 'external', 'curation'],  # None implies any direct to own
         'prov':                ['identities'],
         'identities':          ['<identity>'],
+        'qualifiers':          ['<qualifier>'],
     }
     node_methods = {'curies_':['GET', 'POST'],
                     'upload':['POST'],
@@ -73,7 +146,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
     database = db
     app.url_map.converters['regex'] = RegexConverter
     ilx_pattern, parent_child, node_methods = structure()
-    api = Api(app,
+    api = Api(app,  # NOTE if the docs fail to load, make sure X-Forwarded-Proto is set in nginx
               version='0.0.1',
               title='InterLex URI structure API',
               description='Resolution, update, and compare for ontologies and ontology identifiers.',
@@ -85,6 +158,8 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
     #blueprint = Blueprint(ns.name, 'uri_api', url_prefix=ns.path)
     #api.init_app(blueprint)
     #app.register_blueprint(blueprint)
+
+    tripleRender = TripleRender()
 
     def basic(function):
         @wraps(function)
@@ -151,7 +226,8 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
 
         def reference_name(self, user, path):
             # need this for testing, in an ideal world we read from headers
-            return os.path.join(f'https://{self.reference_host}', user, path) 
+            return os.path.join(f'https://{self.reference_host}', user, path)
+
         @staticmethod
         def iriFromPrefix(prefix, *ordered_prefix_sets):
             for PREFIXES in ordered_prefix_sets:
@@ -219,28 +295,14 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             te = TripleExporter()
             _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
 
-            cts = CustomTurtleSerializer(g.g)
-            gsortkey = cts._globalSortKey
-            psortkey = lambda p: cts.predicate_rank[p]
-            def sortkey(triple):
-                s, p, o = triple
-                return gsortkey(s), psortkey(p), gsortkey(o)
-
-            trips = ((atag(e, g.qname(e))
-                      if isinstance(e, rdflib.URIRef) and e.startswith('http')
-                      else str(e)
-                      for e in t)
-                     for t in sorted(g.g, key=sortkey))
-
             # TODO list users with variants from base and/org curated
             # we need an 'uncurated not latest' or do we?
             if user == 'base':
                 title = f'ILX:{id}'
             else:
                 title = f'ilx.{user}:ilx_{id}'
-            return htmldoc(render_table(trips, 'subject', 'predicate', 'object'),
-                           title=title,
-                           styles=(table_style,))
+
+            return tripleRender(request, g, user, id, title)
 
         # TODO PATCH only admin can change the community readable mappings just like community curies
         @basic
@@ -256,7 +318,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
         def contributions(self, *args, **kwargs):
             return 'TODO slicing on contribs ? or use versions?'
 
-        # TODO POST ?private if private PUT (to change mapping) PATCH like readable 
+        # TODO POST ?private if private PUT (to change mapping) PATCH like readable
         @basic
         def uris(self, user, uri_path, db=None):
             # owl:Class, owl:*Property
@@ -353,7 +415,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
                     create = True
                 else:
                     create = False
-                
+
             names = []
             for name, file in request.files.items():
                 setup_ok = loader(file, header, create)
@@ -464,7 +526,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
 
         @basic
         def prov(self, *args, **kwargs):
-            """ Return all the identities that an org/user has uploaded 
+            """ Return all the identities that an org/user has uploaded
                 Show users their personal uploads and then their groups.
                 Show groups all uploads with the user who did it
             """
