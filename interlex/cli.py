@@ -152,7 +152,7 @@ def main():
         db = SQLAlchemy(app)
         ltl = type('TripleLoader', (TripleLoader,), {})
         Loader = ltl(db.session)
-        il = InterLexLoad(Loader)
+        il = InterLexLoad(Loader, do_cdes=False)
         il.setup()
         # il.load()  # do this one yourself
         self = il

@@ -19,8 +19,8 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.routing import BaseConverter
 from pyontutils.config import devconfig
 from pyontutils.utils import TermColors as tc
-from pyontutils.core import PREFIXES as uPREFIXES, rdf, rdfs, owl, definition, ILX, oboInOwl
-from pyontutils.core import makeGraph, yield_recursive, OntId
+from pyontutils.core import PREFIXES as uPREFIXES, rdf, rdfs, owl, definition, ILX, oboInOwl, NIFRID, ilxtr
+from pyontutils.core import makeGraph, makeNamespaces, OntId, annotation
 from pyontutils.ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
 from interlex.exc import bigError
 from IPython import embed
@@ -34,6 +34,8 @@ try:
 except ImportError:
     print('WARNING: you do not have tgbugs misc on this system')
     printD = print
+
+ilxr, *_ = makeNamespaces('ilxr')
 
 permissions_sql = 'SELECT * from user_permissions WHERE user_id = idFromGroupname(:group)'
 
@@ -517,8 +519,9 @@ class IdLocalBNode(rdflib.BNode):
 
 # get interlex
 class InterLexLoad:
-    def __init__(self, Loader, debug=False):
+    def __init__(self, Loader, do_cdes=False, debug=False):
         self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex', 'uri.interlex.org')
+        self.do_cdes = do_cdes
         self.debug = debug
         self.admin_engine = create_engine(dbUri(user='interlex-admin'), echo=True)
         self.admin_exec = self.admin_engine.execute
@@ -689,21 +692,25 @@ class InterLexLoad:
         header_subClassOf = [d['name'] for d in insp.get_columns('term_superclasses')]
         header_terms = [d['name'] for d in insp.get_columns('terms')]
         queries = dict(
-            terms = 'SELECT * from terms WHERE type != "cde"',
+            terms = f'SELECT * from terms WHERE type != "cde"',
+            synonyms = "SELECT * from term_synonyms WHERE literal != ''",
             subClassOf = 'SELECT * from term_superclasses',
             object_properties = 'SELECT * from term_relationships',
-            annotation_properties = 'SELECT * from term_annotations limit 10000',  # not quite yet also slow
-            cde_ids = 'SELECT id, ilx FROM terms where type = "cde"',
+            annotation_properties = 'SELECT * from term_annotations',  # not quite yet also slow
             )
+        if self.do_cdes:
+            queries['terms'] = 'SELECT * FROM terms'
+        else:
+            queries['cde_ids'] = 'SELECT id, ilx FROM terms where type = "cde"'
         data = {name:engine.execute(query).fetchall()
                 for name, query in queries.items()}
         ilx_index = {}
         id_type = {}
         triples = [(ILX[ilx], oboInOwl.hasDbXref, iri) for ilx, iri in self.eid_skips]
         type_to_owl = {'term':owl.Class,
-                    'cde':owl.Class,
-                    'annotation':owl.AnnotationProperty,
-                    'relationship':owl.ObjectProperty}
+                       'cde':owl.Class,
+                       'annotation':owl.AnnotationProperty,
+                       'relationship':owl.ObjectProperty}
 
         def addToIndex(id, ilx, class_):
             if ilx not in ilx_index:
@@ -713,7 +720,8 @@ class InterLexLoad:
                 id_type[id] = []
             id_type[id].append(class_)
 
-        [addToIndex(row.id, row.ilx[4:], owl.Class) for row in data['cde_ids']]
+        if not self.do_cdes:
+            [addToIndex(row.id, row.ilx[4:], owl.Class) for row in data['cde_ids']]
 
         bads = []
         for row in data['terms']:
@@ -746,6 +754,20 @@ class InterLexLoad:
 
         def baseUri(e):
             return f'http://uri.interlex.org/base/ilx_{tid_to_ilx[e]}'
+
+        synWTF = []
+        stype_lookup = {'abbrev':ilxtr['synonyms/abbreviation']}
+        for row in data['synonyms']:
+            synid, tid, literal, type, version, time = row
+            # TODO annotation with synonym type
+            if not literal:
+                synWTF.append(row)
+            else:
+                t = baseUri(tid), ilxr.synonym, rdflib.Literal(literal)
+                triples.append(t)
+                if type:  # yay for empty string! >_<
+                    stype =  stype_lookup[type]
+                    triples.extend(annotation(t, (ilxtr.synonymType, stype)).value)
 
         WTF = []
         for row in data['object_properties']:
