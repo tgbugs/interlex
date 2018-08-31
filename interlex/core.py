@@ -654,7 +654,10 @@ class InterLexLoad:
             else:
                 raise IndexError()
 
-        query = engine.execute('SELECT * FROM term_existing_ids as teid JOIN terms as t ON t.id = teid.tid WHERE t.type != "cde"')
+        if self.do_cdes:
+            query = engine.execute('SELECT * FROM term_existing_ids as teid JOIN terms as t ON t.id = teid.tid')
+        else:
+            query = engine.execute('SELECT * FROM term_existing_ids as teid JOIN terms as t ON t.id = teid.tid WHERE t.type != "cde"')
 
         #data = query.fetchall()
         #cdata = list(zip(*data))

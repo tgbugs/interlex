@@ -7,6 +7,7 @@ Usage:
     interlex uri [options]
     interlex curies [options]
     interlex dbsetup [options]
+    interlex debug [options]
     interlex sync [options]
     interlex post ontology [options] <ontology-filename> ...
     interlex post triples  [options] (<reference-name> <triples-filename>) ...
@@ -143,6 +144,17 @@ def main():
                     resp = requests.post(url, json=j)
 
                 printD(resp.text)
+
+    elif args['debug']:
+        from flask_sqlalchemy import SQLAlchemy
+        from interlex.uri import run_uri
+        from interlex.load import TripleLoader
+        from interlex.dump import Queries as _Q
+        app = run_uri()
+        db = SQLAlchemy(app)
+        session = db.session
+        queries = _Q(session)
+        embed()
 
     elif args['sync']:
         from flask_sqlalchemy import SQLAlchemy

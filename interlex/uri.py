@@ -289,9 +289,9 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
                 except StopIteration:
                     return abort(404)
 
-            #printD(resp)
             PREFIXES, g = self.getGroupCuries(user)
             resp = self.queries.getById(id, user)
+            #printD(resp)
             te = TripleExporter()
             _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
 
