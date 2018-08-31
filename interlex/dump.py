@@ -23,8 +23,7 @@ class TripleExporter:
         if s_blank is not None:
             s = rdflib.BNode(si + '_' + str(s_blank))
 
-        if o is not None:
-            o = rdflib.URIRef(o)
+        if o is not None: o = rdflib.URIRef(o)
         elif o_lit is not None:
             o = rdflib.Literal(o_lit, datatype=datatype, lang=language)
         if o_blank is not None:
@@ -40,8 +39,13 @@ class Queries:
         pass
     sql = Sql()
 
-    def __init__(self, session):
+    def __init__(self, session, endpoints):
+        self.endpoints = endpoints
         self.session = session
+
+    @property
+    def reference_host(self):
+        return self.endpoints.reference_host
 
     def getBuiltinGroups(self):
         return list(self.session.execute("SELECT * FROM groups WHERE own_role = 'builtin'"))
@@ -85,6 +89,20 @@ class Queries:
     def getExistingIris(self):
         sql = 'SELECT * FROM existing_iris'
         return self.session.execute(sql)
+
+    def getExistingFromIri(self, *iris):
+        args = dict(iris=iris)
+        sql = ('SELECT s, iri FROM triples JOIN existing_iris '
+               'ON s = iri WHERE s IN :iris')
+        resp = list(self.session.execute(sql, args))
+        return resp
+
+    def getExistingIrisForIlxId(self, *iris):
+        args = dict(iris=list(iris))
+        sql = ('SELECT i, iri FROM unnest(ARRAY[:iris]) WITH ORDINALITY i '
+               'JOIN existing_iris ON i = ilx_id')
+        resp = list(self.session.execute(sql, args))
+        return resp
 
     def getById(self, id, user):
         uri = f'http://uri.interlex.org/base/ilx_{id}'
@@ -133,8 +151,38 @@ class Queries:
         SELECT * FROM graph UNION SELECT * from subgraphs;
         '''
 
+        # forget it, do it as two queries for now
+        sql2 = f'''
+        SELECT *
+            FROM ({sql}) as sq
+            LEFT JOIN existing_iris
+            ON ilx_id = ilxIdFromIri(sq.o)
+            WHERE uri_host(sq.o) = reference_host();  -- OR TRUE; -- works but super slow
+        '''
+
+        sql3 = f'''
+        WITH woo AS ({sql})
+        SELECT * FROM woo JOIN ...
+        '''
+
+
         if not hasattr(self.sql, 'getById'):
             self.sql.getById = sql
 
         resp = list(self.session.execute(self.sql.getById, args))
         return resp
+
+    def getResponseExisting(self, resp, type='o'):
+        rh = self.reference_host
+        # TODO filter by user?
+        def gt(e):
+            return getattr(e, type)
+
+        id_existing_iris = self.getExistingIrisForIlxId(*set(gt(r).rsplit('/', 1)[-1][4:]
+                                                        for r in resp
+                                                        if gt(r) and rh in gt(r)))
+        base_to_existing = [(f'http://uri.interlex.org/base/ilx_{id}', iri)
+                              # FIXME centralize the iri <-> id functions
+                              for id, iri in id_existing_iris]
+
+        return base_to_existing

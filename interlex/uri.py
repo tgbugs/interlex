@@ -28,13 +28,14 @@ class TripleRender:
                           'text/ttl':self.ttl,  # not real
                           'text/turtle':self.ttl,}
 
-    def __call__(self, request, mgraph, user, id, title=None):
+    def __call__(self, request, mgraph, user, id, object_to_existing, title=None):
         mimetype = request.mimetype if request.mimetype else 'text/html'
         try:
             self.request = request
+            self.mgraph = mgraph
             self.user = user
             self.id = id
-            self.mgraph = mgraph
+            self.object_to_existing = object_to_existing
             self.title = title
             out = self.mimetypes[mimetype]()
             return out, 200, {'Content-Type': mimetype}
@@ -43,10 +44,26 @@ class TripleRender:
             return abort(400)
         finally:
             self.request = None
+            self.mgraph = None
             self.user = None
             self.id = None
-            self.mgraph = None
+            self.object_to_existing = None
             self.title = None
+
+    def iri_selection_logic(self):  # TODO
+        """ For a given set of conversion rules (i.e. from a user)
+            when given an iri, convert it to the preferred form.
+            Use a precedence list base on
+            1. users
+            2. orgs
+            3. curie prefixes
+            4. iri prefixes (?)
+            5. etc ...
+            See the ilx spec doc for this. We want this in its own class
+            and will just be calling it from here. """
+
+    def curie_selection_logic(self):
+        """ Same as iri selection but for curies """
 
     def html(self):
         graph = self.mgraph.g
@@ -206,7 +223,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             self.FileFromPost = ffp(self.session)
             bdb = type('BasicDB', (BasicDB,), {})
             self.BasicDB = bdb(self.session)
-            self.queries = Queries(self.session)
+            self.queries = Queries(self.session, self)
 
         def getBasicInfo(self, group, user):
             try:
@@ -292,6 +309,9 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             PREFIXES, g = self.getGroupCuries(user)
             resp = self.queries.getById(id, user)
             #printD(resp)
+            # TODO formatting rules for subject and objects
+            object_to_existing = self.queries.getResponseExisting(resp, type='o')
+
             te = TripleExporter()
             _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
 
@@ -302,7 +322,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             else:
                 title = f'ilx.{user}:ilx_{id}'
 
-            return tripleRender(request, g, user, id, title)
+            return tripleRender(request, g, user, id, object_to_existing, title)
 
         # TODO PATCH only admin can change the community readable mappings just like community curies
         @basic
@@ -699,7 +719,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
         Endpoints.reference_host = next(db.session.execute('SELECT reference_host()'))[0]
         db.engine.echo = echo
         printD(Endpoints.reference_host)
-        for group in Queries(db.session).getBuiltinGroups():  # FIXME inelegant way around own_role < 'pending'
+        for group in Queries(db.session, Endpoints).getBuiltinGroups():  # FIXME inelegant way around own_role < 'pending'
             BasicDB._cache_groups[group.groupname] = group.id, group.own_role
 
     endpoints = Endpoints()
