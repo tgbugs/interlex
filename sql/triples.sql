@@ -10,6 +10,12 @@ CREATE TABLE interlex_ids(
        CHECK (id ~ '[0-9]{7}')
 );
 
+CREATE OR REPLACE FUNCTION ilxIdFromIri(iri uri, OUT ilx_id char(7)) RETURNS char(7) AS $ilxIdFromIri$
+       BEGIN
+           SELECT substring((uri_path_array(iri))[array_upper(uri_path_array(iri), 1)], 5)::char(7) INTO ilx_id;
+       END;
+$ilxIdFromIri$ language plpgsql;
+
 CREATE TABLE existing_iris(
        -- note that this table does NOT enumerate any uri.interlex.org identifiers
        -- the default/curated user will be the fail over
