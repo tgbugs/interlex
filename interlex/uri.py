@@ -14,7 +14,7 @@ from pyontutils.htmlfun import table_style, details_style, render_table
 from pyontutils.qnamefix import cull_prefixes
 from interlex.exc import LoadError, NotGroup
 from interlex.core import printD
-from interlex.core import dbUri, permissions_sql
+from interlex.core import dbUri, permissions_sql, diffCuries
 from interlex.core import RegexConverter, make_paths, makeParamsValues
 from interlex.load import FileFromIRI, FileFromPost, TripleLoader, BasicDB
 from interlex.dump import TripleExporter, Queries
@@ -328,6 +328,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             return request.path
 
         # TODO POST PUT PATCH
+        # just overload post? don't allow changing? hrm?!?!
         @basic
         def curies_(self, user, db=None):
             # TODO auth
@@ -336,16 +337,25 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
                 # TODO diff against existing
                 if request.json is None:
                     return 'No curies were sent\n', 400
-                values = tuple((cp, ip) for cp, ip in request.json.items())
+                newPrefixes = request.json
+
+                ok, to_add, existing, message = diffCuries(PREFIXES, newPrefixes)
+                # FIXME this is not inside a transaction so it could fail!!!!
+                if not ok:
+                    return message, 400
+
+                values = tuple((cp, ip) for cp, ip in to_add.items())
+
                 # FIXME impl in load pls
                 values_template, params = makeParamsValues(values,
                                                            constants=('idFromGroupname(:group)',))  # FIXME surely this is slow as balls
                 params['group'] = user
-                sql = 'INSERT INTO curies (group_id, curie_prefix, iri_prefix) VALUES ' + values_template
+                base = 'INSERT INTO curies (group_id, curie_prefix, iri_prefix) VALUES ' 
+                sql = base + values_template
                 try:
                     resp = self.session.execute(sql, params)
                     self.session.commit()
-                    return 'ok\n', 200
+                    return message, 200
                 except sa.exc.IntegrityError as e:
                     self.session.rollback()
                     return f'Curie exists\n{e.orig.pgerror}', 409  # conflict

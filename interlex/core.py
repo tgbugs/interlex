@@ -18,7 +18,7 @@ from flask import make_response, abort
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.routing import BaseConverter
 from pyontutils.config import devconfig
-from pyontutils.utils import TermColors as tc
+from pyontutils.utils import TermColors as tc, injective_dict
 from pyontutils.core import PREFIXES as uPREFIXES, rdf, rdfs, owl, definition, ILX, oboInOwl, NIFRID, ilxtr
 from pyontutils.core import makeGraph, makeNamespaces, OntId, annotation
 from pyontutils.ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
@@ -118,7 +118,7 @@ class FakeSession:
     @property
     def current_return_value(self):
         return self._return_value
-    
+
     @current_return_value.setter
     def current_return_value(self, value):
         self._return_value = value
@@ -185,7 +185,7 @@ class IdentityBNode(rdflib.BNode):
         real_self = super().__new__(cls, self.identity)
         if debug == True:
             return self
-            
+
         real_self.debug = debug
         real_self.identity = self.identity
         real_self.null_identity = self.null_identity
@@ -564,7 +564,7 @@ class InterLexLoad:
 
         if setup_ok is not None:
             raise LoadError(setup_ok)
-        
+
     @bigError
     def remote_load(self):
         self.loader.load()
@@ -667,7 +667,7 @@ class InterLexLoad:
 
         #values = [(row.ilx[4:], row.iri, row.version) for row in query if row.ilx not in row.iri]
         eternal_screaming = list(query)
-        
+
         start_values = [(row[ind('ilx')][4:], row[ind('iri')], row[ind('version')])
                   for row in eternal_screaming if row[ind('ilx')] not in row[ind('iri')]]
 
@@ -712,6 +712,7 @@ class InterLexLoad:
         triples = [(ILX[ilx], oboInOwl.hasDbXref, iri) for ilx, iri in self.eid_skips]
         type_to_owl = {'term':owl.Class,
                        'cde':owl.Class,
+                       'fde':owl.Class,
                        'annotation':owl.AnnotationProperty,
                        'relationship':owl.ObjectProperty}
 
@@ -746,6 +747,13 @@ class InterLexLoad:
                 (uri, rdfs.label, rdflib.Literal(row.label)),
                 (uri, definition, row.definition),
             ))
+
+            # this is the wrong way to do these, have to hit the superless at the moment
+            #if row.type == 'fde':
+                #triples.append((uri, rdfs.subClassOf, ilxtr.federatedDataElement))
+            #elif row.type == 'cde':
+                #triples.append((uri, rdfs.subClassOf, ilxtr.commonDataElement))
+
             addToIndex(row.id, ilx, class_)
 
         versions = {k:v for k, v in ilx_index.items() if len(v) > 1}  # where did our dupes go!?
@@ -885,7 +893,7 @@ def server_api(db=None, dburi=dbUri()):
     def triples_fromurl():
         if 'url' not in request.args:
             return 'missing required url argument\n', 400
-        
+
         url = request.args['url']
         user = 'tgbugs'
         # TODO process for staging changes for review and comparison to see
@@ -895,7 +903,7 @@ def server_api(db=None, dburi=dbUri()):
                                          'AND source_qualifier_id = 0'), dict(group=user))).id
 
         sql, params = make_load_triples(graph, src_qual)
-    
+
         # TODO return comparison using temp tables prior to full merge
         return 'ok\n'
 
@@ -1041,6 +1049,51 @@ class RegexConverter(BaseConverter):
     def __init__(self, url_map, *items):
         super().__init__(url_map)
         self.regex = items[0]
+
+
+def diffCuries(old, new):
+    err = False, None, None
+
+    if not new:
+        existing = {}
+        return True, new, existing, 'How did we git here?!'
+
+    try:
+        n_curs = injective_dict(new)
+    except injective_dict.NotInjectiveError as e:
+        return (*err, e)
+
+    if not old:
+        return True, new, old, f'New curies added. No existing curies.\n{new}'
+
+    o_curs = injective_dict(old)
+    o_iris = o_curs.inverted()
+
+    snc = set(n_curs)
+    soc = set(o_curs)
+
+    only_new_curies = snc - soc
+    to_add = {}
+    try:
+        for cur in only_new_curies:  # hilariously inefficient
+            o_curs[cur] = n_curs[cur]
+            to_add[cur] = n_curs[cur]
+    except injective_dict.NotInjectiveError as e:
+        # trying to bind a new curie to and old iri
+        return (*err, e)
+
+    existing_curies = snc & soc
+    existing = {}
+    try:
+        for cur in existing_curies:
+            o_curs[cur] = n_curs[cur]
+            existing[cur] = n_curs[cur]
+    except injective_dict.NotInjectiveError as e:
+        # trying to bind an old curie to a new iri
+        return (*err, e)
+
+    return True, to_add, existing, f'\nNew curies added. Existing were not modified.\n{to_add}\n'
+
 
 def server_curies(db=None):
     app = Flask('InterLex curies server')

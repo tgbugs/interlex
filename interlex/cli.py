@@ -59,7 +59,7 @@ Options:
 
     -f --input-file=FILE    load an individual file
 
-    -l --local              run against local
+    -o --local              run against local
     -g --gunicorn           run against local gunicorn
     -d --debug              enable debug mode
 
@@ -77,12 +77,14 @@ port_uri = 8505
 port_curies = 8510
 
 def main():
-    from docopt import docopt
+    from docopt import docopt, parse_defaults
+    defaults = {o.name:o.value if o.argcount else None for o in parse_defaults(__doc__)}
     args = docopt(__doc__, version='interlex 0.0.0')
     print(args)
     if args['post']:
-        user = args['<user>']
-        name = args['<name>']
+        user = args['--user']
+        if user == defaults['--user']:
+            raise NotImplemented('no api keys yet')
         if args['--local']:
             host = f'localhost:{port_uri}'
             scheme = 'http'
@@ -93,7 +95,7 @@ def main():
             host = 'uri.olympiangods.org'
             scheme = 'https'
 
-        if args['curies']:
+        if args['curies']:  # FIXME post should smart update? or switch to patch?
             filename = args['<curies-filename>']
             url = f'{scheme}://{host}/{user}/curies/'  # https duh
             #printD(url, args)
@@ -116,10 +118,11 @@ def main():
                 resp = requests.post(url, json=data)
             else:
                 resp = requests.post(url, json=uPREFIXES)
-            printD(resp.text)
+
+            printD(resp.status_code, resp.text)
 
         elif args['ontology']:
-            for name, filename in zip(args['<name>'], args['<ontology-filename>']):
+            for filename in args['<ontology-filename>']:
                 if filename:
                     url = f'{scheme}://{host}/{user}/upload'  # use smart endpoint
                     mimetypes = {'ttl':'text/turtle'}  # TODO put this somewhere more practical
@@ -130,20 +133,21 @@ def main():
                         data = {'create':True}
                         resp = requests.post(url,
                                              data=data,
-                                             files=files,
-                        )
-                else:
-                    if name is not None:
-                        ontology_iri = name
-                    else:
-                        ontology_iri = 'http://ontology.neuinfo.org/NIF/ttl/NIF-GrossAnatomy.ttl'
-                        #ontology_iri = 'http://purl.obolibrary.org/obo/uberon.owl'
-                    u = urlparse(ontology_iri)
-                    j = {'name':ontology_iri}
-                    url = f'{scheme}://{host}/{user}/ontologies/' + u.path[1:]
-                    resp = requests.post(url, json=j)
-
+                                             files=files,)
                 printD(resp.text)
+
+        elif args['triples']:
+            for reference_name, filename in zip(args['<reference-name>'], args['<triples-filename>']):
+                raise NotImplemented
+
+        elif args['resource']:
+            ontology_iri = args['<rdf-iri>']
+            u = urlparse(ontology_iri)
+            j = {'name':ontology_iri}
+            url = f'{scheme}://{host}/{user}/ontologies/' + u.path[1:]
+            resp = requests.post(url, json=j)
+            printD(resp.text)
+
 
     elif args['debug']:
         from flask_sqlalchemy import SQLAlchemy
