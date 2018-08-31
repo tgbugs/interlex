@@ -112,28 +112,17 @@ class Queries:
                 'WHERE e.ilx_id = :id')
         # TODO user's view...
 
-        # this is slower than the lj
-        s_sql = '''
-        WITH graph AS (
-            SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity
-            FROM triples as t WHERE s = :uri OR s in (SELECT iri from existing_iris where ilx_id = :id)
-        ), subgraphs AS (
-            SELECT sg.s, sg.s_blank, sg.p, sg.o,
-                    sg.o_lit, sg.datatype, sg.language,
-                    sg.o_blank, sg.subgraph_identity
-            FROM triples as sg, graph as g
-            WHERE sg.subgraph_identity = g.subgraph_identity AND sg.s is NULL
-        )
-        SELECT * FROM graph UNION SELECT * from subgraphs;
-        '''
-
-        #this is fast and very broken ... there should be nothing to join on for
-        j_sql = '''
+        # remember kids! don't use left join!
+        sql = '''
         WITH graph AS (
             SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity
             FROM triples as t JOIN existing_iris as e
-            ON s = iri OR s = :uri
+            ON s = iri
             WHERE ilx_id = :id
+            UNION
+            SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity
+            FROM triples
+            WHERE s = :uri
         ), subgraphs AS (
             SELECT sg.s, sg.s_blank, sg.p, sg.o,
                     sg.o_lit, sg.datatype, sg.language,
@@ -144,24 +133,8 @@ class Queries:
         SELECT * FROM graph UNION SELECT * from subgraphs;
         '''
 
-        # this is slow but correct?
-        lj_sql = '''
-        WITH graph AS (
-            SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity
-            FROM triples as t LEFT JOIN existing_iris as e
-            ON s = iri
-            WHERE ilx_id = :id OR s = :uri
-        ), subgraphs AS (
-            SELECT sg.s, sg.s_blank, sg.p, sg.o,
-                    sg.o_lit, sg.datatype, sg.language,
-                    sg.o_blank, sg.subgraph_identity
-            FROM triples as sg, graph as g
-            WHERE sg.subgraph_identity = g.subgraph_identity AND sg.s is NULL
-        )
-        SELECT * FROM graph UNION SELECT * from subgraphs;
-        '''
-        sql = lj_sql
         if not hasattr(self.sql, 'getById'):
             self.sql.getById = sql
+
         resp = list(self.session.execute(self.sql.getById, args))
         return resp
