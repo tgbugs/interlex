@@ -71,10 +71,9 @@ class MysqlExport:
         predicate_objects = self.session.execute(sql3, args2)
         for p, o in predicate_objects:
             print(p, o)
-            try:
+            if o.startswith('http'):  # and this is why we need types in the database :/
                 oo = rdflib.URIRef(o)
-            except AssertionError as e:
-                print('ERROR', e)
+            else:
                 oo = rdflib.Literal(o)
             
             yield preferred, rdflib.URIRef(p), oo
