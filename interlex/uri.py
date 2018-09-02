@@ -37,24 +37,11 @@ class TripleRender:
             else:
                 return '', 404
         try:
-            self.request = request
-            self.mgraph = mgraph
-            self.user = user
-            self.id = id
-            self.object_to_existing = object_to_existing
-            self.title = title
-            out = self.mimetypes[mimetype]()
+            out = self.mimetypes[mimetype](request, mgraph, user, id, object_to_existing, title)
             return out, 200, {'Content-Type': mimetype}
         except KeyError:
             print(mimetype)
             return abort(400)
-        finally:
-            self.request = None
-            self.mgraph = None
-            self.user = None
-            self.id = None
-            self.object_to_existing = None
-            self.title = None
 
     def iri_selection_logic(self):  # TODO
         """ For a given set of conversion rules (i.e. from a user)
@@ -71,8 +58,8 @@ class TripleRender:
     def curie_selection_logic(self):
         """ Same as iri selection but for curies """
 
-    def html(self):
-        graph = self.mgraph.g
+    def html(self, request, mgraph, user, id, object_to_existing, title):
+        graph = mgraph.g
         cts = CustomTurtleSerializer(graph)
         gsortkey = cts._globalSortKey
         psortkey = lambda p: cts.predicate_rank[p]
@@ -80,18 +67,18 @@ class TripleRender:
             s, p, o = triple
             return gsortkey(s), psortkey(p), gsortkey(o)
 
-        trips = (tuple(atag(e, self.mgraph.qname(e))
+        trips = (tuple(atag(e, mgraph.qname(e))
                        if isinstance(e, rdflib.URIRef) and e.startswith('http')
                        else str(e)
                        for e in t)
-                    for t in sorted(graph, key=sortkey))
+                 for t in sorted(graph, key=sortkey))
 
         return htmldoc(render_table(trips, 'subject', 'predicate', 'object'),
-                       title=self.title,
+                       title=title,
                        styles=(table_style,))
 
-    def ttl(self):
-        graph = self.mgraph.g
+    def ttl(self, request, mgraph, user, id, object_to_existing, title):
+        graph = mgraph.g
         nowish = datetime.utcnow()
         epoch = nowish.timestamp()
         iso = nowish.isoformat()
@@ -107,12 +94,12 @@ class TripleRender:
         ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
         return ng.g.serialize(format='nifttl')
 
-    def json(self):
+    def json(self, request, mgraph, user, id, object_to_existing, title):
         # lol
-        graph = self.mgraph.g
+        graph = mgraph.g
         ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
         out = {'prefixes': {k:v for k, v in ng.g.namespaces()},
-               'triples': [[self.mgraph.qname(e)
+               'triples': [[mgraph.qname(e)
                             if isinstance(e, rdflib.URIRef) and e.startswith('http')
                             else str(e)
                             for e in t ]
