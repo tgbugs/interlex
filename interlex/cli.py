@@ -6,6 +6,7 @@ Usage:
     interlex api [options]
     interlex uri [options]
     interlex curies [options]
+    interlex alt [options]
     interlex dbsetup [options]
     interlex debug [options]
     interlex sync [options]
@@ -25,8 +26,10 @@ Commands:
     api             start a server running the api endpoint (WARNING: OLD)
     uri             start a server for uri.interlex.org
     curies          start a server for curies.interlex.org
+    alt             start a server for alternate interlex webservices
 
     dbsetup         step through creation of a user (currently tgbugs)
+    sync            drop into a debug repl with a database connection
     sync            run sync with the old mysql database
 
     post ontology   post an ontology file by uploading directly to interlex
@@ -75,6 +78,7 @@ from IPython import embed
 port_api = 8500
 port_uri = 8505
 port_curies = 8510
+port_alt = 8515
 
 def main():
     from docopt import docopt, parse_defaults
@@ -205,6 +209,10 @@ def main():
             from interlex.core import run_curies
             app = run_curies()
             port = port_curies
+        elif args['alt']:
+            from interlex.alt import run_alt
+            app = run_alt()
+            port = port_alt
 
         app.debug = args['--debug']
         app.run(host='localhost', port=port, threaded=True)  # FIXME gunicorn

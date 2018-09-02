@@ -1,4 +1,84 @@
 import rdflib
+from pyontutils.core import rdf, rdfs, owl, ilxtr, definition, NIFRID
+
+class MysqlExport:
+    def __init__(self, session):
+        self.session = session
+
+    def __call__(self, id):
+        ilx_fragment = 'ilx_' + id
+        baseiri = rdflib.URIRef('http://uri.interlex.org/base/' + ilx_fragment)
+
+        #args = dict(ilx=request.url.rsplit('/', 1)[-1])
+        args1 = dict(ilx = ilx_fragment)
+        sql1 = 'select * from terms where ilx = :ilx'
+
+        rp = self.session.execute(sql1, dict(ilx = ilx_fragment))
+        term = next(rp)
+        try:
+            next(rp)
+            raise ValueError(f'too many results for {ilx_fragment}')
+        except StopIteration:
+            pass
+
+        id = term.id
+
+        sql2 = 'select preferred, iri from term_existing_ids te where tid = :id'
+        args2 = dict(id=id)
+        pref_iris = self.session.execute(sql2, args2)
+        existing = []
+        for maybe_pref, iri in pref_iris:
+            print(maybe_pref, iri)
+            if maybe_pref == '1':  # lol mysql
+                preferred = rdflib.URIRef(iri)
+            if iri == baseiri:
+                continue
+            else:
+                existing.append(rdflib.URIRef(iri))
+
+        yield preferred, rdfs.label, rdflib.Literal(term.label)
+        if term.definition:
+            yield preferred, definition, rdflib.Literal(term.definition)
+
+        for oo in existing:
+            if oo != preferred:
+                yield preferred, ilxtr.hasExistingId, oo
+
+        if preferred != baseiri:
+            yield preferred, ilxtr.hasIlxId, baseiri
+
+        sql3 = f'''
+        select {str(NIFRID.synonym)!r}, literal from term_synonyms where literal != '' and tid = :id
+        union
+        select te.iri, value from term_annotations as ta
+            join term_existing_ids as te
+            on ta.annotation_tid = te.tid
+            where ta.tid = :id and te.preferred = '1'
+        union
+        select te1.iri, te2.iri from term_relationships as tr
+            join term_existing_ids as te1
+            on te1.tid = tr.relationship_tid
+            join term_existing_ids as te2
+            on te2.tid = tr.term2_id
+            where tr.term1_id = :id and te1.preferred = '1' and te2.preferred = '1'
+        union
+        select {str(rdfs.subClassOf)!r}, te.iri from term_superclasses as tsc
+            join term_existing_ids as te
+            on te.tid = tsc.superclass_tid
+            where tsc.tid = :id and te.preferred = '1'
+        '''
+
+        predicate_objects = self.session.execute(sql3, args2)
+        for p, o in predicate_objects:
+            print(p, o)
+            try:
+                oo = rdflib.URIRef(o)
+            except AssertionError as e:
+                print('ERROR', e)
+                oo = rdflib.Literal(o)
+            
+            yield preferred, rdflib.URIRef(p), oo
+
 
 class TripleExporter:
     #def __init__(self, triples, subgraphs):  # TODO

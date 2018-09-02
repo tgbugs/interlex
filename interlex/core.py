@@ -699,7 +699,7 @@ class InterLexLoad:
             synonyms = "SELECT * from term_synonyms WHERE literal != ''",
             subClassOf = 'SELECT * from term_superclasses',
             object_properties = 'SELECT * from term_relationships',
-            annotation_properties = 'SELECT * from term_annotations',  # not quite yet also slow
+            annotation_properties = 'SELECT * from term_annotations',  # FIXME we are missing these?
             )
         if self.do_cdes:
             queries['terms'] = 'SELECT * FROM terms'

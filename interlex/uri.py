@@ -2,6 +2,7 @@ import os
 import json
 import rdflib
 from functools import wraps
+from datetime import datetime
 import sqlalchemy as sa
 from flask import Flask, request, redirect, url_for, abort
 from flask_restplus import Api, Resource, Namespace, fields
@@ -86,10 +87,17 @@ class TripleRender:
 
     def ttl(self):
         graph = self.mgraph.g
-        current_qualifier = 'TODO'
-        ontid = rdflib.URIRef(f'http://uri.interlex.org/{self.user}/qualifiers/{current_qualifier}')
+        nowish = datetime.utcnow()
+        epoch = nowish.timestamp()
+        iso = nowish.isoformat()
+        ontid = rdflib.URIRef(f'http://uri.interlex.org/{self.user}'
+                              f'/ontologies/ilx_{self.id}')
+        ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/ilx_{self.id}')
         graph.add((ontid, rdf.type, owl.Ontology))
-        graph.add((ontid, rdfs.comment, rdflib.Literal(f'InterLex query result at qualifier {current_qualifier}')))
+        graph.add((ontid, owl.versionIRI, ver_ontid))
+        graph.add((ontid, owl.versionInfo, rdflib.Literal(iso)))
+        graph.add((ontid, rdfs.comment, rdflib.Literal('InterLex single term result for '
+                                                       f'{self.user}/ilx_{self.id} at {iso}')))
         # TODO consider data identity?
         ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
         return ng.g.serialize(format='nifttl')
