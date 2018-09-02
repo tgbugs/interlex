@@ -8,51 +8,51 @@ class TestDiffCuries(unittest.TestCase):
         new = {'a':'a',
                'b':'a'}
         expect = False, None, None, '??'
-        self.do_test(old, new, expect)
+        self.run_diff(old, new, expect)
 
     def test_key_bound(self):
         old = {'a':'a'}
         new = {'a':'b'}
         expect = False, None, None, '??'
-        self.do_test(old, new, expect)
+        self.run_diff(old, new, expect)
 
     def test_old(self):
         old = {'a':'b'}
         new = {}
         expect = True, {}, {}, '??'
-        self.do_test(old, new, expect)
+        self.run_diff(old, new, expect)
 
     def test_new(self):
         old = {}
         new = {'a':'b'}
         expect = True, new, {}, '??'
-        self.do_test(old, new, expect)
+        self.run_diff(old, new, expect)
 
     def test_old_new(self):
         old = {'a':'b'}
         new = {'c':'d'}
         expect = True, new, {}, '??'
-        self.do_test(old, new, expect)
+        self.run_diff(old, new, expect)
 
     def test_old_old(self):
         old = {'a':'b'}
         new = {'a':'b'}
         expect = True, {}, old, '??'
-        self.do_test(old, new, expect)
+        self.run_diff(old, new, expect)
 
     def test_old_oldnew(self):
         old = {'a':'b'}
         new = {'a':'b', 'c':'d'}
         expect = True, {'c':'d'}, old, '??'
-        self.do_test(old, new, expect)
+        self.run_diff(old, new, expect)
 
     def test_oldold_new(self):
         old = {'a':'b', 'c':'d'}
         new = {'a':'b'}
         expect = True, {}, new, '??'
-        self.do_test(old, new, expect)
+        self.run_diff(old, new, expect)
 
-    def do_test(self, old, new, expect):
+    def run_diff(self, old, new, expect):
         out = diffCuries(old, new)
         print(out)
         ok, toAdd, existing, message = out
