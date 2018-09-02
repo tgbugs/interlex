@@ -31,6 +31,11 @@ class TripleRender:
 
     def __call__(self, request, mgraph, user, id, object_to_existing, title=None):
         mimetype = request.mimetype if request.mimetype else 'text/html'
+        if not mgraph.g:
+            if mimetype == 'text/html':
+                return abort(404)
+            else:
+                return '', 404
         try:
             self.request = request
             self.mgraph = mgraph
