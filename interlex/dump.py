@@ -28,7 +28,7 @@ class MysqlExport:
         pref_iris = self.session.execute(sql2, args2)
         existing = []
         for maybe_pref, iri in pref_iris:
-            print(maybe_pref, iri)
+            #print(maybe_pref, iri)
             if maybe_pref == '1':  # lol mysql
                 preferred = rdflib.URIRef(iri)
             if iri == baseiri:
@@ -70,7 +70,7 @@ class MysqlExport:
 
         predicate_objects = self.session.execute(sql3, args2)
         for p, o in predicate_objects:
-            print(p, o)
+            #print(p, o)
             if o.startswith('http'):  # and this is why we need types in the database :/
                 oo = rdflib.URIRef(o)
             else:
