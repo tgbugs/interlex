@@ -1,54 +1,39 @@
 import rdflib
-from pyontutils.core import rdf, rdfs, owl, ilxtr, definition, NIFRID
+from pyontutils.core import check_value, NIFRID, ilxtr, definition
+from pyontutils.utils import TermColors as tc
+from pyontutils.combinators import annotation
+from pyontutils.closed_namespaces import rdf, rdfs, owl
+from interlex.exc import ShouldNotHappenError
+from interlex.core import InterLexLoad, logger
 
 class MysqlExport:
     def __init__(self, session):
         self.session = session
 
-    def __call__(self, id):
-        ilx_fragment = 'ilx_' + id
-        baseiri = rdflib.URIRef('http://uri.interlex.org/base/' + ilx_fragment)
+    def existing_ids(self, id):
+        sql = 'select preferred, iri from term_existing_ids te where tid = :id'
+        args = dict(id=id)
+        yield from self.session.execute(sql, args)
 
+    def term(self, ilx_fragment):
         #args = dict(ilx=request.url.rsplit('/', 1)[-1])
-        args1 = dict(ilx = ilx_fragment)
-        sql1 = 'select * from terms where ilx = :ilx'
+        args = dict(ilx=ilx_fragment)
+        sql = 'select * from terms where ilx = :ilx'
 
-        rp = self.session.execute(sql1, dict(ilx = ilx_fragment))
+        rp = self.session.execute(sql, args)
         term = next(rp)
         try:
             next(rp)
-            raise ValueError(f'too many results for {ilx_fragment}')
+            raise ShouldNotHappenError(f'too many results for {ilx_fragment}')
         except StopIteration:
             pass
 
-        id = term.id
+        return term
 
-        sql2 = 'select preferred, iri from term_existing_ids te where tid = :id'
-        args2 = dict(id=id)
-        pref_iris = self.session.execute(sql2, args2)
-        existing = []
-        for maybe_pref, iri in pref_iris:
-            #print(maybe_pref, iri)
-            if maybe_pref == '1':  # lol mysql
-                preferred = rdflib.URIRef(iri)
-            if iri == baseiri:
-                continue
-            else:
-                existing.append(rdflib.URIRef(iri))
-
-        yield preferred, rdfs.label, rdflib.Literal(term.label)
-        if term.definition:
-            yield preferred, definition, rdflib.Literal(term.definition)
-
-        for oo in existing:
-            if oo != preferred:
-                yield preferred, ilxtr.hasExistingId, oo
-
-        if preferred != baseiri:
-            yield preferred, ilxtr.hasIlxId, baseiri
-
-        sql3 = f'''
-        select {str(NIFRID.synonym)!r}, literal from term_synonyms where literal != '' and tid = :id
+    def predicate_objects(self, id):
+        args = dict(id=id)
+        sql = f'''
+        select type, literal from term_synonyms where literal != '' and tid = :id
         union
         select te.iri, value from term_annotations as ta
             join term_existing_ids as te
@@ -68,15 +53,61 @@ class MysqlExport:
             where tsc.tid = :id and te.preferred = '1'
         '''
 
-        predicate_objects = self.session.execute(sql3, args2)
-        for p, o in predicate_objects:
-            #print(p, o)
-            if o.startswith('http'):  # and this is why we need types in the database :/
-                oo = rdflib.URIRef(o)
+        yield from self.session.execute(sql, args)
+
+    def __call__(self, ilx_id):
+        ilx_fragment = 'ilx_' + ilx_id
+        baseiri = rdflib.URIRef('http://uri.interlex.org/base/' + ilx_fragment)
+
+        term = self.term(ilx_fragment)  # FIXME handle value error or no?
+
+        id = term.id
+
+        preferred_iri = None
+        existing = []
+        for maybe_pref, iri in self.existing_ids(id):
+            iri = rdflib.URIRef(iri)
+            if maybe_pref == '1':  # lol mysql
+                preferred_iri = iri
+            if iri == baseiri:
+                continue
             else:
-                oo = rdflib.Literal(o)
+                existing.append(iri)
+        else:
+            if preferred_iri is None:
+                raise ShouldNotHappenError(f'There is no preferred_iri iri for {base_iri}')
+
+        yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
+        if term.definition:
+            yield preferred_iri, definition, rdflib.Literal(term.definition)
+
+        if preferred_iri != baseiri:
+            yield preferred_iri, ilxtr.hasIlxId, baseiri
+
+        for oo in existing:
+            yield preferred_iri, ilxtr.hasExistingId, oo
+            if oo == baseiri:
+                raise ShouldNotHappenError('woah there')
+
+        for p, o in self.predicate_objects(id):
+            oo = check_value(o)
+            if isinstance(oo, rdflib.URIRef) and ' ' in oo:
+                # there are a few wiki urls that have spaces in them >_< sigh
+                oo = str(oo)
+                logger.warning(tc.red('bad iri {oo!r}'))
+
+
+            if p == '':  # we are in synonym space also FIXME because this is dumb
+                p = NIFRID.synonym
+            elif p == 'abbrev':
+                stype = InterLexLoad.stype_lookup[p]
+                p = NIFRID.synonym
+                triple = preferred_iri, p, oo
+                yield from annotation(triple, (ilxtr.synonymType, stype))()
+            else:
+                p = rdflib.URIRef(p)
             
-            yield preferred, rdflib.URIRef(p), oo
+            yield preferred_iri, p, oo
 
 
 class TripleExporter:

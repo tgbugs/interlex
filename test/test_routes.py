@@ -7,7 +7,7 @@ def makeTestRoutes(limit=1):
     ilx_pattern, parent_child, node_methods = uriStructure()
     users = 'base', 'origin', 'tgbugs'  # base redirects to default/curated ...
     other_users = 'latest', 'curated', 'bob'
-    ilx_patterns = 'ilx_1234567', 'ilx_0090000'
+    ilx_patterns = 'ilx_0123456', 'ilx_0090000'
     words = 'isReadablePredicate', 'cookies'
     versions = '1524344335', '2018-04-01'
     filenames = 'brain', 'myOntology', 'your-ontology-123', '_yes_this_works'
@@ -46,15 +46,28 @@ class TestRoutes(unittest.TestCase):
         routes = makeTestRoutes()
         # TODO a way to mark expected failures
         urls = [
-            'http://localhost:8505/tgbugs/curies/BIRNLEEX:796?local=true',
             'http://localhost:8505/tgbugs/curies/BIRNLEX:796?local=true',
-            'http://localhost:8505/tgbugs/curies/BIRNLEEX:796',
             'http://localhost:8505/tgbugs/curies/BIRNLEX:796',
             ]
         urls = [f'http://{self.host}{r}' for r in routes] + urls
-        print(urls)
-        url_blaster(urls, 0)
+        [print(u) for u in urls]
+        url_blaster(urls, 0, fail=True)
+
+    def test_negative(self):
+        urls = [
+            'http://localhost:8505/tgbugs/curies/BIRNLEEX:796?local=true',
+            'http://localhost:8505/tgbugs/curies/BIRNLEEX:796',
+        ]
+        [print(u) for u in urls]
+        try:
+            try:
+                url_blaster(urls, 0, fail=True, negative=True)
+                raise ValueError('All urls should have failed.')
+            except AssertionError:
+                pass
+        except ValueError as e:
+            raise AssertionError from e
 
     def test_stress(self):
-        urls = [f"{self.scheme}://{self.host}/tgbugs/ilx_{id:0>7}" for id in range(100000,105000)]
-        url_blaster(urls, 0, method='get')
+        urls = [f"{self.scheme}://{self.host}/base/ilx_{id:0>7}" for id in range(100000,105000)]
+        url_blaster(urls, 0, method='get', fail=True)

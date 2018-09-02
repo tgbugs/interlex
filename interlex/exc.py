@@ -7,6 +7,9 @@ class IlxException(Exception):
 class NotGroup(IlxException):
     pass
 
+class ShouldNotHappenError(IlxException):
+    pass
+
 class LoadError(IlxException):
     def __init__(self, message, code=400):
         self.message = message

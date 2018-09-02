@@ -947,7 +947,7 @@ class TripleLoader(BasicDB):
         sql = 'SELECT identity FROM identities WHERE identity IN '
         values_template, params = makeParamsValues((idents,))
         res = self.session.execute(sql + values_template, params)
-        existing = set(r.identity.tobytes() for r in res)
+        existing = set(r.identity for r in res)
         self._cache_identities.update(existing)
         for ident in idents:
             yield ident in existing

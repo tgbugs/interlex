@@ -82,14 +82,14 @@ class TripleRender:
         nowish = datetime.utcnow()
         epoch = nowish.timestamp()
         iso = nowish.isoformat()
-        ontid = rdflib.URIRef(f'http://uri.interlex.org/{self.user}'
-                              f'/ontologies/ilx_{self.id}')
-        ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/ilx_{self.id}')
+        ontid = rdflib.URIRef(f'http://uri.interlex.org/{user}'
+                              f'/ontologies/ilx_{id}')
+        ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/ilx_{id}')
         graph.add((ontid, rdf.type, owl.Ontology))
         graph.add((ontid, owl.versionIRI, ver_ontid))
         graph.add((ontid, owl.versionInfo, rdflib.Literal(iso)))
         graph.add((ontid, rdfs.comment, rdflib.Literal('InterLex single term result for '
-                                                       f'{self.user}/ilx_{self.id} at {iso}')))
+                                                       f'{user}/ilx_{id} at {iso}')))
         # TODO consider data identity?
         ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
         return ng.g.serialize(format='nifttl')
@@ -685,17 +685,17 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
 
     class DiffVersions(Diff, Versions):
         @basic2
-        def ilx(self, user, other_user_diff, epoch_verstr_id, id):
+        def ilx(self, user, other_user_diff, epoch_verstr_id, id, db=None):
             return request.path
         @basic2
-        def readable(self, user, other_user_diff, epoch_verstr_id, word):
+        def readable(self, user, other_user_diff, epoch_verstr_id, word, db=None):
             return request.path
         @basic2
-        def uris(self, user, other_user_diff, epoch_verstr_id, uri_path):
+        def uris(self, user, other_user_diff, epoch_verstr_id, uri_path, db=None):
             return request.path
 
         @basic2
-        def curies_(self, user, other_user_diff, epoch_verstr_id):
+        def curies_(self, user, other_user_diff, epoch_verstr_id, db=None):
             PREFIXES, g = self.getGroupCuries(user)  # TODO OwnVersionsVersions for double diff (not used here)
             otherPREFIXES, g = self.getGroupCuries(other_user_diff, epoch_verstr=epoch_verstr_id)
             return 'TODO\n'
@@ -760,10 +760,11 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             inst = endpoints
 
         if nodes[-1] == '':
+            #print(nodes)
             if 'curies' in nodes:
                 nodes = tuple(nodes[:-2]) + ('curies_',)
                 #printD('terminal nodes', nodes)
-            if 'ontologies' in nodes:
+            if nodes == ['', '<user>', 'ontologies', '']:
                 nodes = tuple(nodes[:-2]) + ('ontologies_',)
                 #printD('terminal nodes', nodes)
             if 'contributions' in nodes:
@@ -776,6 +777,11 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             methods = node_methods[nodes[-1]]
         else:
             methods = ['GET', 'HEAD']
+
+        #printD()
+        #print('\t', route)
+        #print('\t', name)
+        #print('\t', function)
         app.add_url_rule(route, name, function, methods=methods)
         cname = inst.__class__.__name__ + '_' + function.__name__
         #model = api.model('Model', {})#{'thing': fields.String})
@@ -806,7 +812,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
         else:
             api.route(route)(newclass)
 
-        printD(route, methods)
+        #printD(route, methods)
 
     #for k, v in app.view_functions.items():
         #printD(k, v)

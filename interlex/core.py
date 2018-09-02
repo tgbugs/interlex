@@ -3,6 +3,7 @@
 import sys
 import socket
 import hashlib
+import logging
 from pathlib import Path, PurePath
 from tempfile import gettempdir
 from functools import partialmethod
@@ -20,10 +21,18 @@ from werkzeug.routing import BaseConverter
 from pyontutils.config import devconfig
 from pyontutils.utils import TermColors as tc, injective_dict
 from pyontutils.core import PREFIXES as uPREFIXES, rdf, rdfs, owl, definition, ILX, oboInOwl, NIFRID, ilxtr
-from pyontutils.core import makeGraph, makeNamespaces, OntId, annotation
+from pyontutils.core import makeGraph, makeNamespaces, OntId
 from pyontutils.ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
+from pyontutils.combinators import annotation
 from interlex.exc import bigError
 from IPython import embed
+
+logger = logging.getLogger('ilx_core')
+logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()  # FileHander goes to disk
+formatter = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s')  # TODO file and lineno ...
+ch.setFormatter(formatter)
+logger.addHandler(ch)
 
 try:
     from misc.debug import TDB
@@ -32,7 +41,7 @@ try:
     #printFuncDict=tdb.printFuncDict
     #tdbOff=tdb.tdbOff
 except ImportError:
-    print('WARNING: you do not have tgbugs misc on this system')
+    logger.info('you do not have tgbugs misc on this system')
     printD = print
 
 ilxr, *_ = makeNamespaces('ilxr')
@@ -519,6 +528,7 @@ class IdLocalBNode(rdflib.BNode):
 
 # get interlex
 class InterLexLoad:
+    stype_lookup = {'abbrev':ilxtr['synonyms/abbreviation']}
     def __init__(self, Loader, do_cdes=False, debug=False):
         self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex', 'uri.interlex.org')
         self.do_cdes = do_cdes
@@ -767,7 +777,6 @@ class InterLexLoad:
             return f'http://uri.interlex.org/base/ilx_{tid_to_ilx[e]}'
 
         synWTF = []
-        stype_lookup = {'abbrev':ilxtr['synonyms/abbreviation']}
         for row in data['synonyms']:
             synid, tid, literal, type, version, time = row
             # TODO annotation with synonym type
@@ -777,7 +786,7 @@ class InterLexLoad:
                 t = baseUri(tid), ilxr.synonym, rdflib.Literal(literal)
                 triples.append(t)
                 if type:  # yay for empty string! >_<
-                    stype =  stype_lookup[type]
+                    stype =  self.stype_lookup[type]
                     triples.extend(annotation(t, (ilxtr.synonymType, stype)).value)
 
         WTF = []
