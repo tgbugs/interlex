@@ -71,6 +71,7 @@ Options:
 from pathlib import Path
 from urllib.parse import urlparse
 import requests
+from pyontutils.utils import setPS1
 from pyontutils.core import PREFIXES as uPREFIXES
 from interlex.core import printD, InterLexLoad
 from IPython import embed
@@ -198,22 +199,23 @@ def main():
 
     else:
         if args['api']:
-            from interlex.core import run_api
+            from interlex.core import run_api, __file__
             app = run_api()
             port = port_api
         elif args['uri']:
-            from interlex.uri import run_uri
+            from interlex.uri import run_uri, __file__
             app = run_uri(echo=args['--debug'])
             port = port_uri
         elif args['curies']:
-            from interlex.core import run_curies
+            from interlex.core import run_curies, __file__
             app = run_curies()
             port = port_curies
         elif args['alt']:
-            from interlex.alt import run_alt
+            from interlex.alt import run_alt, __file__
             app = run_alt()
             port = port_alt
 
+        setPS1(__file__)
         app.debug = args['--debug']
         app.run(host='localhost', port=port, threaded=True)  # FIXME gunicorn
 
