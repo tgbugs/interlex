@@ -1,9 +1,13 @@
-ABS_PATH="`dirname \"$0\"`"
-ABS_PATH="`( cd \"$ABS_PATH\" && pwd )`"
-if [ -z "$ABS_PATH" ] ; then
-  exit 1
-fi
-echo "$ABS_PATH"
+#!/usr/bin/env bash
+# interlex-dbsetup [PORT] [DATABASE]
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do # resolve all symlinks
+  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # resolve relative symlinks
+done
+ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
 
 SQL="${ABS_PATH}/../sql/"
 RESOURCES="${ABS_PATH}/../resources/"
