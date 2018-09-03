@@ -166,10 +166,10 @@ class Queries:
         if epoch_verstr is not None:
             # TODO
             sql = ('SELECT curie_prefix, iri_prefix FROM curies as c '
-                    'WHERE c.group_id = (SELECT id FROM groups WHERE groupname = :group)')
+                    'WHERE c.group_id = idFromGroupname(:group)')
         else:
             sql = ('SELECT curie_prefix, iri_prefix FROM curies as c '
-                    'WHERE c.group_id = (SELECT id FROM groups WHERE groupname = :group)')  # FIXME idFromGroupname??
+                    'WHERE c.group_id = idFromGroupname(:group)')  # FIXME idFromGroupname??
         resp = self.session.execute(sql, params)
         PREFIXES = {cp:ip for cp, ip in resp}
         if not PREFIXES:  # we get the base elsewhere
@@ -281,6 +281,25 @@ class Queries:
 
         resp = list(self.session.execute(self.sql.getById, args))
         return resp
+
+    def getByGroupUriPath(self, group, path, redirect=False):  # TODO bulk versions of these
+        args = dict(group=group, path=path)
+        sql = ('SELECT ilx_id FROM uris WHERE group_id = idFromGroupname(:group) '
+               'AND uri_path = :path')
+        # TODO handle the unmapped case (currently literally all of them)
+        gen = self.session.execute(sql, args)
+        try:
+            ilx_id = next(gen).ilx_id
+        except StopIteration:
+            return tuple()
+        # since group_id and uri_path are the primary key
+        # each path will map to only 1 ilx_id
+        # we also constrain group_id + ilx_id to be unique
+
+        if redirect:
+            return ilx_id
+        else:
+            return self.getById(group, ilx_id)
 
     def getResponseExisting(self, resp, type='o'):
         rh = self.reference_host

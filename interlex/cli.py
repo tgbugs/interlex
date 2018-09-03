@@ -4,11 +4,11 @@
 
 Usage:
     interlex api [options]
-    interlex uri [options]
+    interlex uri [options]     [<database>]
     interlex curies [options]
     interlex alt [options]
-    interlex dbsetup [options]
-    interlex debug [options]
+    interlex dbsetup [options] [<database>]
+    interlex debug [options]   [<database>]
     interlex sync [options]
     interlex post ontology [options] <ontology-filename> ...
     interlex post triples  [options] (<reference-name> <triples-filename>) ...
@@ -24,7 +24,7 @@ Usage:
 
 Commands:
     api             start a server running the api endpoint (WARNING: OLD)
-    uri             start a server for uri.interlex.org
+    uri             start a server for uri.interlex.org connected to <database>
     curies          start a server for curies.interlex.org
     alt             start a server for alternate interlex webservices
 
@@ -54,20 +54,23 @@ Examples:
     interlex id -u base -n tgbugs ilxtr:brain
 
 Options:
-    -u --user=USER          the user whose data should be returned [default: from-api-key]
-    -n --names-user=NUSER   the user whose naming conventions should be used [default: from-api-key]
+    -g --group=GROUP        the group whose data should be returned [default: api]
+    -u --user=USER          alias for --group
+    -n --names-group=NG     the group whose naming conventions should be used [default: api]
 
     -r --readable           user/uris/readable iri/curie
     -l --limit=LIMIT        limit the number of results [default: 10]
 
     -f --input-file=FILE    load an individual file
 
+    -p --port=PORT          manually set the port to use in the context of the current command
     -o --local              run against local
-    -g --gunicorn           run against local gunicorn
+    -n --gunicorn           run against local gunicorn
     -d --debug              enable debug mode
 
 """
 
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 import requests
@@ -87,14 +90,34 @@ def main():
     args = docopt(__doc__, version='interlex 0.0.0')
     print(args)
     if args['post']:
-        user = args['--user']
-        if user == defaults['--user']:
-            raise NotImplemented('no api keys yet')
+        if args['--group'] == defaults['--group']:
+            # NOTE: there is a security consideration here
+            # if someone obtains a random api key then they
+            # can use it to retrieve the user who it belongs to
+            # of course they would be able to do this anyway by
+            # just trying multiple users, other groups don't seem
+            # to worry about this, since if you lost an api key
+            # you are in trouble anyway
+            if args['--user']:
+                group = args['--user']
+            else:
+                raise NotImplemented('right now we still need a user')
+        elif args['--user']:
+            raise AssertionError('Only one of --user or --group may be provided.')
+        else:
+            group = args['--group']
+
+        # FIXME obviously allowing the group name as the default password is unspeakably dump
+        api_key = os.environ.get('INTERLEX_API_KEY', group)  # FIXME
+        headers = {'Authorization': 'Bearer ' + api_key}
         if args['--local']:
             host = f'localhost:{port_uri}'
             scheme = 'http'
         elif args['--gunicorn']:
             host = f'localhost:8606'
+            scheme = 'http'
+        elif args['--port']:
+            host = 'localhost:' + args['--port']
             scheme = 'http'
         else:
             host = 'uri.olympiangods.org'
@@ -102,7 +125,7 @@ def main():
 
         if args['curies']:  # FIXME post should smart update? or switch to patch?
             filename = args['<curies-filename>']
-            url = f'{scheme}://{host}/{user}/curies/'  # https duh
+            url = f'{scheme}://{host}/{group}/curies/'  # https duh
             #printD(url, args)
             # FIXME /curies redirects to get...
             if filename:
@@ -120,16 +143,16 @@ def main():
                     else:
                         raise TypeError(f'Don\'t know how to handle {ext} files')
 
-                resp = requests.post(url, json=data)
+                resp = requests.post(url, json=data, headers=headers)
             else:
-                resp = requests.post(url, json=uPREFIXES)
+                resp = requests.post(url, json=uPREFIXES, headers=headers)
 
             printD(resp.status_code, resp.text)
 
         elif args['ontology']:
             for filename in args['<ontology-filename>']:
                 if filename:
-                    url = f'{scheme}://{host}/{user}/upload'  # use smart endpoint
+                    url = f'{scheme}://{host}/{group}/upload'  # use smart endpoint
                     mimetypes = {'ttl':'text/turtle'}  # TODO put this somewhere more practical
                     path = Path(filename).resolve().absolute()
                     mimetype = mimetypes.get(path.suffix[1:], None)
@@ -138,7 +161,8 @@ def main():
                         data = {'create':True}
                         resp = requests.post(url,
                                              data=data,
-                                             files=files,)
+                                             files=files,
+                                             headers=headers)
                 printD(resp.text)
 
         elif args['triples']:
@@ -149,8 +173,8 @@ def main():
             ontology_iri = args['<rdf-iri>']
             u = urlparse(ontology_iri)
             j = {'name':ontology_iri}
-            url = f'{scheme}://{host}/{user}/ontologies/' + u.path[1:]
-            resp = requests.post(url, json=j)
+            url = f'{scheme}://{host}/{group}/ontologies/' + u.path[1:]
+            resp = requests.post(url, json=j, headers=headers)
             printD(resp.text)
 
 
@@ -159,7 +183,7 @@ def main():
         from interlex.uri import run_uri
         from interlex.load import TripleLoader
         from interlex.dump import Queries as _Q
-        app = run_uri()
+        app = run_uri(database=args['database'])
         db = SQLAlchemy(app)
         session = db.session
         queries = _Q(session)
@@ -182,7 +206,7 @@ def main():
     elif args['dbsetup']:
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
-        app = run_uri()
+        app = run_uri(database=args['<database>'])
         db = SQLAlchemy(app)
         session = db.session
         sql_verify_user = (
@@ -191,8 +215,7 @@ def main():
         )
         args_verify_user = dict(id=1,
                              orcid='https://orcid.org/0000-0002-7509-4801',
-                             email='tgbugs@gmail.com',
-                             email_primary=True)
+                             email='tgbugs@gmail.com', email_primary=True)
         session.execute(sql_verify_user, args_verify_user)
         session.commit()
         embed()
@@ -204,7 +227,7 @@ def main():
             port = port_api
         elif args['uri']:
             from interlex.uri import run_uri, __file__
-            app = run_uri(echo=args['--debug'])
+            app = run_uri(echo=args['--debug'], database=args['<database>'])
             port = port_uri
         elif args['curies']:
             from interlex.core import run_curies, __file__
@@ -215,6 +238,7 @@ def main():
             app = run_alt()
             port = port_alt
 
+        port = args['--port'] if args['--port'] else port
         setPS1(__file__)
         app.debug = args['--debug']
         app.run(host='localhost', port=port, threaded=True)  # FIXME gunicorn

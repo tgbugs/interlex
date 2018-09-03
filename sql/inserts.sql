@@ -62,6 +62,11 @@ INSERT INTO groups (own_role, groupname)
                          'anita',
                          'maryann',
 
+                         'api',
+                         'read',
+                         'readonly',
+                         'read-only',
+
                          'swagger',
                          'swaggerui',
                          'readable',

@@ -11,7 +11,8 @@ import sqlalchemy as sa
 from pyontutils.core import rdf, owl, OntId
 from pyontutils.utils import TermColors as tc
 from interlex.exc import hasErrors, LoadError, NotGroup
-from interlex.core import printD, permissions_sql, bnodes, makeParamsValues, IdentityBNode
+from interlex.auth import Auth
+from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode
 from IPython import embed
 
 def rapper(serialization, input='rdfxml', output='ntriples'):
@@ -62,6 +63,7 @@ def timestats(times):
     if 'commit_end' in times:
         deltas['commit'] = times['commit_end'] - times['commit_begin']
     return deltas
+
 
 # TODO verify that the identity of a graph is the same as the identity of the
 # parts that we break it into here, it should be, given the algorithem we use
@@ -171,7 +173,7 @@ class GraphIdentities:
             try:
                 extra = next(subjects)
                 raise LoadError('More than one owl:Ontology in this file!\n'
-                                '{self.ontology_iri}\n{extra}\n')
+                                '{self.ontology_iri}\n{extra}\n', 409)
             except StopIteration:
                 pass
 
@@ -541,14 +543,27 @@ class BasicDB:
 
     def __new__(cls, session):
         cls.process_type = cls.__name__
+        cls.auth = Auth(session)
         cls.session = session
         cls.execute = session.execute
         cls.__new__ = cls.___new__
         return cls
 
-    def __init__(self, group, user):
+    def __init__(self, group, user, token, read_only=True):  # safe by default
+        # FIXME make sure that each on of these is really its own instance and never reused
+        # so that there is no chance of letting users spoof as using a race condition
+        # it looks like the __new__ functionality is used to bind per session, but make sure
+        self.read_only = read_only
+        auth_group, auth_user = self.auth.decodeTokenSimple(token)
+        if group != auth_group or user != auth_user:
+            g = f'{group} {auth_group} {user} {auth_user}'
+            raise ValueError('FIXME this needs to be a logged auth consistency error {g}')
         self.group = group
         self.user = user
+        #self.user_role = 'lol'  # TODO this works but testing
+        # read only does not need to be enforced in the database becuase user role
+        # is the ultimate defense and that _is_ in the database
+        # it is more of a convenience reminder
 
     @property
     def group(self):
@@ -571,10 +586,16 @@ class BasicDB:
     def user(self, value):
         if hasattr(self, '_user'):
             raise ValueError(f'{self} has already set user!')
-        id, role = self.check_group(value)
+        id, role = self.check_user(value)
         self._user = value
         self.user_id = id
         self.user_role = role
+
+    def check_user(self, user):
+        if self.read_only and user is None:
+            return None, None
+        else:
+            return self.check_group(user)
 
     def check_group(self, group):
         if group not in self._cache_groups:
@@ -589,8 +610,59 @@ class BasicDB:
         else:
             return self._cache_groups[group]
 
+    @property
+    def read_only(self):
+        return self._read_only
 
-class TripleLoader(BasicDB):
+    @read_only.setter
+    def read_only(self, value):
+        # load_logger.error
+        # sec critical this function should not be modified
+        # to prevent any long range affects from sneeking in here
+        if hasattr(self, '_read_only'):
+            raise ValueError(f'{self} read_only can only be set in __init__!')
+
+        self._read_only = value
+
+    @property
+    def user_role(self):
+        return self._user_role
+
+    @user_role.setter
+    def user_role(self, value):
+        # load_logger.error
+        # sec critical this function should not be modified
+        # to prevent any long range affects from sneeking in here
+        if hasattr(self, '_user_role'):
+            raise ValueError(f'{self} user_role can only be set in __init__!')
+
+        self._user_role = value
+
+    @property
+    def user_id(self):
+        return self._user_id
+
+    @user_id.setter
+    def user_id(self, value):
+        # load_logger.error
+        # sec critical this function should not be modified
+        # to prevent any long range affects from sneeking in here
+        if hasattr(self, '_user_id'):
+            raise ValueError(f'{self} user_id can only be set in __init__!')
+
+        self._user_id = value
+
+
+
+
+class UnsafeBasicDB(BasicDB):
+    def __init__(self, group, user, read_only=True):
+        self.read_only = read_only
+        self.group = group
+        self.user = user
+
+
+class TripleLoader(UnsafeBasicDB):
     scheme = 'http'  # sadface
     _cache_names = set() # FIXME make sure that reference hosts don't get crossed up
     _cache_identities = set()
@@ -602,7 +674,7 @@ class TripleLoader(BasicDB):
         'nt':'nt',
     }
     def __init__(self, group, user, reference_name, reference_host):
-        super().__init__(group, user)
+        super().__init__(group, user, read_only=False)  # FIXME WARNING
         self.debug = False
         self.preinit()
         printD(group, user, reference_name, reference_host)
@@ -876,7 +948,7 @@ class TripleLoader(BasicDB):
         if self._format is None:
             if self.extension not in self.formats and self.mimetype not in self.formats:
                 # TODO use ttlfmt parser attempter
-                raise LoadError(f"Don't know how to parse either {self.extension} or {self.mimetype}")
+                raise LoadError(f"Don't know how to parse either {self.extension} or {self.mimetype}", 415)
             elif self.extension not in self.formats:
                 self._format = self.formats[self.mimetype]
             else:
@@ -891,7 +963,7 @@ class TripleLoader(BasicDB):
             ident = IdentityBNode(self.serialization).identity
             if self.ident_exists(ident):
                 # TODO user options for what to do about qualifiers
-                raise LoadError(f'The exact file dereferenced to by {self.name} is already in InterLex')
+                raise LoadError(f'The exact file dereferenced to by {self.name} is already in InterLex', 202)
             self._serialization_identity = ident
             self._transaction_cache_identities.add(ident)
 
@@ -941,7 +1013,7 @@ class TripleLoader(BasicDB):
                 self.reference_name_in_db = False
                 printD('WARNING reference name has not been created yet!\n')
         elif self._reference_name != value:
-            raise LoadError('cannot change reference names')
+            raise LoadError('cannot change reference names', 409)
 
     def batch_ident_check(self, *idents):
         sql = 'SELECT identity FROM identities WHERE identity IN '
@@ -1110,6 +1182,7 @@ class InterLex(TripleLoader):
         # we just add triples back in a new transaction
         # the joys of invariance
 
+
 class FileFromBase(TripleLoader):
     @property
     def extension(self):
@@ -1119,9 +1192,10 @@ class FileFromBase(TripleLoader):
 
         return self._extension
 
+
 class FileFromFile(FileFromBase):
-    def __init__(self, group='tgbugs', user='tgbugs',
-                 reference_name=None, reference_host='uri.interlex.org'):
+    def __init__(self, group, user, reference_name=None,
+                 reference_host='uri.interlex.org'):
         if reference_name is None:
             # FIXME the way this is implemented will be one way to check to make
             # sure that users/groups match the reference_name?
@@ -1148,6 +1222,7 @@ class FileFromFile(FileFromBase):
                 self._serialization = f.read()
 
         return self._serialization
+
 
 class FileFromIRI(FileFromBase):
     maxsize_mbgz = 5
@@ -1218,10 +1293,20 @@ class FileFromIRI(FileFromBase):
 
         self.times['fetch_begin'] = time.time()
         size_mb = int(self.header['Content-Length']) / 1024 ** 2
+
+        # unauthorized people can get here because we don't know the size of the payload apriori
+        # HOWEVER IF they control the server that hosts the IRI they can spoof the content length
+        # header so we need to check and make sure that they have not lied to us
+        # obviously if we have someone with admin in base doing this we are toast anyway but
+        # sometimes it might also happen by accident because someone misconfigured their server
+        permissions_sql = 'SELECT * from user_permissions WHERE user_id = idFromGroupname(:group)'
         admin_check_sql = permissions_sql + " AND group_id = 0 AND user_role = 'admin'"
-        printD(admin_check_sql)
+        admin_check_args = dict(group=self.user)
+
+        printD(admin_check_sql, admin_check_args)
         try:
-            indeed = next(self.session.execute(admin_check_sql, dict(group=self.user)))
+            indeed = next(self.session.execute(admin_check_sql, admin_check_args))
+            print(indeed)
             is_admin = True
         except StopIteration:
             is_admin = False
@@ -1231,7 +1316,7 @@ class FileFromIRI(FileFromBase):
         if 'Content-Encoding' in self.header and self.header['Content-Encoding'] == 'gzip':
             if size_mb > self.maxsize_mbgz:
                 if not is_admin:
-                    raise LoadError(self.lfmessage)  # TODO error handling
+                    raise LoadError(self.lfmessage, 413)  # TODO error handling
             resp = requests.get(self.name)
             size_mb = len(resp.content) / 1024 ** 2
         else:
@@ -1239,7 +1324,7 @@ class FileFromIRI(FileFromBase):
 
         if size_mb > self.maxsize_mb:
             if not is_admin:
-                raise LoadError(self.lfmessage)
+                raise LoadError(self.lfmessage, 413)
 
         if resp is None:
             resp = requests.get(self.name)
@@ -1324,7 +1409,7 @@ class FileFromPost(FileFromIRI):
                                     'attached to a reference_name and `{"create":true}` '
                                     'was not set.\n'
                                     'Please set create = true or POST directly to '
-                                    'the desired endpoint (reference_name).')
+                                    'the desired endpoint (reference_name).', )
                     self.reference_name_in_db = False
                 printD('WARNING reference name has not been created yet!\n')
 
@@ -1334,8 +1419,6 @@ class FileFromPost(FileFromIRI):
     def reference_name(self, value):
         super().reference_name_setter(value)
 
+
 class FileFromVCS(TripleLoader):
     pass
-
-
-

@@ -2,7 +2,7 @@ import os
 import json
 import rdflib
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 import sqlalchemy as sa
 from flask import Flask, request, redirect, url_for, abort
 from flask_restplus import Api, Resource, Namespace, fields
@@ -14,10 +14,11 @@ from pyontutils.ttlser import CustomTurtleSerializer
 from pyontutils.htmlfun import table_style, details_style, render_table
 from pyontutils.qnamefix import cull_prefixes
 from interlex.exc import LoadError, NotGroup
+from interlex.auth import Auth
 from interlex.core import printD
-from interlex.core import dbUri, permissions_sql, diffCuries
+from interlex.core import dbUri, diffCuries
 from interlex.core import RegexConverter, make_paths, makeParamsValues
-from interlex.load import FileFromIRI, FileFromPost, TripleLoader, BasicDB
+from interlex.load import FileFromIRI, FileFromPost, TripleLoader, BasicDB, UnsafeBasicDB
 from interlex.dump import TripleExporter, Queries
 from IPython import embed
 
@@ -41,7 +42,7 @@ class TripleRender:
             return out, 200, {'Content-Type': mimetype}
         except KeyError:
             print(mimetype)
-            return abort(400)
+            return abort(415)
 
     def iri_selection_logic(self):  # TODO
         """ For a given set of conversion rules (i.e. from a user)
@@ -79,7 +80,7 @@ class TripleRender:
 
     def ttl(self, request, mgraph, user, id, object_to_existing, title):
         graph = mgraph.g
-        nowish = datetime.utcnow()
+        nowish = datetime.utcnow()  # request doesn't have this
         epoch = nowish.timestamp()
         iso = nowish.isoformat()
         ontid = rdflib.URIRef(f'http://uri.interlex.org/{user}'
@@ -122,7 +123,7 @@ def uriStructure():
         'readable':            ['<word>'],
         'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
         '<epoch_verstr_id>':   versioned_ids + version_compare,
-        'ontologies':          [None, '<path:ont_path>'] + intermediate_filename,  # TODO /ontologies/external/<iri> ? how? where?
+        'ontologies':          [2, '<path:ont_path>'] + intermediate_filename,  # TODO /ontologies/external/<iri> ? how? where?
         # TODO distinguish between ontology _files_ and 'ontologies' which are the import closure?
         # ya, identified vs unidentified imports, owl only supports unidentified imports
         '<path:ont_path>':     intermediate_filename,  # FIXME this would seem to only allow a single extension?
@@ -143,7 +144,7 @@ def uriStructure():
         'qualifiers':          ['<qualifier>'],
     }
     node_methods = {'curies_':['GET', 'POST'],
-                    'upload':['POST'],
+                    'upload':['HEAD', 'POST'],
                     #'<prefix_iri_curie>':[],  only prefixes can be updated...?
                     ilx_pattern:['GET', 'PATCH'],
                     '<word>':['GET', 'PATCH'],
@@ -153,6 +154,39 @@ def uriStructure():
                     '<filename_terminal>.<extension>':['GET', 'POST'],
     }
     return ilx_pattern, parent_child, node_methods
+
+
+def getBasicDB(self, group, request):
+    #printD(f'{group}\n{request.method}\n{request.url}\n{request.headers}')
+    try:
+        auth_group, auth_user, scope, auth_token = self.auth.authenticate_request(request)
+    except self.auth.ExpiredTokenError:
+        return f'Your token has expired, please get a new one at {self.link_to_new_token}', 401
+    except self.auth.AuthError:
+        return 'Your token could not be verified.', 400  # FIXME pull the message up?
+
+    if request.method in ('HEAD', 'GET'):
+        db = self.getBasicInfoReadOnly(group, auth_user)
+
+    else:
+
+        if auth_token:
+            if auth_group != group:
+                return f'This token is not valid for group {group}', 401
+
+            if not auth_user:  # this should be impossible ...
+                if group == 'api':  # should this be hardcoded? probably
+                    return 'FIXME what do we want to do here?', 401
+                else:
+                    # not 403 because this way we are ignorant by default
+                    # we dont' have to wonder whether the url they were
+                    # looking for was private or not (most shouldn't be)
+                    return abort(404)
+
+        db = self.getBasicInfo(group, auth_user, auth_token)
+
+    return db, auth_user
+
 
 def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
     app = Flask('InterLex uri server')
@@ -181,34 +215,53 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
     def basic(function):
         @wraps(function)
         def basic_checks(self, *args, **kwargs):
-            # TODO auth goes here
-            user = kwargs['user']
-            db = self.getBasicInfo(user, user)
-            if db is None:
-                return abort(404)
-            return function(self, *args, **kwargs, db=db)
+            try:
+                group = kwargs['user']  # FIXME really group
+            except KeyError as e:
+                raise KeyError('remember that basic needs kwargs not args!') from e
+            if 'db' not in kwargs:  # being called via super() probably
+                maybe_db, _ = getBasicDB(self, group, request)
+                if not isinstance(maybe_db, BasicDB):
+                    if maybe_db is None:
+                        return abort(404)
+                    else:
+                        return maybe_db
+                else:
+                    db = maybe_db
+
+                kwargs['db'] = db
+
+            return function(self, *args, **kwargs)
 
         return basic_checks
 
     def basic2(function):
         @wraps(function)
         def basic2_checks(self, *args, **kwargs):
-            # TODO auth goes here
-            user = kwargs['user']
-            if 'other_user' in kwargs:
-                other_user = kwargs['other_user']
-            elif 'other_user_diff' in kwargs:
-                other_user = kwargs['other_user_diff']
+            group = kwargs['user']  # FIXME really group
+            if 'db' not in kwargs:  # being called via super() probably
+                maybe_db, auth_user = getBasicDB(self, group, request)
+                if not isinstance(maybe_db, BasicDB):
+                    if maybe_db is None:
+                        return abort(404)
+                    else:
+                        return maybe_db
+                else:
+                    db = maybe_db
 
-            db = self.getBasicInfo(user, user)
-            db2 = self.getBasicInfo(other_user, other_user)
-            if db is None:
-                return abort(404)
+                kwargs['db'] = db
+
+            if 'other_user' in kwargs:
+                other_group = kwargs['other_user']
+            elif 'other_user_diff' in kwargs:
+                other_group = kwargs['other_user_diff']
+
+            db2 = self.getBasicInfoReadOnly(other_group, auth_user)
             if db2 is None:
                 return abort(404)
 
             db.other = db2
-            return function(self, *args, **kwargs, db=db)
+            return function(self, *args, **kwargs)
 
         return basic2_checks
 
@@ -217,18 +270,39 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
         reference_host = None
         def __init__(self):
             self.session = self.db.session
+            self.auth = Auth(self.session)
             effi = type('FileFromIRI', (FileFromIRI,), {})
             self.FileFromIRI = effi(self.session)  # FIXME need a way to pass ref host?
             ffp = type('FileFromPost', (FileFromPost,), {})
             self.FileFromPost = ffp(self.session)
             bdb = type('BasicDB', (BasicDB,), {})
+            ubdb = type('UnsafeBasicDB', (UnsafeBasicDB,), {})
             self.BasicDB = bdb(self.session)
+            self.UnsafeBasicDB = ubdb(self.session)
             self.queries = Queries(self.session, self)
 
-        def getBasicInfo(self, group, user):
+        @property
+        def link_to_new_token(self):
+            return 'TODO url_for'
+
+        def getBasicInfo(self, group, user, token):
             try:
-                return self.BasicDB(group, user)
+                return self.BasicDB(group, user, token, read_only=False)
             except NotGroup:
+                return None
+
+        def getBasicInfoReadOnly(self, group, user):
+            """ Read only access means that any identifiers that are provisional
+                cannot be seen by people who do not have edit acces. This is intention,
+                and is an attempt to allow editors to work in their own space without
+                risking 'identifier escape' """
+            # this code is intentionally reproduced so that the function name
+            # stands out to the (human) reader
+            try:
+                # we keep the user for provenance and auditing purposes
+                return self.UnsafeBasicDB(group, user, read_only=True)
+            except NotGroup:
+                printD('not group?')
                 return None
 
         def getGroupCuries(self, group, epoch_verstr=None):
@@ -280,24 +354,8 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
         @basic
         def ilx(self, user, id, db=None):
             # TODO allow PATCH here with {'add':[triples], 'delete':[triples]}
-            # printD(tc.red('AAAAA'), user, id)
 
             if user != 'base' and user != 'latest':
-                #args = dict(id=id, user=user)
-                #sql = ('SELECT ou.username, t.id FROM interlex_ids as t, org_user_view as ou '
-                       #'WHERE t.id = :id AND ou.username = :user')
-                #sql = ('SELECT id FROM interlex_ids WHERE id = :id UNION '
-                       #'SELECT groups AS g JOIN users AS u ON g.id = u.id WHERE g.groupname = :user UNION '
-                       #'SELECT groups AS g JOIN orgs AS o ON g.id = o.id WHERE g.groupname = :user')
-                # TODO it seems WAY more efficient to add a 'verfied' column to groups
-                #sql = ('SELECT id FROM interlex_ids WHERE id = :id UNION '
-                       # doesn't work because doesn't fail on no id
-                       #"SELECT id::text FROM groups WHERE own_role < 'pending' AND groupname = :user")
-                #sql = ('SELECT t.id, g.id FROM interlex_ids AS t, groups AS g '
-                       #'WHERE t.id = :id AND g.validated = TRUE AND g.groupname = :user')
-
-                #sql = ('SELECT t.id, g.id FROM interlex_ids AS t, groups AS g '
-                       #"WHERE t.id = :id AND g.own_role < 'pending' AND g.groupname = :user")
                 sql = 'SELECT id FROM interlex_ids WHERE id = :id'
                 try:
                     res = next(self.session.execute(sql, dict(id=id)))
@@ -345,7 +403,23 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             # owl:Ontology
             # /<user>/ontologies/obo/uberon.owl << this way
             # /<user>/uris/obo/uberon.owl << no mapping to ontologies here
-            return request.path
+            title = f'uris.{user}:{uri_path}'
+            PREFIXES, mgraph = self.getGroupCuries(user)
+            resp = self.queries.getByGroupUriPath(user, uri_path, redirect=False)
+            if not resp:
+                iri = request.url
+                suggestions = ''  # TODO this requires them to have uploaded or we guess the suffix
+                # FIXME content type :/
+                return htmldoc(f'404 error. <b>{user} {uri_path}</b> has not been mapped to an InterLex id!\n{suggestions}',
+                               title='404 ' + title), 404
+
+            else:
+                object_to_existing = self.queries.getResponseExisting(resp, type='o')
+
+                te = TripleExporter()
+                _ = [mgraph.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
+
+                return tripleRender(request, mgraph, user, id, object_to_existing)
 
         # TODO POST PUT PATCH
         # just overload post? don't allow changing? hrm?!?!
@@ -362,7 +436,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
                 ok, to_add, existing, message = diffCuries(PREFIXES, newPrefixes)
                 # FIXME this is not inside a transaction so it could fail!!!!
                 if not ok:
-                    return message, 400
+                    return message, 409
 
                 values = tuple((cp, ip) for cp, ip in to_add.items())
 
@@ -375,7 +449,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
                 try:
                     resp = self.session.execute(sql, params)
                     self.session.commit()
-                    return message, 200
+                    return message, 201
                 except sa.exc.IntegrityError as e:
                     self.session.rollback()
                     return f'Curie exists\n{e.orig.pgerror}', 409  # conflict
@@ -477,21 +551,27 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             # we should be able to track file 'renames' without too much trouble
             printD(user, filename, extension, ont_path)
             group = user  #  FIXME
-            user = 'tgbugs'  # FIXME from api token decryption
-            extension = '.' + extension if extension else ''
-            match_path = os.path.join(ont_path, filename + extension)
-            path = os.path.join('ontologies', match_path)  # FIXME get middle from request?
-            #request_reference_name = request.headers['']
-            reference_name = self.reference_name(group, path)
-            try:
-                loader = self.FileFromIRI(group, user, reference_name, self.reference_host)
-            except NotGroup:
-                return abort(404)
+            user = db.user  # FIXME make sure that the only way that db.user can be set is if it was an auth user
+                            # the current implementation does not gurantee that, probably easiest to pass the token
+                            # again for insurance ...
+            #if user not in getUploadUsers(group):
             printD(request.headers)
+
             if request.method == 'HEAD':
                 # TODO return bound_name + metadata
                 return 'HEAD TODO\n'
             if request.method == 'POST':
+                extension = '.' + extension if extension else ''
+                match_path = os.path.join(ont_path, filename + extension)
+                path = os.path.join('ontologies', match_path)  # FIXME get middle from request?
+                #request_reference_name = request.headers['']
+                #request_reference_name = request.url  # ??
+                reference_name = self.reference_name(group, path)
+                try:
+                    loader = self.FileFromIRI(group, user, reference_name, self.reference_host)
+                except NotGroup:
+                    return abort(404)
+
                 existing = False  # TODO check if the file already exists
                 # check what is being posted
                 #embed()
@@ -575,7 +655,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             # so that queries can be conducted at a point in time
             # sigh dataomic
             # or just give up on the reuseabilty of the query structure?
-            return super().ilx(user, id)
+            return super().ilx(user=user, id=id, db=db)  # have to use kwargs for basic
 
         @basic
         def readable(self, user, epoch_verstr_id, word, db=None):
@@ -702,7 +782,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
         @basic2
-        def curies(self, user, other_user_diff, epoch_verstr_id, prefix_iri_curie):
+        def curies(self, user, other_user_diff, epoch_verstr_id, prefix_iri_curie, db=None):
             return request.path
 
 
@@ -713,6 +793,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
     class VersionsDiff(Endpoints):
         pass  # TODO
 
+
     @app.before_first_request
     def runonce():
         # FIXME this is a reasonably safe way to make sure that we have a db connection
@@ -721,6 +802,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
         printD(Endpoints.reference_host)
         for group in Queries(db.session, Endpoints).getBuiltinGroups():  # FIXME inelegant way around own_role < 'pending'
             BasicDB._cache_groups[group.groupname] = group.id, group.own_role
+
 
     endpoints = Endpoints()
     versions = Versions()
@@ -764,7 +846,7 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             if 'curies' in nodes:
                 nodes = tuple(nodes[:-2]) + ('curies_',)
                 #printD('terminal nodes', nodes)
-            if nodes == ['', '<user>', 'ontologies', '']:
+            if nodes == ['', '<user>', 'ontologies', '']:  # only at depth 2
                 nodes = tuple(nodes[:-2]) + ('ontologies_',)
                 #printD('terminal nodes', nodes)
             if 'contributions' in nodes:
@@ -819,5 +901,10 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
 
     return app
 
-def run_uri(echo=False):
-    return server_uri(db=SQLAlchemy(), echo=echo)
+def run_uri(echo=False, database=None):
+    if database:
+        dburi = dbUri(db=database)
+    else:
+        dburi = dbUri()
+
+    return server_uri(db=SQLAlchemy(), echo=echo, dburi=dburi)

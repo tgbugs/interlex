@@ -27,12 +27,17 @@ from pyontutils.combinators import annotation
 from interlex.exc import bigError
 from IPython import embed
 
-logger = logging.getLogger('ilx_core')
-logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler()  # FileHander goes to disk
-formatter = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s')  # TODO file and lineno ...
-ch.setFormatter(formatter)
-logger.addHandler(ch)
+def makeSimpleLogger(name):
+    # TODO use extra ...
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()  # FileHander goes to disk
+    formatter = logging.Formatter('[%(asctime)s] - %(levelname)s - %(name)s - %(message)s')  # TODO file and lineno ...
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+    return logger
+
+logger = makeSimpleLogger('ilx_core')
 
 try:
     from misc.debug import TDB
@@ -45,8 +50,6 @@ except ImportError:
     printD = print
 
 ilxr, *_ = makeNamespaces('ilxr')
-
-permissions_sql = 'SELECT * from user_permissions WHERE user_id = idFromGroupname(:group)'
 
 class uri(types.UserDefinedType):
     def __init__(self, uri):
@@ -1020,9 +1023,9 @@ def server_api(db=None, dburi=dbUri()):
 
     return app
 
-def make_paths(parent_child, parent='<user>', options=tuple(), limit=9999):
-    def inner(child, parent):
-        for path in make_paths(parent_child, child, options=options, limit=limit):
+def make_paths(parent_child, parent='<user>', options=tuple(), limit=9999, depth=0):
+    def inner(child, parent, idepth):
+        for path in make_paths(parent_child, child, options=options, limit=limit, depth=idepth):
             #printD('PATH:', path)
             if parent in options:
                 for option in options[parent][:limit]:
@@ -1038,9 +1041,9 @@ def make_paths(parent_child, parent='<user>', options=tuple(), limit=9999):
                 if child in parent_child:  # only branches need to go again
                     todo += (child,)
                 for option in todo:
-                    yield from inner(option, parent)
+                    yield from inner(option, parent, depth + 1)
             else:
-                yield from inner(child, parent)
+                yield from inner(child, parent, depth + 1)
     else:
         if parent in options:
             for option in options[parent][:limit]:
@@ -1048,6 +1051,13 @@ def make_paths(parent_child, parent='<user>', options=tuple(), limit=9999):
                 yield path
         elif parent is None:  # branches that are also terminals
             yield '/'
+        elif parent == depth:
+            # branchers that are also terminals at a given depth
+            # where the depth should be considered as the zero indexed
+            # depth of the empty string following the slash
+            yield '/'
+        elif isinstance(parent, int):
+            pass  # skip other depths
         else:
             path = '/' + parent
             #printD('PATH:', path)

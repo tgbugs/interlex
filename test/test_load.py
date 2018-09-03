@@ -44,7 +44,7 @@ class TestLoader(unittest.TestCase):
         ebns = [os.path.join('http://ontology.neuinfo.org/NIF/ttl', p) for p in paths]
         for name, ebn in list(zip(names, ebns))[::-1]:
             #self.FileFromFile.session.return_value = results
-            fff = self.FileFromFile()
+            fff = self.FileFromFile('tgbugs', 'tgbugs')  # FIXME get a real test user
             setup_ok = fff(name, ebn)
             if setup_ok is not None:
                 raise LoadError(setup_ok)
@@ -55,7 +55,7 @@ class TestLoader(unittest.TestCase):
     def test_nasty(self, first=True):
         import rdflib
         from pyontutils.core import rdf, owl
-        fff = self.FileFromFile()
+        fff = self.FileFromFile('tgbugs', 'tgbugs')  # FIXME
         graph = rdflib.Graph().parse(self.nasty.as_posix(), format='ttl')
         for s in graph[:rdf.type:owl.Ontology]:
             if s.toPython() != self.nastyebn:
@@ -80,7 +80,7 @@ class TestLoader(unittest.TestCase):
     def test_negative(self):
         # TODO test to make sure things fail as expected
         # 0) multiple owl:Ontology sections
-        fff = self.FileFromFile()
+        fff = self.FileFromFile('tgbugs', 'tgbugs')  # FIXME
         setup_ok = fff(self.nasty, self.nastyebn)
         assert setup_ok is not None, 'by default nasty has multiple bound names this should have failed'
         # 1) names do not match
