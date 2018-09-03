@@ -212,12 +212,12 @@ CREATE TYPE qualifier_relations AS ENUM('includes',
 
 CREATE TYPE qualifier_types AS ENUM('group',
                                     'reference_name',  -- aka source qualifier
-                                    'computed'
+                                    'computed',
                                     -- computed and static could be used for things like latest
                                     -- where there is a static rule that is used to generate
                                     -- the triple set and versions are generated on change
                                     -- for the old version...
-                                    'static_create_new_on_version',
+                                    'static_create_new_on_version'
 );
 
 CREATE TABLE identity_relations(
