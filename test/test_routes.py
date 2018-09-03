@@ -9,11 +9,12 @@ def makeTestRoutes(limit=1):
     other_users = 'latest', 'curated', 'bob'
     ilx_patterns = 'ilx_0123456', 'ilx_0090000'
     words = 'isReadablePredicate', 'cookies'
-    versions = '1524344335', '2018-04-01'
+    versions = '1524344335', '2018-04-01'  # FIXME should version alone 404 or return the qualifier?
     filenames = 'brain', 'myOntology', 'your-ontology-123', '_yes_this_works'
     extensions = 'ttl', 'owl', 'n3', 'xml', 'json'
     filenames_extensions = tuple(f + '.' + e for f in filenames for e in extensions)
     pics = 'GO', 'GO:', 'GO:123', 'http://purl.obolibrary.org/obo/GO_'
+    identities = 'i am a tea pot short and stout this is my hash and i am out!',
     ont_paths = 'anatomy', 'anatomy/brain', 'anatomy/stomach', 'methods-core/versions/100'
     uri_paths = ('mouse/labels', 'mouse/labels/', 'mouse/labels/1',
                  'mouse/versions/1',
@@ -34,6 +35,7 @@ def makeTestRoutes(limit=1):
         '<prefix_iri_curie>':pics,
         '<path:uri_path>':uri_paths,
         '<path:ont_path>':ont_paths,
+        '<identity>':identities,
     }
     # make cartesian product of combinations
     routes = make_paths(parent_child, options=options, limit=limit)
@@ -43,7 +45,7 @@ class TestRoutes(unittest.TestCase):
     host='localhost:8505'  # FIXME
     scheme = 'http'
     def test_routes(self):
-        routes = makeTestRoutes()
+        routes = makeTestRoutes()  # up limite here for more tests, 2 is about max reasonable
         # TODO a way to mark expected failures
         urls = [
             'http://localhost:8505/tgbugs/curies/BIRNLEX:796?local=true',
@@ -68,6 +70,6 @@ class TestRoutes(unittest.TestCase):
         except ValueError as e:
             raise AssertionError from e
 
-    def notest_stress(self):
+    def test_stress(self):
         urls = [f"{self.scheme}://{self.host}/base/ilx_{id:0>7}" for id in range(100000,105000)]
         url_blaster(urls, 0, method='get', fail=True)

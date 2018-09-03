@@ -475,9 +475,8 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
                     prefix, *_ = curie.split(':')
                     return f'Unknown prefix {prefix}', 404
                 if 'local' in request.args and request.args['local'].lower() == 'true':
-                    # FIXME super inefficient even with index?
                     sql = ('SELECT ilx_id FROM existing_iris AS e WHERE e.iri = :iri '
-                           'AND (e.group_id = :group_id OR e.group_id = 1)')
+                           'AND (e.group_id = :group_id OR e.group_id = 0)')  # base vs curated
                     try:
                         resp = next(self.session.execute(sql, dict(iri=iri, group_id=db.group_id)))
                         return redirect(url_for(f'Endpoints.ilx /<user>/{ilx_pattern}',
@@ -549,13 +548,13 @@ def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
             # response needs to include warnings about any parts of the file that could not be lifted to interlex
             # TODO for ?iri=external-iri validate that uri_host(external-iri) and /ontologies/... ... match
             # we should be able to track file 'renames' without too much trouble
-            printD(user, filename, extension, ont_path)
+            #printD(user, filename, extension, ont_path)
             group = user  #  FIXME
             user = db.user  # FIXME make sure that the only way that db.user can be set is if it was an auth user
                             # the current implementation does not gurantee that, probably easiest to pass the token
                             # again for insurance ...
             #if user not in getUploadUsers(group):
-            printD(request.headers)
+            #printD(request.headers)
 
             if request.method == 'HEAD':
                 # TODO return bound_name + metadata
