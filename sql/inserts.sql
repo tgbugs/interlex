@@ -27,6 +27,7 @@ INSERT INTO groups (groupname) VALUES
        -- orgs
        ('NIF'),
        ('SciCrunch'),
+       ('scibot'),
        ('uberon'),
        ('obo'),
        ('NDA'),
