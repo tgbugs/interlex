@@ -2,7 +2,8 @@ import socket
 from flask import Flask, request, abort
 from flask_sqlalchemy import SQLAlchemy
 from pyontutils.utils import mysql_conn_helper, TermColors as tc
-from pyontutils.core import makeGraph, PREFIXES as uPREFIXES  # FIXME
+from pyontutils.core import makeGraph
+from pyontutils.namespaces import PREFIXES as uPREFIXES  # FIXME
 from interlex.dump import MysqlExport
 from interlex.uri import TripleRender  # FIXME need to move the location of this
 

@@ -101,11 +101,36 @@
   hits nearly 800 rps of 404s and
 
   #+BEGIN_SRC bash
-    for id in {0100000..0120000};
+    for id in {0100000..0101000};
     do echo -e "http://localhost:8606/base/ilx_${id}";
-    done | xargs -L 1 -P 50 curl -s > /dev/null
+    done | xargs -L 1 -P 100 curl -s > /dev/null
   #+END_SRC
   
   hits 180 rps running guni and db on the same server with 8 workers
+  (when requesting from not the server)
   hits 140 rps running guni and db on the same server with 4 workers
   
+  tornado seems pretty fast for 8 as well? who knows
+  
+  measuring with =time= from both the server and a remote shows that
+  we are hitting between 100 and 140 rps
+
+  who knows, maybe a materialized memory view would help for some of this,
+  though somehow I think the issue is probably in the python
+  
+  pypy3 with sync worker has roughly the same performance, gevent is monstrously slow
+  gthread is about 20 rps slower than sync (1s over 1k requests), sync can get up to
+  ~150rps, don't forget the cold boot effect on the first run which adds a second to everything
+  eventlet is about ~12rps or so slower than sync
+  (all for 8 workers, 4 workers is ~25rps slower for sync, 6 workers for sync seems
+  to get fairly close to performance with 8 and the total cpu usage is fairly close as well)
+  tornado with 6 workers seems to push the limits and is a bit faster than sync at ~155rps
+  taking it to 8 shows a slowdown to ~145 rps 4 workers drops it to 133rps 5 hits 150rps
+  so it seems that tornado with 6 is about the best for pypy3
+  
+  pypy3 clearly faster with tornado than anything running 3.6, bonus is that rdflib will
+  be way faster too if we can get the memory leak during serialization worked out
+  
+  most of the pypy3 numbers are tainted by the fact that they were tested from the server
+  remotely there seems to be some cycling in the cpu usage, not sure why, but tornado at 8
+  seems like the best setup, eventlet might be ok too, more systematic testing would be needed
