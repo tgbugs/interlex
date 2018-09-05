@@ -68,4 +68,44 @@
   1. From the working directly run =nosetests=
      (you may need to install it first e.g. via =pipenv install nose=)
      NOTE: this will run stress tests.
+* Performance notes
+  On =orpheus= the primary bottleneck seems to be the number of gunicorn workers.
+  For total failures to respond in within 5 seconds when confronted 8 workers
+  set at 50hz full blast. What is very strange is that the same set of failures
+  shows up for every worker on output, so I think something is funky with how
+  errors are getting passed back out. A different set do fail when looking at the
+  printout. HyperThreading doesn't seem to help here. Load seems split evenly between
+  the guni workers and postgres. Failures seem to happen in bursts at higher guni worker
+  counts.
+  | workers | avg failure % | cpu % sat all cores | effective rate Hz |
+  |---------+---------------+---------------------+-------------------|
+  |       2 |            50 |                  25 |                10 |
+  |       4 |             4 |                  60 |                16 |
+  |       4 |             9 |                  60 |                15 |
+  |       5 |             5 |                  80 |                18 |
+  |       8 |           4.5 |                 100 |                19 |
+  |       8 |             4 |                 100 |              19.5 |
+  
+  Checking the logs, the ~20 Hz over 8 workers is indeed translating to about
+  160 requests per second, which still seems really low I should be able to generate
+  way more requests than 20/worker.
+  
+  url_blaster is a ... bad piece of code.
+  
+  #+BEGIN_SRC bash
+    for id in {0100000..0120000};
+    do echo -e $id;
+    done | xargs -P 50 -r -n 1 curl -s "http://localhost:8606/base/ilx_${id}" > /dev/null
+  #+END_SRC
+  
+  hits nearly 800 rps of 404s and
 
+  #+BEGIN_SRC bash
+    for id in {0100000..0120000};
+    do echo -e "http://localhost:8606/base/ilx_${id}";
+    done | xargs -L 1 -P 50 curl -s > /dev/null
+  #+END_SRC
+  
+  hits 180 rps running guni and db on the same server with 8 workers
+  hits 140 rps running guni and db on the same server with 4 workers
+  

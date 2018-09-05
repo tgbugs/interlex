@@ -1,6 +1,7 @@
 import rdflib
-from pyontutils.core import check_value, NIFRID, ilxtr, definition
+from pyontutils.core import check_value
 from pyontutils.utils import TermColors as tc
+from pyontutils.namespaces import NIFRID, ilxtr, definition
 from pyontutils.combinators import annotation
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex.exc import ShouldNotHappenError

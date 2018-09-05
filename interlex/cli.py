@@ -75,7 +75,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 import requests
 from pyontutils.utils import setPS1
-from pyontutils.core import PREFIXES as uPREFIXES
+from pyontutils.namespaces import PREFIXES as uPREFIXES
 from interlex.core import printD, InterLexLoad
 from IPython import embed
 

@@ -981,7 +981,7 @@ class TripleLoader(UnsafeBasicDB):
             try:
                 if self.format == 'xml':
                     data = rapper(self.serialization)
-                    self._graph.parse(data=data, format='nt')
+                    self._graph.parse(data=data, format='nt')  # FIXME this destroys any file level prefixes
                 else:
                     self._graph.parse(data=self.serialization, format=self.format)
             except TypeError as e:

@@ -69,7 +69,3 @@ class TestRoutes(unittest.TestCase):
                 pass
         except ValueError as e:
             raise AssertionError from e
-
-    def test_stress(self):
-        urls = [f"{self.scheme}://{self.host}/base/ilx_{id:0>7}" for id in range(100000,105000)]
-        url_blaster(urls, 0, method='get', fail=True)
