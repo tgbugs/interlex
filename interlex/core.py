@@ -97,8 +97,8 @@ def makeParamsValues(*value_sets, constants=tuple()):
 
         def valueCheck(self, value):
             if isinstance(value, dict):
-                value = hash(frozenset((k, tuple(self.valueCheck(e) for e in v)
-                                        if isinstance(v, list)
+                value = hash(frozenset((k, self.valueCheck(v)
+                                        if isinstance(v, list) or isinstance(v, dict)
                                         else v)
                                         for k, v in value.items()))
             elif isinstance(value, list):
