@@ -1,6 +1,6 @@
 import unittest
 from pyontutils.utils import injective_dict
-from interlex.core import diffCuries
+from interlex.core import diffCuries, makeParamsValues
 
 class TestDiffCuries(unittest.TestCase):
     def test_value_bound(self):
@@ -57,3 +57,23 @@ class TestDiffCuries(unittest.TestCase):
         print(out)
         ok, toAdd, existing, message = out
         assert out[:-1] == expect[:-1], f'\n{out}\n{expect}'
+
+
+class TestMakeParamsValues(unittest.TestCase):
+    def test_dict(self):
+        list(makeParamsValues(({'hello':'world'},)))
+
+    def test_list(self):
+        list(makeParamsValues((['hello', 'world'],)))
+
+    def test_dl(self):
+        list(makeParamsValues(({'hello':['world']},)))
+
+    def test_ld(self):
+        list(makeParamsValues(([{'hello':'world'}],)))
+
+    def test_dd(self):
+        list(makeParamsValues(({'hello':{'hello':'world'}},)))
+
+    def test_ll(self):
+        list(makeParamsValues((['hello', ['world']],)))

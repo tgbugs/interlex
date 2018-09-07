@@ -95,15 +95,21 @@ def makeParamsValues(*value_sets, constants=tuple()):
             self.counter = 0
             self.value_to_name = {}
 
-        def __call__(self, value):
+        def valueCheck(self, value):
             if isinstance(value, dict):
-                value = hash(frozenset((k, tuple(v)
+                value = hash(frozenset((k, tuple(self.valueCheck(e) for e in v)
                                         if isinstance(v, list)
                                         else v)
-                                        for v in value.items()))
+                                        for k, v in value.items()))
             elif isinstance(value, list):
-                value = tuple(value)
+                value = tuple(self.valueCheck(e) for e in value)
+            else:
+                pass
 
+            return value
+
+        def __call__(self, value):
+            value = self.valueCheck(value)
             if value in self.value_to_name:
                 return self.value_to_name[value]
             else:
