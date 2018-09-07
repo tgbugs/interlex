@@ -98,6 +98,8 @@ def makeParamsValues(*value_sets, constants=tuple()):
         def __call__(self, value):
             if isinstance(value, dict):
                 value = hash(frozenset(value.items()))
+            elif isinstance(value, list):
+                value = tuple(value)
 
             if value in self.value_to_name:
                 return self.value_to_name[value]
