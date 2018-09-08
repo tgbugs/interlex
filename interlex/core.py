@@ -164,7 +164,11 @@ class FakeSession:
     def rollback(self):
         printD('Fake rollback')
 
+
 class IdentityBNode(rdflib.BNode):
+    # TODO this requries a new serialization rule which 'dismbiguates'
+    # subgraphs with the same identity that appear as an object in
+    # different triples
     """ An identity blank node is a blank node that is identified by
         the output of some identity function on the subgraph that it
         identifies. IBNodes do not need to be linked into quads for
