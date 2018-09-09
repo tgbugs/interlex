@@ -30,7 +30,7 @@ $$
         RETURN QUERY
         WITH graph AS (
         SELECT t.s, t.s_blank, t.p, t.o,
-                t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity
+               t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity
         FROM triples AS t JOIN existing_iris AS e
         ON t.s = iri OR t.s = baseuri
         WHERE e.ilx_id = ilx_id_triples.ilx_id
@@ -54,6 +54,43 @@ $$ language plpgsql;
 --
 
 SELECT * FROM ilx_id_triples('0101431');
+
+--
+
+-- a bad query
+SELECT * FROM (SELECT distinct(s) FROM triples) AS t_s
+    JOIN triples AS t_t ON t_s.s = t_t.s AND t_t.subgraph_identity IS NULL
+    JOIN triples AS t_b ON t_s.s = t_b.s AND t_b.subgraph_identity IS NOT NULL
+    JOIN triples as t_g ON t_b.subgraph_identity = t_g.subgraph_identity
+    LIMIT 20;
+
+select * from triples
+       where s::text like '%ilx_0101431'
+       or s in (select iri from existing_iris where ilx_id = '0101431')
+       and subgraph_identity is null
+       union
+       select * from triples
+       where subgraph_identity in (select subgraph_identity from triples
+                                          where s in (select iri from existing_iris where ilx_id = '0101431')
+                                          and subgraph_identity is not null);
+--
+
+-- subgraph expansion
+select s, subgraph_identity from triples where s is not null and subgraph_identity is not null;
+
+select t_s.s,
+       t_s.p, t_b.p,
+       t_b.o, t_b.o_lit,
+       t_b.o_blank,
+       t_b.subgraph_identity
+       -- substring(t_b.subgraph_identity, 0, 8)
+       -- t_b.o_blank::text || t_b.subgraph_identity::text
+       from triples as t_b
+       join triples as t_s
+            on t_b.subgraph_identity = t_s.subgraph_identity
+            and t_s.s is not null
+       where t_b.s_blank is not null
+       order by t_s.s;
 
 --
 
