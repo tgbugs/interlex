@@ -476,7 +476,7 @@ CREATE UNIQUE INDEX un__triples__s_blank_p_o_lit_lang_md5
 
 CREATE UNIQUE INDEX un__triples__s_p_o_blank ON triples
        (uri_hash(s), uri_hash(p), o_blank, subgraph_identity)
-       WHERE s IS NOT NULL AND o_lit IS NOT NULL;
+       WHERE s IS NOT NULL AND o_blank IS NOT NULL;
 
 CREATE UNIQUE INDEX un__triples__s_blank_p_o_blank
        ON triples (s_blank, uri_hash(p), o_blank, subgraph_identity)

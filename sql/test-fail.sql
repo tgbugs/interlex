@@ -5,3 +5,17 @@ INSERT INTO existing_iris VALUES ('0000001', 'http://curies.interlex.org/test:',
 UPDATE groups SET own_role = 'admin' WHERE id = idFromGroupname('tgbugs');
 
 INSERT INTO triples (s, p, o_lit, datatype, language) VALUES ('http://ex.org/a', 'http://ex.org/b', 'test', 'http://ex.org/type', 'klingon');
+
+INSERT INTO triples (s, p, o_blank, subgraph_identity) VALUES
+       ('http://test.url/1',
+       'http://test.url/predicate',
+       0,
+       E'\\x47bae44cd84731f1f1566b48bb7f6fe93532fd0466bd24371dd34f89d4e4420d');
+
+INSERT INTO triples (s, p, o_blank, subgraph_identity) VALUES
+       ('http://test.url/1',
+       'http://test.url/predicate',
+       0,
+       E'\\x47bae44cd84731f1f1566b48bb7f6fe93532fd0466bd24371dd34f89d4e4420d');
+
+DELETE FROM triples WHERE s = 'http://test.url/1';
