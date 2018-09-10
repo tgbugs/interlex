@@ -34,7 +34,10 @@ def makeSimpleLogger(name):
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
     ch = logging.StreamHandler()  # FileHander goes to disk
-    formatter = logging.Formatter('[%(asctime)s] - %(levelname)s - %(name)s - %(message)s')  # TODO file and lineno ...
+    formatter = logging.Formatter('[%(asctime)s] - %(levelname)s - '
+                                  '%(name)s - '
+                                  '%(filename)s:%(lineno)d - '
+                                  '%(message)s')
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     return logger
