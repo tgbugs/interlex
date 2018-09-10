@@ -19,6 +19,16 @@ class LoadError(IlxException):
     def external_return(self):
         return self.message, self.code
 
+class NameCheckError(LoadError):
+    pass
+
+class NoCopyingError(NameCheckError):
+    pass
+
+class NoSelfLoadError(NameCheckError):
+    pass
+
+
 def hasErrors(*error_types):
     def decorator(method):
         @wraps(method)

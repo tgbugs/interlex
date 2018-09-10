@@ -10,10 +10,20 @@ import requests
 import sqlalchemy as sa
 from pyontutils.core import rdf, owl, OntId
 from pyontutils.utils import TermColors as tc
-from interlex.exc import hasErrors, LoadError, NotGroup
+from interlex.exc import hasErrors, LoadError, NotGroup, NoCopyingError, NoSelfLoadError
 from interlex.auth import Auth
 from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode
 from IPython import embed
+
+
+def async_load(iri=None, data=None, max_wait=10):
+    async def dispatch():
+        async def sleep_and_return_jobid():
+            await sleep(max_wait)
+
+        async with TaskGroup('', wait=any) as tg:
+            tg.spawn(sleep_and_return_jobid)
+
 
 def rapper(serialization, input='rdfxml', output='ntriples'):
     """
@@ -664,8 +674,6 @@ class BasicDBFactory:
         self._user_id = value
 
 
-
-
 class UnsafeBasicDBFactory(BasicDBFactory):
     def __init__(self, group, user, read_only=True):
         self.read_only = read_only
@@ -712,7 +720,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             self.reference_name = reference_name
 
     def preinit(self):
-        self.times = None
+        self.times = {}
 
         self._name = None
         self._expected_bound_name = None  # TODO multiple bound names can occure eg via versionIRI?
@@ -744,12 +752,18 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         self._safe = False
         printD('exit')
 
+    def check(self, name):
+        """ set the remote name source """
+        self.name = name
+        # TODO expected filesize to determine live or batch load
+        return False
+
     @hasErrors(LoadError)
-    def __call__(self, name, expected_bound_name):
+    def __call__(self, expected_bound_name):
         if not self.times:
             self.times = {'begin':time.time()}
         self.times['init_begin'] = time.time()
-        printD(name, expected_bound_name)
+        printD(self.name, expected_bound_name)
         # FIXME this is a synchronous interface
         # if we want it to be async it will require
         # more work
@@ -763,8 +777,20 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         else:
             self._safe = False
 
-        self.name = name
-        self.expected_bound = expected_bound_name
+        bde_switch = self.bound_database_expected(expected_bound_name)
+
+        if self.name is None:
+            embed()
+
+        stop = bde_switch(self.Loader.bound_name, self.expected_bound_name, expected_bound_name)
+        self.times['init_end'] = time.time()
+        if stop is not None:  # this is redundant but helps with type readability
+            return stop
+
+    def bound_database_expected(self, expected_bound_name):
+        """ This function is a stateful nightmare used to sort out
+            what to do given the expected bound name, the actual bound name
+            and what we have in the database on both of them """
 
         def ___n(value): return value is None
         def NOTN(value): return value is not None
@@ -822,14 +848,8 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             ((NOTN, NOTN, ___n), pairs, 'bound name does not match existing expected bound name'),
             ))
 
-        if self.name is None:
-            embed()
+        return bde_switch
 
-        stop = bde_switch(self.Loader.bound_name, self.expected_bound_name, expected_bound_name)
-        self.times['init_end'] = time.time()
-        if stop is not None:  # this is redundant but helps with type readability
-            return stop
-        
     @hasErrors(LoadError)
     def load(self):
         output = ''
@@ -1195,6 +1215,48 @@ class InterLexFactory(TripleLoaderFactory):
 
 
 class FileFromBaseFactory(TripleLoaderFactory):
+    immediate_loading_limit_mb = 2
+
+    def check(self, name):
+        maybe_error = super().check(name)
+        if maybe_error:
+            return maybe_error
+        else:
+            # size checks!
+            # FIXME we probably shouldn't implicitly call
+            # self.serialization here? or what? maybe ok?
+            # TODO should already be doing these loads in another process
+            # that way if we can just set an actual timeout not a fake size
+            # timeout and just send the job number (which we need to create anyway)
+            return not (self.isGzipped and
+                        self.content_length_mb < 0.5 and
+                        self.actual_length_mb < self.immediate_loading_limit_mb
+                        or
+                        self.content_length_mb < self.immediate_loading_limit_mb)
+
+    @property
+    def isGzipped(self):
+        # overwrite
+        return False
+
+    @property
+    def content_length(self):
+        # overwrite this to e.g. get this from a header
+        return self.actual_length
+
+    @property
+    def content_length_mb(self):
+        return self.content_length / 1024 ** 2
+
+    @property
+    def actual_length(self):
+        # DO NOT TRUST THE HEADER
+        return len(self.serialization)
+
+    @property
+    def actual_length_mb(self):
+        return self.actual_length / 1024 ** 2
+
     @property
     def extension(self):
         if self._extension is None:
@@ -1213,10 +1275,13 @@ class FileFromFileFactory(FileFromBaseFactory):
             reference_name = f'http://uri.interlex.org/{group}/upload/test'
         super().__init__(group, user, reference_name, reference_host)
 
-    def __call__(self, name, expected_bound_name):
+    def check(self, name):
         self.path = Path(name).resolve().absolute()
         name = self.path.as_uri()
-        setup_ok = super().__call__(name, expected_bound_name)
+        return super().check(name)
+
+    def __call__(self, expected_bound_name):
+        setup_ok = super().__call__(expected_bound_name)
         # XXX leaving this as a warning don't pass graph in directly
         # to this class it _should_ fail subclasss TripleLoader if you need that
         # make sure we have populated values before unsetting path
@@ -1241,13 +1306,7 @@ class FileFromIRIFactory(FileFromBaseFactory):
     lfmessage = (f'You appear to by trying to load a file bigger than {maxsize_mb}MB. '
                  'Please get in touch with us if you want this included in InterLex.')
 
-    @hasErrors(LoadError)
-    def __call__(self, name, expected_bound_name=None):
-        if not self.times:
-            self.times = {'begin':time.time()}
-        # expected_bound_name should only be supplied if it differes from name for the inital load
-        # self.name = name  # TODO this is not quite ready yet, loading from arbitrary uris/filenames needs one more level
-
+    def check(self, name):
         # in any case where this function is called name should not equal reference name
         # it should either be a filename or something like that
         if name == self.reference_name:
@@ -1256,16 +1315,29 @@ class FileFromIRIFactory(FileFromBaseFactory):
             # handle this case properly though... name = None and _serialization already set
             # NOTE for direct user contributions name should be their orcid
             # or the interface/api endpoint they were using if we want to track that?
-            return 'you cannot load an ontology into itself from itself unless you are interlex itself', 400
+            raise NoSelfLoadError('you cannot load an ontology into itself from '
+                                  'itself unless you are interlex itself')
         elif self.reference_host in name:
             # TODO provide an alternative
-            return 'you cannot copy content from one reference name to another in this way', 400
+            # FIXME the error messages should not be sent here
+            # these need to be translated into load errors
+            raise NoCopyingError('you cannot copy content from one '
+                                 'reference name to another in this way')
+
+        return super().check(name)
+
+    @hasErrors(LoadError)
+    def __call__(self, expected_bound_name=None):
+        if not self.times:
+            self.times = {'begin':time.time()}
+        # expected_bound_name should only be supplied if it differes from name for the inital load
+        # self.name = name  # TODO this is not quite ready yet, loading from arbitrary uris/filenames needs one more level
 
         # TODO logic when bound_name = reference_name, seems to be handled below correctly...
         if expected_bound_name is None:
-            expected_bound_name = name
+            expected_bound_name = self.name  # TODO better error for when prepare has not been called
 
-        super().__call__(name, expected_bound_name)
+        super().__call__(expected_bound_name)
 
     @property
     def header(self):
@@ -1288,6 +1360,14 @@ class FileFromIRIFactory(FileFromBaseFactory):
         return self._header
 
     @property
+    def isGzipped(self):
+        return 'Content-Encoding' in self.header and self.header['Content-Encoding'] == 'gzip'
+
+    @property
+    def content_length(self):
+        return int(self.header['Content-Length'])
+
+    @property
     def mimetype(self):
         if self._mimetype is None:
             if 'Content-Type' in self.header:
@@ -1303,7 +1383,6 @@ class FileFromIRIFactory(FileFromBaseFactory):
             return self._serialization
 
         self.times['fetch_begin'] = time.time()
-        size_mb = int(self.header['Content-Length']) / 1024 ** 2
 
         # unauthorized people can get here because we don't know the size of the payload apriori
         # HOWEVER IF they control the server that hosts the IRI they can spoof the content length
@@ -1324,16 +1403,15 @@ class FileFromIRIFactory(FileFromBaseFactory):
         
         printD('user is admin?', is_admin)
 
-        if 'Content-Encoding' in self.header and self.header['Content-Encoding'] == 'gzip':
-            if size_mb > self.maxsize_mbgz:
+        if self.isGzipped:
+            if self.content_length_mb > self.maxsize_mbgz:
                 if not is_admin:
                     raise LoadError(self.lfmessage, 413)  # TODO error handling
             resp = requests.get(self.name)
-            size_mb = len(resp.content) / 1024 ** 2
         else:
             resp = None
 
-        if size_mb > self.maxsize_mb:
+        if self.content_length_mb > self.maxsize_mb:
             if not is_admin:
                 raise LoadError(self.lfmessage, 413)
 

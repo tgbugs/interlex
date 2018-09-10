@@ -3,10 +3,12 @@ import unittest
 from unittest.mock import MagicMock
 from pathlib import Path
 from pyontutils.config import devconfig  # FIXME this will cause issues down the line
-from interlex.exc import LoadError
+from interlex.exc import LoadError, NotGroup
 from interlex.core import FakeSession
-from interlex.load import FileFromFileFactory
+from interlex.load import FileFromFileFactory, FileFromIRIFactory
+from test.test_stress import nottest  # FIXME put nottest in test utils
 from IPython import embed
+
 
 class FakeResultProxy:
     name = 'no one actually checks this value'
@@ -19,6 +21,7 @@ class FakeResultProxy:
 
 def ident_exists(*args, **kwargs):
     return False
+
 
 class TestLoader(unittest.TestCase):
     session = FakeSession()
@@ -45,7 +48,8 @@ class TestLoader(unittest.TestCase):
         for name, ebn in list(zip(names, ebns))[::-1]:
             #self.FileFromFile.session.return_value = results
             fff = self.FileFromFile('tgbugs', 'tgbugs')  # FIXME get a real test user
-            setup_ok = fff(name, ebn)
+            check_not_ok = fff.check(name)
+            setup_ok = fff(ebn)
             if setup_ok is not None:
                 raise LoadError(setup_ok)
             #fff.process_graph()  # load calls this, but this is what is needed if you want the graph loaded but not sent to interlex
@@ -64,7 +68,8 @@ class TestLoader(unittest.TestCase):
         fff._serialization = graph.serialize(format='nifttl')
         fff._extension = 'ttl'
 
-        setup_ok = fff(self.nasty, self.nastyebn)
+        check_not_ok = fff.check(self.nasty)
+        setup_ok = fff(self.nastyebn)
         if setup_ok is not None:
             raise LoadError(setup_ok)
 
@@ -81,7 +86,35 @@ class TestLoader(unittest.TestCase):
         # TODO test to make sure things fail as expected
         # 0) multiple owl:Ontology sections
         fff = self.FileFromFile('tgbugs', 'tgbugs')  # FIXME
-        setup_ok = fff(self.nasty, self.nastyebn)
+        check_not_ok = fff.check(self.nasty)
+        setup_ok = fff(self.nastyebn)
         assert setup_ok is not None, 'by default nasty has multiple bound names this should have failed'
         # 1) names do not match
         # 2) value already inserted
+
+    @staticmethod
+    def do_loader(loader, n, ebn):
+        check_failed = loader.check(n)
+        setup_failed = loader(ebn)
+        out = loader.load()
+        return out
+
+    @nottest
+    def test_small_resource(self):
+        from test.setup_testing_db import session as s
+        from interlex.endpoints import Endpoints  # FIXME
+        class db:
+            session = s
+        endpoints = Endpoints(db)
+        FileFromIRI = FileFromIRIFactory(db.session)
+        rh = 'uri.interlex.org'  #FIXME
+        loader = FileFromIRI('tgbugs', 'tgbugs', '', rh)
+        iri = 'http://purl.obolibrary.org/obo/ro.owl'
+        out = self.do_loader(loader, iri, iri)
+
+    @nottest
+    def test_small_file(self):
+        from test.setup_testing_db import session
+        FileFromFile = FileFromFileFactory(session)
+        loader = FileFromFile('tgbugs', 'tgbugs')
+        out = self.do_loader(loader, self.nasty, self.nastyebn)

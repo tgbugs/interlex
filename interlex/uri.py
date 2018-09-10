@@ -2,7 +2,6 @@ from collections import OrderedDict as od
 from flask import Flask
 from flask_restplus import Api, Resource
 from flask_sqlalchemy import SQLAlchemy
-from interlex.exc import LoadError, NotGroup
 from interlex.core import printD, makeSimpleLogger
 from interlex.core import dbUri, diffCuries
 from interlex.core import RegexConverter, make_paths, makeParamsValues

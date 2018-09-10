@@ -177,7 +177,6 @@ def main():
             resp = requests.post(url, json=j, headers=headers)
             printD(resp.text)
 
-
     elif args['debug']:
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri

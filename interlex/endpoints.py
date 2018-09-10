@@ -14,6 +14,7 @@ from pyontutils.qnamefix import cull_prefixes
 from pyontutils.namespaces import makePrefixes
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex import config
+from interlex.exc import NotGroup, NameCheckError
 from interlex.auth import Auth
 from interlex.core import printD
 from interlex.dump import TripleExporter, Queries
@@ -498,7 +499,7 @@ class Endpoints:
             #request_reference_name = request.url  # ??
             reference_name = self.build_reference_name(group, path)
             try:
-                loader = self.FileFromIRI(group, user, reference_name, self.reference_host)
+                print('pretty sure that we are catching this in basic and basic2 now...')
             except NotGroup:
                 return abort(404)
 
@@ -530,7 +531,17 @@ class Endpoints:
                         if match_path not in name and match_path not in expected_bound_name:
                             return f'No common name between {expected_bound_name} and {reference_name}', 400
 
-                        setup_ok = loader(name, expected_bound_name)
+                        # FIXME this needs to just go as a race
+                        # either await sleep(limit) or await load(thing)
+                        try:
+                            loader = self.FileFromIRI(group, user, reference_name, self.reference_host)
+                            will_batch = loader.check(name)
+                            if will_batch:
+                                return 'that\'s quite a large file you\'ve go there!\nit has been submitted for processing', 202
+                        except NameCheckError as e:
+                            return e.message, e.code
+
+                        setup_ok = loader(expected_bound_name)
                         if setup_ok is not None:
                             return setup_ok
 
