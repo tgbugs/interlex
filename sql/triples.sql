@@ -461,34 +461,68 @@ CREATE INDEX triples__subgraph_identity__index
 CREATE UNIQUE INDEX un__triples__s_p_o_uri_hash
        -- assume uri_hash is safe since it is based on
        -- access/hash.h hash_any directly from the postgres sources
-       ON triples (uri_hash(s), uri_hash(p), uri_hash(o))
-       WHERE s IS NOT NULL AND o IS NOT NULL;
+       ON triples
+       (uri_hash(s), uri_hash(p), uri_hash(o))
+       WHERE s IS NOT NULL AND
+             o IS NOT NULL;
 
 CREATE UNIQUE INDEX un__triples__s_p_o_lit_md5
-       ON triples (uri_hash(s), uri_hash(p), uri_hash(datatype), md5(o_lit))
-       WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL;
+       ON triples (uri_hash(s), uri_hash(p), md5(o_lit))
+       WHERE s IS NOT NULL AND
+             o_lit IS NOT NULL AND
+             datatype IS NULL AND
+             language is NULL;
+
+CREATE UNIQUE INDEX un__triples__s_p_o_lit_datatype_md5
+       ON triples
+       (uri_hash(s), uri_hash(p), md5(o_lit), uri_hash(datatype))
+       WHERE s IS NOT NULL AND
+             o_lit IS NOT NULL AND
+             datatype IS NOT NULL;
 
 CREATE UNIQUE INDEX un__triples__s_p_o_lit_lang_md5
-       ON triples (uri_hash(s), uri_hash(p), uri_hash(datatype), md5(md5(o_lit) || md5(language)))
-       WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL;
+       ON triples
+       (uri_hash(s), uri_hash(p), md5(o_lit), md5(language))
+       WHERE s IS NOT NULL AND
+             o_lit IS NOT NULL AND
+             language IS NOT NULL;
 
 CREATE UNIQUE INDEX un__triples__s_blank_p_o_lit_md5
-       ON triples (s_blank, uri_hash(p), uri_hash(datatype), md5(o_lit), subgraph_identity)
+       ON triples
+       (s_blank, uri_hash(p), md5(o_lit))
        -- this should be a VERY rare condition
-       WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL;
+       WHERE s_blank IS NOT NULL AND
+             o_lit IS NOT NULL AND
+             datatype IS NULL AND
+             language is NULL;
+
+CREATE UNIQUE INDEX un__triples__s_blank_p_o_lit_datatype_md5
+       ON triples
+       (s_blank, uri_hash(p), md5(o_lit), uri_hash(datatype), subgraph_identity)
+       -- this should be a VERY rare condition
+       WHERE s_blank IS NOT NULL AND
+             o_lit IS NOT NULL AND
+             datatype IS NOT NULL;
 
 CREATE UNIQUE INDEX un__triples__s_blank_p_o_lit_lang_md5
-       ON triples (s_blank, uri_hash(p), uri_hash(datatype), md5(md5(o_lit) || md5(language)), subgraph_identity)
+       ON triples
+       (s_blank, uri_hash(p), md5(o_lit), md5(language), subgraph_identity)
        -- this should be a VERY rare condition
-       WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL;
+       WHERE s_blank IS NOT NULL AND
+             o_lit IS NOT NULL AND
+             language IS NOT NULL;
 
-CREATE UNIQUE INDEX un__triples__s_p_o_blank ON triples
+CREATE UNIQUE INDEX un__triples__s_p_o_blank
+       ON triples
        (uri_hash(s), uri_hash(p), o_blank, subgraph_identity)
-       WHERE s IS NOT NULL AND o_blank IS NOT NULL;
+       WHERE s IS NOT NULL AND
+             o_blank IS NOT NULL;
 
 CREATE UNIQUE INDEX un__triples__s_blank_p_o_blank
-       ON triples (s_blank, uri_hash(p), o_blank, subgraph_identity)
-       WHERE s_blank IS NOT NULL AND o_blank IS NOT NULL;
+       ON triples
+       (s_blank, uri_hash(p), o_blank, subgraph_identity)
+       WHERE s_blank IS NOT NULL AND
+             o_blank IS NOT NULL;
 
 CREATE INDEX search_index ON triples USING GIN (to_tsvector('english', o_lit)) WHERE o_lit IS NOT NULL;
 

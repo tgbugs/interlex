@@ -9,7 +9,9 @@ testingdb = '__interlex_testing'
 
 #os.system(f'interlex-dbsetup 54321 {testingdb}')
 
-def getSession(dburi=dbUri(database=testingdb)):
+# TODO interlex-user tests ...
+
+def getSession(dburi=dbUri(user='interlex-admin', database=testingdb)):
     engine = create_engine(dburi)
 
     Session = sessionmaker()

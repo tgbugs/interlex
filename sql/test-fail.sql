@@ -11,11 +11,19 @@ INSERT INTO triples (s, p, o_blank, subgraph_identity) VALUES
        'http://test.url/predicate',
        0,
        E'\\x47bae44cd84731f1f1566b48bb7f6fe93532fd0466bd24371dd34f89d4e4420d');
-
 INSERT INTO triples (s, p, o_blank, subgraph_identity) VALUES
        ('http://test.url/1',
        'http://test.url/predicate',
        0,
        E'\\x47bae44cd84731f1f1566b48bb7f6fe93532fd0466bd24371dd34f89d4e4420d');
+DELETE FROM triples WHERE s = 'http://test.url/1';
 
+INSERT INTO triples (s, p, o_lit) VALUES
+       ('http://test.ur/1',
+       'http://test.url/annotationProperty',
+       'your father was a hampster');
+INSERT INTO triples (s, p, o_lit) VALUES
+       ('http://test.url/1',
+       'http://test.url/annotationProperty',
+       'your father was a hampster');
 DELETE FROM triples WHERE s = 'http://test.url/1';

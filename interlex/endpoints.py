@@ -8,7 +8,7 @@ from flask import request, redirect, url_for, abort
 from pyontutils.core import makeGraph
 from pyontutils.utils import TermColors as tc
 from pyontutils.ttlser import CustomTurtleSerializer
-from pyontutils.htmlfun import atag, htmldoc
+from pyontutils.htmlfun import atag, btag, h2tag, htmldoc
 from pyontutils.htmlfun import table_style, details_style, render_table
 from pyontutils.qnamefix import cull_prefixes
 from pyontutils.namespaces import makePrefixes, definition
@@ -320,9 +320,13 @@ class Endpoints:
         elif not identifier_or_defs:
             return 'REDLINK -> AMBIGUATION -> TODO'
         else:
-            return htmldoc(render_table(identifier_or_defs, 'Identifier', atag(definition, 'definition:')),
-                           title=f'Disambiguation for {label}',
-                           styles=(table_style,))
+            PREFIXES, g = self.getGroupCuries(user)
+            defs = [(g.qname(s), d) for s, d in identifier_or_defs]
+            title = f'{label} (disambiguation)'  # mirror wiki
+            # TODO resolve existing_iri mappings so they don't show up here
+            content = render_table(defs, 'Identifier', atag(definition, 'definition:')),
+            return htmldoc(h2tag(f'{label} (disambiguation)'),
+                           content, title=title, styles=(table_style,))
 
     # TODO PATCH only admin can change the community readable mappings just like community curies
     @basic
@@ -691,23 +695,33 @@ class Diff(Endpoints):
 
     @basic
     def lexical(self, user, other_user_diff, label, db=None):
+        # FIXME the logic here is all wonky
         do_redirect, identifier_or_defs = self.queries.getByLabel(label, user)
         if do_redirect:
+            # FIXME could be a user level redirect
             return ''  # no difference
         elif not identifier_or_defs:
             return 'REDLINK -> AMBIGUATION -> TODO'
         else:
             other_do_redirect, other_identifier_or_defs = self.queries.getByLabel(label, other_user_diff)
             if other_do_redirect:
+                # FIXME this is actually probably where we want to do this diff ...
                 return 'FIXME we need to handle this properly for diffing, probably need to return the actual value'
             else:
-                return htmldoc(render_table(identifier_or_defs, 'Identifier',
+                PREFIXES, g = self.getGroupCuries(user)
+                defs = [(g.qname(s), d) for s, d in identifier_or_defs]
+                other_defs = [(g.qname(s), d) for s, d in other_identifier_or_defs]
+                title = f'{label} (disambiguation)'  # mirror wiki
+                # TODO resolve existing_iri mappings so they don't show up here
+                return htmldoc(h2tag(f'{label} (disambiguation)'),
+                               render_table(tuple(), btag(user), ''),  # TODO links to user pages?
+                               render_table(defs, 'Identifier',
                                             atag(definition, 'definition:')),
-                               render_table(other_identifier_or_defs, 'Identifier',
+                               render_table(tuple(), btag(other_user_diff), ''),
+                               render_table(other_defs, 'Identifier',
                                             atag(definition, 'definition:')),
-                               title=f'Diff for {label} between {user} and {other_user_diff}',
+                               title=title,
                                styles=(table_style,))
-        
 
     @basic2
     def readable(self, user, other_user_diff, word, db=None):
