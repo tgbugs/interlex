@@ -536,18 +536,29 @@ class GraphLoader(GraphIdentities):
             yield prefix, suffix, {k:v for k, v in to_insert.items()}
 
 
-class BasicDB:
+class BasicDBFactory:
     _cache_groups = {}
     def ___new__(cls, *args, **kwargs):
+        # NOTE this should NOT be tagged as a classmethod
+        # it is accessed at cls time already and tagging it
+        # will cause it to bind to the original insource parent
         return super().__new__(cls)
 
     def __new__(cls, session):
-        cls.process_type = cls.__name__
-        cls.auth = Auth(session)
-        cls.session = session
-        cls.execute = session.execute
-        cls.__new__ = cls.___new__
-        return cls
+        newcls = cls.bindSession(session)
+        newcls.__new__ = cls.___new__
+        return newcls
+
+    @classmethod
+    def bindSession(cls, session):
+        new_name = cls.__name__.replace('Factory','')
+        classTypeInstance = type(new_name,
+                                 (cls,),
+                                 dict(session=session,
+                                      execute=session.execute,
+                                      auth=Auth(session),
+                                      process_type=new_name))
+        return classTypeInstance
 
     def __init__(self, group, user, token, read_only=True):  # safe by default
         # FIXME make sure that each on of these is really its own instance and never reused
@@ -655,14 +666,14 @@ class BasicDB:
 
 
 
-class UnsafeBasicDB(BasicDB):
+class UnsafeBasicDBFactory(BasicDBFactory):
     def __init__(self, group, user, read_only=True):
         self.read_only = read_only
         self.group = group
         self.user = user
 
 
-class TripleLoader(UnsafeBasicDB):
+class TripleLoaderFactory(UnsafeBasicDBFactory):
     scheme = 'http'  # sadface
     _cache_names = set() # FIXME make sure that reference hosts don't get crossed up
     _cache_identities = set()
@@ -1175,7 +1186,7 @@ class TripleLoader(UnsafeBasicDB):
         return 'TODO\n'
 
 
-class InterLex(TripleLoader):
+class InterLexFactory(TripleLoaderFactory):
     def __call__(self, user, triples):
         pass
         # note, we don't revert history,
@@ -1183,7 +1194,7 @@ class InterLex(TripleLoader):
         # the joys of invariance
 
 
-class FileFromBase(TripleLoader):
+class FileFromBaseFactory(TripleLoaderFactory):
     @property
     def extension(self):
         if self._extension is None:
@@ -1193,7 +1204,7 @@ class FileFromBase(TripleLoader):
         return self._extension
 
 
-class FileFromFile(FileFromBase):
+class FileFromFileFactory(FileFromBaseFactory):
     def __init__(self, group, user, reference_name=None,
                  reference_host='uri.interlex.org'):
         if reference_name is None:
@@ -1224,7 +1235,7 @@ class FileFromFile(FileFromBase):
         return self._serialization
 
 
-class FileFromIRI(FileFromBase):
+class FileFromIRIFactory(FileFromBaseFactory):
     maxsize_mbgz = 5
     maxsize_mb = 20
     lfmessage = (f'You appear to by trying to load a file bigger than {maxsize_mb}MB. '
@@ -1339,7 +1350,7 @@ class FileFromIRI(FileFromBase):
         # graph.parse(filepath, format=format)
 
 
-class FileFromPost(FileFromIRI):
+class FileFromPostFactory(FileFromIRIFactory):
     def __init__(self, group, user, reference_host, reference_name=None):
         super().__init__(group, user, reference_name, reference_host)
 
@@ -1420,5 +1431,5 @@ class FileFromPost(FileFromIRI):
         super().reference_name_setter(value)
 
 
-class FileFromVCS(TripleLoader):
+class FileFromVCSFactory(TripleLoaderFactory):
     pass

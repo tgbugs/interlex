@@ -65,7 +65,7 @@ Options:
 
     -p --port=PORT          manually set the port to use in the context of the current command
     -o --local              run against local
-    -n --gunicorn           run against local gunicorn
+    -c --gunicorn           run against local gunicorn
     -d --debug              enable debug mode
 
 """

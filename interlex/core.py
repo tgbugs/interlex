@@ -25,6 +25,7 @@ from pyontutils.ttlser import DeterministicTurtleSerializer, CustomTurtleSeriali
 from pyontutils.namespaces import makeNamespaces, PREFIXES as uPREFIXES, definition, ILX, NIFRID, ilxtr
 from pyontutils.combinators import annotation
 from pyontutils.closed_namespaces import rdf, rdfs, owl, oboInOwl
+from interlex import config
 from interlex.exc import bigError
 from IPython import embed
 
@@ -73,14 +74,14 @@ class uri(types.UserDefinedType):
 
 def bnodes(ts): return set(e for t in ts for e in t if isinstance(e, rdflib.BNode))
 
-def dbUri(user='interlex-user', host='localhost', port=5432, db='interlex_test'):
+def dbUri(user='interlex-user', host='localhost', port=5432, database=config.database):
     if socket.gethostname() != 'orpheus':
         port = 54321
     if hasattr(sys, 'pypy_version_info'):
         dialect = 'psycopg2cffi'
     else:
         dialect = 'psycopg2'
-    return f'postgresql+{dialect}://{user}@{host}:{port}/{db}'
+    return f'postgresql+{dialect}://{user}@{host}:{port}/{database}'
     # engine = create_engine
     # return engine, inspect(engine)
 

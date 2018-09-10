@@ -2,9 +2,10 @@ import unittest
 from pyontutils.ontutils import url_blaster
 from interlex.uri import uriStructure
 from interlex.core import make_paths
+from interlex.config import ilx_pattern
 
 def makeTestRoutes(limit=1):
-    ilx_pattern, parent_child, node_methods = uriStructure()
+    parent_child, node_methods = uriStructure()
     users = 'base', 'origin', 'tgbugs'  # base redirects to default/curated ...
     other_users = 'latest', 'curated', 'bob'
     ilx_patterns = 'ilx_0123456', 'ilx_0090000'

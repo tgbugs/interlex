@@ -5,7 +5,7 @@ from pathlib import Path
 from pyontutils.config import devconfig  # FIXME this will cause issues down the line
 from interlex.exc import LoadError
 from interlex.core import FakeSession
-from interlex.load import FileFromFile as FFF
+from interlex.load import FileFromFileFactory
 from IPython import embed
 
 class FakeResultProxy:
@@ -22,7 +22,7 @@ def ident_exists(*args, **kwargs):
 
 class TestLoader(unittest.TestCase):
     session = FakeSession()
-    FileFromFile = FFF(session)  # be careful, you only get to call this once
+    FileFromFile = FileFromFileFactory(session)
     def setUp(self):  # NOTE this runs multiple times
         self.nasty = Path(devconfig.git_local_base, 'pyontutils/test/nasty.ttl')
         self.nastyebn = 'http://testurl.org/filename.ttl'

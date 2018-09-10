@@ -8,8 +8,8 @@ from interlex.dump import MysqlExport
 from interlex.uri import TripleRender  # FIXME need to move the location of this
 
 
-def dbUri(user='nif_eelg_secure', host='nif-mysql.crbs.ucsd.edu', port=3306, db='nif_eelg'):
-    DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'
+def dbUri(user='nif_eelg_secure', host='nif-mysql.crbs.ucsd.edu', port=3306, database='nif_eelg'):
+    DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{database}'
     if socket.gethostname() != 'orpheus':
         config = mysql_conn_helper('localhost', db, user, 33060)  # see .ssh/config
     else:
