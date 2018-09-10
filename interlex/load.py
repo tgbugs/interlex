@@ -23,6 +23,8 @@ def async_load(iri=None, data=None, max_wait=10):
 
         async with TaskGroup('', wait=any) as tg:
             tg.spawn(sleep_and_return_jobid)
+            # NOTE do not cancel the load job
+            # just let it do its thing (somehow)
 
 
 def rapper(serialization, input='rdfxml', output='ntriples'):
@@ -1223,8 +1225,14 @@ class FileFromBaseFactory(TripleLoaderFactory):
             return maybe_error
         else:
             # size checks!
+            # TODO in theory we might also want to have the gzipped identity
+            # or simply pull down smallish gzipped files and test to see if
+            # they are already in the db, if they aren't and are too big to
+            # load quickly, then we can just send back the timeout message
+
             # FIXME we probably shouldn't implicitly call
             # self.serialization here? or what? maybe ok?
+
             # TODO should already be doing these loads in another process
             # that way if we can just set an actual timeout not a fake size
             # timeout and just send the job number (which we need to create anyway)
@@ -1328,8 +1336,8 @@ class FileFromIRIFactory(FileFromBaseFactory):
 
     @hasErrors(LoadError)
     def __call__(self, expected_bound_name=None):
-        if not self.times:
-            self.times = {'begin':time.time()}
+        if 'begin' not in self.times:
+            self.times['begin'] = time.time()
         # expected_bound_name should only be supplied if it differes from name for the inital load
         # self.name = name  # TODO this is not quite ready yet, loading from arbitrary uris/filenames needs one more level
 
