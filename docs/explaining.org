@@ -135,3 +135,15 @@
 ** n-ary
 *** 1-card
 *** n-card
+* Red links
+  One of the most useful features for both expert and non-expert users of NeuroLex was the redlink.
+  The redlink was a fantastic bookmarking and compiling tool that allowed users to use lexical entities
+  as if they were proper ontological entities. Recreating this in InterLex is key to its success.
+** impl
+   redlinks have their own namespace in interlex. It is not the readable namespace and it is not in the uris
+   namespace. It is an a the =/lexical/= namespace which is automatically populated by all the labels that
+   are associated with any identifier and bans any labels that are used in the base readable namespace.
+   It also only allows entries that do not have an exact existing label match nor an exact readable match.
+   For each =/lexical/= entry we will attempt to suggest terms that fit. Red links WILL NOT BE SERIALIZED.
+   Red links MUST be mapped to an ilx_id just like everything else, and they will not resolve until someone
+   creates the page for them. Which is like the new term page but the workflow is a bit more strenuous.
