@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+# may need to add NODENAME=rabbit@localhost to
+# /etc/rabbitmq/rabbitmq-env.conf if no fqdn
+
+rabbitmqctl add_vhost interlex
+rabbitmqctl add_user interlex-user CHANGETHISPASSWORD
+rabbitmqctl set_permissions -p interlex interlex-user ".*" ".*" ".*"
