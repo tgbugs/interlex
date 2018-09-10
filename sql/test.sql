@@ -40,28 +40,15 @@ INSERT INTO triples (s, p, o)
 
 */
 
--- DECLARE tgbugs_id integer;
--- SELECT id INTO STRICT tgbugs_id FROM idFromGroupname('tgbugs');
--- tgbugs_id := idFromGroupname('tgbugs');
-
-INSERT INTO user_emails (user_id, email, email_primary) VALUES (idFromGroupname('tgbugs'), 'tgbugs@gmail.com', TRUE);
-INSERT INTO users (id, orcid) VALUES (idFromGroupname('tgbugs'), 'https://orcid.org/0000-0002-7509-4801');
-
-select * from user_emails join groups on groups.id = user_emails.user_id;
-select * from users;
-
-UPDATE user_emails SET email_validated = TRUE WHERE user_id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
--- correct, interlex-user only has insert and select access, so these need to be populated via trigger on insert
-UPDATE users SET orcid_validated = TRUE WHERE id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
-
-INSERT INTO user_permissions VALUES (0, idFromGroupname('tgbugs'), 'admin');
+SELECT * FROM user_emails JOIN groups ON groups.id = user_emails.user_id;
+SELECT * FROM users;
 
 INSERT INTO orgs VALUES (idFromGroupname('uberon'), idFromGroupname('tgbugs'));  -- if run before I am a user fails
 
 DELETE FROM orgs WHERE id = idFromGroupname('uberon');
 
-select * from groups;
-select * from user_permissions;
+SELECT * FROM groups;
+SELECT * FROM user_permissions;
 
  -- UPDATE new_users set email_validated = TRUE WHERE id = 9;
  -- UPDATE new_users set orcid_validated = TRUE WHERE id = 9;

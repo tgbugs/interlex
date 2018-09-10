@@ -139,7 +139,15 @@ CREATE TABLE user_emails(
        -- email_verification_link_clicked_time timestamp DEFAULT NULL CHECK NULL OR (email_verification_link_clicked_time < email_verification_token_expiration),
        -- on error we generate a new token and send another email
        CONSTRAINT pk__user_emails PRIMARY KEY (user_id, email),
-       CONSTRAINT fk__user_emails__user_id__groups FOREIGN key (user_id) REFERENCES groups (id) match simple
+       -- note fk to users forces orcid which is probably good as it prevents people from simply creating
+       -- a group and having an email associated with that group id without ever having the orcid
+       -- e.g. base does not have its own email in this system because it never acts as its own agent
+       -- it is not clear that this is the best way forward because it means that scibot cannot have its own email
+       -- which means that group access and control can only be managed through InterLex, not by sharing access
+       -- via some other account, so on the other hand, this means that orgs can't accidentally be torpedoed
+       -- if someone looses access, because orgs are not someone, they are potentially many someones
+       -- this does mean however that we will have to figure out how to limit the number of orgs that can be created
+       CONSTRAINT fk__user_emails__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
 );
 
 CREATE FUNCTION email_complete() RETURNS trigger AS $email_complete$
@@ -222,6 +230,7 @@ CREATE TABLE user_permissions(
        user_role group_role NOT NULL,
        CHECK (user_role > 'admin' OR user_role = 'admin' AND group_id = 0),
        -- TODO references users vs references new_users due to need to erase users?
+       CONSTRAINT pk__user_permissions PRIMARY key (group_id, user_id),  -- users can only have one role at a time
        CONSTRAINT fk__user_permissions__group_id__groups FOREIGN key (group_id) REFERENCES groups (id) match simple,
        CONSTRAINT fk__user_permissions__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
 );
@@ -261,6 +270,9 @@ CREATE type notification_pref AS enum ('email', 'InterLex feed');
 
 CREATE TABLE user_notification_preferences(
        -- include only send
+       group_id integer NOT NULL,
+       -- use base for all notifications, can store member orgs as well
+       -- in practice this may need to be transformed to create 'live' notification lists
        user_id integer NOT NULL,
        event event_type NOT NULL,
        notification notification_pref NOT NULL,

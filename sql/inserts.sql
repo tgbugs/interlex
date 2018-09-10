@@ -92,6 +92,24 @@ INSERT INTO groups (own_role, groupname)
 
 ALTER TABLE groups ENABLE TRIGGER groupname_length_check;
 
+-- user approval example and basic admin setup
+
+-- DECLARE tgbugs_id integer;
+-- SELECT id INTO STRICT tgbugs_id FROM idFromGroupname('tgbugs');
+-- tgbugs_id := idFromGroupname('tgbugs');
+
+INSERT INTO users (id, orcid) VALUES
+       (idFromGroupname('tgbugs'), 'https://orcid.org/0000-0002-7509-4801');
+
+INSERT INTO user_emails (user_id, email, email_primary) VALUES
+       (idFromGroupname('tgbugs'), 'tgbugs@gmail.com', TRUE);
+
+UPDATE user_emails SET email_validated = TRUE WHERE user_id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
+-- correct, interlex-user only has insert and select access, so these need to be populated via trigger on insert
+UPDATE users SET orcid_validated = TRUE WHERE id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
+
+INSERT INTO user_permissions VALUES (0, idFromGroupname('tgbugs'), 'admin');
+
 -- sources
 -- INSERT INTO source_triples VALUES (E'\\x00', 0, 0);
 -- INSERT INTO source_serialization VALUES (E'\\x00', E'\\x00');
