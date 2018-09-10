@@ -18,9 +18,10 @@ def uriStructure():
     versioned_ids = basic + ['curies', 'uris']
     intermediate_filename = ['<filename>.<extension>', '<filename>']
     parent_child = {
-        '<user>':              basic + branches + compare + ['contributions', 'upload', 'prov'],
+        '<user>':              basic + ['lexical'] + branches + compare + ['contributions', 'upload', 'prov'],
         '<other_user>':        branches,  # no reason to access /user/own/otheruser/ilx_ since identical to /user/ilx_
-        '<other_user_diff>':   basic + branches,
+        '<other_user_diff>':   basic + ['lexical'] + branches,
+        'lexical':             ['<label>'],
         'readable':            ['<word>'],
         'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
         '<epoch_verstr_id>':   versioned_ids + version_compare,

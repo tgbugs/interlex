@@ -11,7 +11,7 @@ from pyontutils.ttlser import CustomTurtleSerializer
 from pyontutils.htmlfun import atag, htmldoc
 from pyontutils.htmlfun import table_style, details_style, render_table
 from pyontutils.qnamefix import cull_prefixes
-from pyontutils.namespaces import makePrefixes
+from pyontutils.namespaces import makePrefixes, definition
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex import config
 from interlex.exc import NotGroup, NameCheckError
@@ -261,6 +261,7 @@ class Endpoints:
     def get_func(self, nodes):
         mapping = {
             ilx_pattern:self.ilx,
+            'lexical':self.lexical,
             'readable':self.readable,
             'uris':self.uris,
             'curies_':self.curies_,
@@ -310,6 +311,18 @@ class Endpoints:
             title = f'ilx.{user}:ilx_{id}'
 
         return tripleRender(request, g, user, id, object_to_existing, title)
+
+    @basic
+    def lexical(self, user, label, db=None):
+        do_redirect, identifier_or_defs = self.queries.getByLabel(label, user)
+        if do_redirect:
+            return redirect(identifier_or_defs)
+        elif not identifier_or_defs:
+            return 'REDLINK -> AMBIGUATION -> TODO'
+        else:
+            return htmldoc(render_table(identifier_or_defs, 'Identifier', atag(definition, 'definition:')),
+                           title=f'Disambiguation for {label}',
+                           styles=(table_style,))
 
     # TODO PATCH only admin can change the community readable mappings just like community curies
     @basic
@@ -675,9 +688,31 @@ class Diff(Endpoints):
     @basic2
     def ilx(self, user, other_user_diff, id, db=None):
         return request.path
+
+    @basic
+    def lexical(self, user, other_user_diff, label, db=None):
+        do_redirect, identifier_or_defs = self.queries.getByLabel(label, user)
+        if do_redirect:
+            return ''  # no difference
+        elif not identifier_or_defs:
+            return 'REDLINK -> AMBIGUATION -> TODO'
+        else:
+            other_do_redirect, other_identifier_or_defs = self.queries.getByLabel(label, other_user_diff)
+            if other_do_redirect:
+                return 'FIXME we need to handle this properly for diffing, probably need to return the actual value'
+            else:
+                return htmldoc(render_table(identifier_or_defs, 'Identifier',
+                                            atag(definition, 'definition:')),
+                               render_table(other_identifier_or_defs, 'Identifier',
+                                            atag(definition, 'definition:')),
+                               title=f'Diff for {label} between {user} and {other_user_diff}',
+                               styles=(table_style,))
+        
+
     @basic2
     def readable(self, user, other_user_diff, word, db=None):
         return request.path
+
     @basic2
     def uris(self, user, other_user_diff, uri_path, db=None):
         return request.path

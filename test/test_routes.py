@@ -10,6 +10,7 @@ def makeTestRoutes(limit=1):
     other_users = 'latest', 'curated', 'bob'
     ilx_patterns = 'ilx_0123456', 'ilx_0090000'
     words = 'isReadablePredicate', 'cookies'
+    labels = 'brain', 'mus musculus'
     versions = '1524344335', '2018-04-01'  # FIXME should version alone 404 or return the qualifier?
     filenames = 'brain', 'myOntology', 'your-ontology-123', '_yes_this_works'
     extensions = 'ttl', 'owl', 'n3', 'xml', 'json'
@@ -27,6 +28,7 @@ def makeTestRoutes(limit=1):
         '<other_user>':other_users,
         '<other_user_diff>':other_users,
         '<word>':words,
+        '<label>':labels,
         '<epoch_verstr_id>':versions,
         '<epoch_verstr_ont>':versions,
         '<filename>':filenames,

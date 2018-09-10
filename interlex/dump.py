@@ -5,7 +5,7 @@ from pyontutils.namespaces import NIFRID, ilxtr, definition
 from pyontutils.combinators import annotation
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex.exc import ShouldNotHappenError
-from interlex.core import InterLexLoad, logger
+from interlex.core import InterLexLoad, logger, makeParamsValues
 
 class MysqlExport:
     def __init__(self, session):
@@ -316,3 +316,26 @@ class Queries:
                               for id, iri in id_existing_iris]
 
         return base_to_existing
+
+    def getDefinitions(self, user, *iris):
+        # TODO aggregate/failover to defs from alternate sources where the ilx_id has an existing id
+        # requires a different yielding strat
+        #value_templates, params = makeParamsValues(iris)
+        args = dict(p=definition, iris=iris)
+        sql = f'SELECT o_lit FROM triples WHERE p = :p AND s in :iris'
+        for r in self.session.execute(sql, args):
+            yield r.o_lit
+
+    def getByLabel(self, label, user):
+        # TODO user mapping of lexical
+        args = dict(p=rdfs.label, label=label)
+        sql = f'SELECT s FROM triples WHERE p = :p AND o_lit ~~* :label'  # ~~* is LIKE case insensitive
+        results = [r.s for r in self.session.execute(sql, args)]
+        if not results:
+            # NOTE if ambiguation is done by a user, then they keep that mapping
+            return False, None  # redlink? ambiguate
+        elif len(results) == 1:
+            return True, results[0].s  # redirect
+        else:
+            defs = self.getDefinitions(*results)
+            return False, [(s, _def) for s, _def in zip(results, defs)]  # disambiguate
