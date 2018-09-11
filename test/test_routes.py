@@ -3,6 +3,7 @@ from pyontutils.ontutils import url_blaster
 from interlex.uri import uriStructure
 from interlex.core import make_paths
 from interlex.config import ilx_pattern
+from interlex.config import test_host, test_port
 
 def makeTestRoutes(limit=1):
     parent_child, node_methods = uriStructure()
@@ -45,14 +46,15 @@ def makeTestRoutes(limit=1):
     return routes
 
 class TestRoutes(unittest.TestCase):
-    host='localhost:8505'  # FIXME
+    host = test_host
+    port = test_port
     scheme = 'http'
     def test_routes(self):
         routes = makeTestRoutes()  # up limite here for more tests, 2 is about max reasonable
         # TODO a way to mark expected failures
         urls = [
-            'http://localhost:8505/tgbugs/curies/BIRNLEX:796?local=true',
-            'http://localhost:8505/tgbugs/curies/BIRNLEX:796',
+            f'{self.scheme}://{self.host}:{self.port}/tgbugs/curies/BIRNLEX:796?local=true',
+            f'{self.scheme}://{self.host}:{self.port}/tgbugs/curies/BIRNLEX:796',
             ]
         urls = [f'http://{self.host}{r}' for r in routes] + urls
         [print(u) for u in urls]
@@ -60,8 +62,8 @@ class TestRoutes(unittest.TestCase):
 
     def test_negative(self):
         urls = [
-            'http://localhost:8505/tgbugs/curies/BIRNLEEX:796?local=true',
-            'http://localhost:8505/tgbugs/curies/BIRNLEEX:796',
+            f'{self.scheme}://{self.host}:{self.port}/tgbugs/curies/BIRNLEEX:796?local=true',
+            f'{self.scheme}://{self.host}:{self.port}/tgbugs/curies/BIRNLEEX:796',
         ]
         [print(u) for u in urls]
         try:

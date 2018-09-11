@@ -77,12 +77,8 @@ import requests
 from pyontutils.utils import setPS1
 from pyontutils.namespaces import PREFIXES as uPREFIXES
 from interlex.core import printD, InterLexLoad
+from interlex.config import port_api, port_uri, port_curies, port_alt
 from IPython import embed
-
-port_api = 8500
-port_uri = 8505
-port_curies = 8510
-port_alt = 8515
 
 def main():
     from docopt import docopt, parse_defaults
@@ -203,9 +199,13 @@ def main():
         embed()
 
     elif args['dbsetup']:
+        # run all database settings through the environment
+        # just have to make sure to set it before config is imported
+        if args['<database>']:
+            os.environ.update({'INTERLEX_DATABASE':args['<database>']})
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
-        app = run_uri(database=args['<database>'])
+        app = run_uri()
         db = SQLAlchemy(app)
         session = db.session
         sql_verify_user = (
@@ -225,8 +225,12 @@ def main():
             app = run_api()
             port = port_api
         elif args['uri']:
+            # run all database settings through the environment
+            # just have to make sure to set it before config is imported
+            if args['<database>']:
+                os.environ.update({'INTERLEX_DATABASE':args['<database>']})
             from interlex.uri import run_uri, __file__
-            app = run_uri(echo=args['--debug'], database=args['<database>'])
+            app = run_uri(echo=args['--debug'])
             port = port_uri
         elif args['curies']:
             from interlex.core import run_curies, __file__

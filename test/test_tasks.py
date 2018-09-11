@@ -7,7 +7,7 @@ from interlex.tasks import cel, multiple, bigload, add
 from test.test_stress import nottest  # FIXME put nottest in test utils
 from IPython import embed
 
-if config.database != config.testing_database:
+if config.database != config.test_database:
     raise ValueError('Wrong environment for testing!')
 
 class TestTasks(unittest.TestCase):

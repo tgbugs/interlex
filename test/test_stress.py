@@ -1,6 +1,7 @@
 import unittest
-from pyontutils.ontutils import url_blaster
 from joblib import Parallel, delayed
+from pyontutils.ontutils import url_blaster
+from interlex.config import test_host, test_port
 
 try:
     from nose.tools import nottest
@@ -9,15 +10,16 @@ except:
         return function
 
 
-def blast(scheme, host, start, stop):
-    urls = [f"{scheme}://{host}/base/ilx_{id:0>7}"
+def blast(scheme, host, port, start, stop):
+    urls = [f"{scheme}://{host}:{port}/base/ilx_{id:0>7}"
             for id in range(start, stop)]
     # oh url_blaster you are so ... not fast
     url_blaster(urls, 0, method='head', fail=True)
 
 
 class TestStress(unittest.TestCase):
-    host='localhost:8606'  # FIXME
+    host = test_host
+    port = test_port
     scheme = 'http'
     @nottest
     def test_stress(self):
@@ -26,7 +28,10 @@ class TestStress(unittest.TestCase):
         stop =  110000
         step = (stop - start) // (n_jobs - 1)
         Parallel(n_jobs=n_jobs,
-                 backend='multiprocessing')(delayed(blast)(self.scheme, self.host, start, stop)
+                 backend='multiprocessing')(delayed(blast)(self.scheme,
+                                                           self.host, self.port,
+                                                           start, stop)
                                             for start, stop in
                                             ((start, start + step)
-                                             for start in range(start, stop, step) if not print(start)))
+                                             for start in range(start, stop, step)
+                                             if not print(start)))

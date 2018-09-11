@@ -559,14 +559,15 @@ class Endpoints:
                             #return task.get()  # timeout=10 or something
                             will_batch = loader.check(name)
                             if will_batch:
-                                # and of course with this version api gets caught,
-                                # probably session is the issue
-                                tasks.session = self.session
-                                tasks.base_ffi(group, user, reference_name,
-                                               self.reference_host, name, expected_bound_name)
-                                # so.owl load works fine but uberon load seems eternal
-                                # and never finishes for some reason
-                                return 'DEBUG'
+                                if False:
+                                    # and of course with this version api gets caught,
+                                    # probably session is the issue
+                                    tasks.session = self.session
+                                    tasks.base_ffi(group, user, reference_name,
+                                                self.reference_host, name, expected_bound_name)
+                                    # so.owl load works fine but uberon load seems eternal
+                                    # and never finishes for some reason
+                                    return 'DEBUG'
                                 task = tasks.long_ffi.apply_async((group, user, reference_name,
                                                                    self.reference_host, name, expected_bound_name),
                                                                   serializer='pickle')
@@ -574,7 +575,7 @@ class Endpoints:
                                 #task = tasks.long_load.apply_async((loader, expected_bound_name),
                                                                    #serializer='pickle')
                                 embed()
-                                return f'that\'s quite a large file you\'ve go there!\nit has been submitted for processing {task.id}', 202
+                                return f'that\'s quite a large file you\'ve go there!\nit has been submitted for processing {url_for("route_api_job")}{task.id}', 202
                         except NameCheckError as e:
                             return e.message, e.code
 

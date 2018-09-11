@@ -165,10 +165,10 @@ def setup_runonce(app, endpoints, echo):
             BasicDBFactory._cache_groups[group.groupname] = group.id, group.own_role
 
 
-def server_uri(db=None, mq=None, structure=uriStructure, dburi=dbUri(), echo=False):
+def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
     # app setup and database binding
     app = Flask('InterLex uri server')
-    app.config['SQLALCHEMY_DATABASE_URI'] = dburi  # FIXME how to set db from cli ...
+    app.config['SQLALCHEMY_DATABASE_URI'] = dbUri()  # use os.environ.update
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['CELERY_BROKER_URL'] = config.broker_url
     app.config['CELERY_RESULT_BACKEND'] = config.broker_backend
@@ -186,6 +186,15 @@ def server_uri(db=None, mq=None, structure=uriStructure, dburi=dbUri(), echo=Fal
 
     parent_child, node_methods = structure()                 # uri path nodes
     routes = list(make_paths(parent_child))                  # routes
+
+    @app.route('/api/job/<jobid>')
+    def route_api_job(jobid):
+        # FIXME prevent garbage?
+        task = mq.AsyncResult(jobid)
+        printD('s', task.status)
+        printD('i', task.info)
+        printD('r', task.result)
+        return task.status
 
     for route in routes:
         nodes = route.split('/')
@@ -207,10 +216,5 @@ def server_uri(db=None, mq=None, structure=uriStructure, dburi=dbUri(), echo=Fal
 
     return app
 
-def run_uri(echo=False, database=None):
-    if database:
-        dburi = dbUri(database=database)
-    else:
-        dburi = dbUri()
-
-    return server_uri(db=SQLAlchemy(), mq=cel, echo=echo, dburi=dburi)
+def run_uri(echo=False):
+    return server_uri(db=SQLAlchemy(), mq=cel, echo=echo)
