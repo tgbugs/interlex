@@ -19,6 +19,7 @@ from interlex.auth import Auth
 from interlex.core import printD
 from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
+from interlex import tasks
 from interlex.config import ilx_pattern
 from IPython import embed
 
@@ -204,8 +205,8 @@ class Endpoints:
         self.db = db
         self.session = self.db.session
         self.auth = Auth(self.session)
-        self.FileFromIRI = FileFromIRIFactory(self.session)
-        self.FileFromPost = FileFromPostFactory(self.session)
+        self.FileFromIRI = FileFromIRIFactory(self.session)  # FIXME I think these go in tasks
+        self.FileFromPost = FileFromPostFactory(self.session)  # FIXME I think these go in tasks
         self.BasicDB = BasicDBFactory(self.session)
         self.UnsafeBasicDB = UnsafeBasicDBFactory(self.session)
         self.queries = Queries(self.session, self)
@@ -552,9 +553,22 @@ class Endpoints:
                         # either await sleep(limit) or await load(thing)
                         try:
                             loader = self.FileFromIRI(group, user, reference_name, self.reference_host)
+                            #task = tasks.multiple(loader, name, expected_bound_name)
+                            # task.jobid
+                            # then wait for our max time and return the jobid/tracker or the result
+                            #return task.get()  # timeout=10 or something
                             will_batch = loader.check(name)
                             if will_batch:
-                                return 'that\'s quite a large file you\'ve go there!\nit has been submitted for processing', 202
+                                # and of course with this version api gets caught,
+                                # probably session is the issue
+                                task = tasks.long_ffi.apply_async((group, user, reference_name,
+                                                                   self.reference_host, name, expected_bound_name),
+                                                                  serializer='pickle')
+                                # ya so this doesn't quite work ...
+                                #task = tasks.long_load.apply_async((loader, expected_bound_name),
+                                                                   #serializer='pickle')
+                                embed()
+                                return f'that\'s quite a large file you\'ve go there!\nit has been submitted for processing {task.id}', 202
                         except NameCheckError as e:
                             return e.message, e.code
 

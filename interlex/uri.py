@@ -2,9 +2,11 @@ from collections import OrderedDict as od
 from flask import Flask
 from flask_restplus import Api, Resource
 from flask_sqlalchemy import SQLAlchemy
+from interlex import config
 from interlex.core import printD, makeSimpleLogger
-from interlex.core import dbUri, diffCuries
+from interlex.core import dbUri, mqUri, diffCuries
 from interlex.core import RegexConverter, make_paths, makeParamsValues
+from interlex.tasks import cel
 from interlex.config import ilx_pattern
 
 log = makeSimpleLogger('setup')
@@ -163,14 +165,19 @@ def setup_runonce(app, endpoints, echo):
             BasicDBFactory._cache_groups[group.groupname] = group.id, group.own_role
 
 
-def server_uri(db=None, structure=uriStructure, dburi=dbUri(), echo=False):
+def server_uri(db=None, mq=None, structure=uriStructure, dburi=dbUri(), mquri=mqUri(), echo=False):
     # app setup and database binding
     app = Flask('InterLex uri server')
     app.config['SQLALCHEMY_DATABASE_URI'] = dburi
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['CELERY_BROKER_URL'] = mquri
+    app.config['CELERY_RESULT_BACKEND'] = config.broker_backend
+    app.config['CELERY_ACCEPT_CONTENT'] = config.accept_content
     app.url_map.converters['regex'] = RegexConverter
 
     db.init_app(app)
+    mq.init_app(app)
+    mq.db = db
 
     route_endpoint_mapper, endpoints = build_endpoints(db)   # endpoints
     setup_runonce(app, endpoints, echo)                      # runonce
@@ -207,4 +214,4 @@ def run_uri(echo=False, database=None):
     else:
         dburi = dbUri()
 
-    return server_uri(db=SQLAlchemy(), echo=echo, dburi=dburi)
+    return server_uri(db=SQLAlchemy(), mq=cel, echo=echo, dburi=dburi)

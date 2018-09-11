@@ -77,7 +77,7 @@ class uri(types.UserDefinedType):
 
 def bnodes(ts): return set(e for t in ts for e in t if isinstance(e, rdflib.BNode))
 
-def dbUri(user='interlex-user', host='localhost', port=5432, database=config.database):
+def dbUri(user=config.user, host='localhost', port=5432, database=config.database):
     if socket.gethostname() != 'orpheus':
         port = 54321
     if hasattr(sys, 'pypy_version_info'):
@@ -87,6 +87,9 @@ def dbUri(user='interlex-user', host='localhost', port=5432, database=config.dat
     return f'postgresql+{dialect}://{user}@{host}:{port}/{database}'
     # engine = create_engine
     # return engine, inspect(engine)
+
+def mqUri():
+    return config.broker_url
 
 def makeParamsValues(*value_sets, constants=tuple()):
     # TODO variable sized records and

@@ -18,5 +18,3 @@ def getSession(dburi=dbUri(user='interlex-admin', database=testingdb)):
     Session.configure(bind=engine)
     session = Session()
     return session
-
-session = getSession()

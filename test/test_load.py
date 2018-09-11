@@ -7,6 +7,7 @@ from interlex.exc import LoadError, NotGroup
 from interlex.core import FakeSession
 from interlex.load import FileFromFileFactory, FileFromIRIFactory
 from test.test_stress import nottest  # FIXME put nottest in test utils
+from test.setup_testing_db import getSession
 from IPython import embed
 
 
@@ -101,8 +102,8 @@ class TestLoader(unittest.TestCase):
 
     @nottest
     def test_small_resource(self):
-        from test.setup_testing_db import session as s
         from interlex.endpoints import Endpoints  # FIXME
+        s = getSession()
         class db:
             session = s
         endpoints = Endpoints(db)
@@ -110,11 +111,17 @@ class TestLoader(unittest.TestCase):
         rh = 'uri.interlex.org'  #FIXME
         loader = FileFromIRI('tgbugs', 'tgbugs', '', rh)
         iri = 'http://purl.obolibrary.org/obo/ro.owl'
-        out = self.do_loader(loader, iri, iri)
+        try:
+            out = self.do_loader(loader, iri, iri)
+        finally:
+            s.close()
 
     @nottest
     def test_small_file(self):
-        from test.setup_testing_db import session
+        session = getSession()
         FileFromFile = FileFromFileFactory(session)
         loader = FileFromFile('tgbugs', 'tgbugs')
-        out = self.do_loader(loader, self.nasty, self.nastyebn)
+        try:
+            out = self.do_loader(loader, self.nasty, self.nastyebn)
+        finally:
+            session.close()

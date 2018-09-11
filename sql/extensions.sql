@@ -1,5 +1,7 @@
 -- postgres interlex_test
 -- CONNECT TO interlex_test USER postgres;
 
-CREATE EXTENSION uri;  -- keep this on public schema for safety
+-- keep these on public schema for safety
 
+CREATE EXTENSION uri;
+CREATE EXTENSION pgcrypto;
