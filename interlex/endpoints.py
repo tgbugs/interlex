@@ -561,6 +561,12 @@ class Endpoints:
                             if will_batch:
                                 # and of course with this version api gets caught,
                                 # probably session is the issue
+                                tasks.session = self.session
+                                tasks.base_ffi(group, user, reference_name,
+                                               self.reference_host, name, expected_bound_name)
+                                # so.owl load works fine but uberon load seems eternal
+                                # and never finishes for some reason
+                                return 'DEBUG'
                                 task = tasks.long_ffi.apply_async((group, user, reference_name,
                                                                    self.reference_host, name, expected_bound_name),
                                                                   serializer='pickle')

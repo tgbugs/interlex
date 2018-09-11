@@ -165,19 +165,18 @@ def setup_runonce(app, endpoints, echo):
             BasicDBFactory._cache_groups[group.groupname] = group.id, group.own_role
 
 
-def server_uri(db=None, mq=None, structure=uriStructure, dburi=dbUri(), mquri=mqUri(), echo=False):
+def server_uri(db=None, mq=None, structure=uriStructure, dburi=dbUri(), echo=False):
     # app setup and database binding
     app = Flask('InterLex uri server')
-    app.config['SQLALCHEMY_DATABASE_URI'] = dburi
+    app.config['SQLALCHEMY_DATABASE_URI'] = dburi  # FIXME how to set db from cli ...
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['CELERY_BROKER_URL'] = mquri
+    app.config['CELERY_BROKER_URL'] = config.broker_url
     app.config['CELERY_RESULT_BACKEND'] = config.broker_backend
     app.config['CELERY_ACCEPT_CONTENT'] = config.accept_content
     app.url_map.converters['regex'] = RegexConverter
 
     db.init_app(app)
     mq.init_app(app)
-    mq.db = db
 
     route_endpoint_mapper, endpoints = build_endpoints(db)   # endpoints
     setup_runonce(app, endpoints, echo)                      # runonce

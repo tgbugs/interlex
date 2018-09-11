@@ -1,7 +1,9 @@
 from time import sleep
 from flask import has_app_context
 from celery import Celery, Task
+from celery.signals import worker_process_init, worker_process_shutdown
 from interlex import config
+from interlex.core import getScopedSession
 from interlex.load import FileFromIRIFactory
 from IPython import embed
 from pprint import pprint
@@ -16,7 +18,6 @@ class fCelery(Celery):
                          result_backend=app.config['CELERY_RESULT_BACKEND'])
 
         class ContextTask(Task):
-            cel = self
             def __call__(self, *args, wat=self, **kwargs):
                 if has_app_context():  # calling tasks inside tasks
                     return self.run(*args, **kwargs)
@@ -24,15 +25,25 @@ class fCelery(Celery):
                     with app.app_context():
                         return self.run(*args, **kwargs)
 
-            @property
-            def session(self):
-                return self.cel.session
-
         self.Task = ContextTask
 
-    @property
-    def session(self):
-        return self.db.session   # maybe this will work?
+
+session = None
+
+
+@worker_process_init.connect
+def init_worker(**kwargs):
+    global session
+    print(f'Initializing database connection to {config.database} for worker.')
+    session = getScopedSession()
+
+
+@worker_process_shutdown.connect
+def shutdown_worker(**kwargs):
+    session
+    if session:
+        print(f'Closing database connectionn to {config.database} for worker.')
+        session.close()  # remove() ??
 
 
 cel = fCelery('InterLex', enable_utc=True,
@@ -65,18 +76,36 @@ def multiple(self, loader, name, expected_bound_name, small=True):
     # if our quick checks don't pass
     #embed()
 
+class FakeSelf:
+    def update_state(self, *args, **kwargs):
+        """ hahahaha you think I'm actually doing something silly caller """
+
+fakeself = FakeSelf()
+
+def base_ffi(group, user, reference_name, reference_host,
+             name, expected_bound_name, header=None, serialization=None,
+             self=fakeself):
+    global session
+    # sadly cannot embed in a worker :/
+    FileFromIRI = FileFromIRIFactory(session)
+    ffi = FileFromIRI(user, group, reference_name, reference_host)
+    self.update_state(state='CHECKING')
+    check_failed = ffi.check(name)  # should have already been run
+    self.update_state(state='SETUP')
+    setup_failed = ffi(expected_bound_name)
+    self.update_state(state='LOAD')
+    if not setup_failed:
+        ffi.load()
+    self.update_state(state='SUCCESS')  # FIXME use the real success value
+    return 'done'
+
 @cel.task(bind=True)
 def long_ffi(self, group, user, reference_name, reference_host,
              name, expected_bound_name, header=None, serialization=None):
     pprint(dir(self))
-    # sadly cannot embed in a work :/
-    FileFromIRI = FileFromIRIFactory(self.app.session)
-    ffi = FileFromIRI(user, group, reference_name, reference_host)
-    ffi.check(name)
-    ffi.check(name)
-    setup_failed = ffi(expected_bound_name)
-    if not setup_failed:
-        ffi.load()
+    return base_ffi(group, user, reference_name, reference_host,
+                    name, expected_bound_name, header, serialization, self=self)
+    # TODO logging and stats
 
 
 @cel.task(bind=True)

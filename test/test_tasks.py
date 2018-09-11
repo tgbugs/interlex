@@ -1,17 +1,19 @@
 import unittest
 from time import sleep
 from celery.result import AsyncResult
-from test.test_stress import nottest  # FIXME put nottest in test utils
-from interlex.tasks import cel, multiple, bigload, add
+from interlex import config
 from interlex.uri import run_uri
-from test.setup_testing_db import testingdb
+from interlex.tasks import cel, multiple, bigload, add
+from test.test_stress import nottest  # FIXME put nottest in test utils
 from IPython import embed
 
+if config.database != config.testing_database:
+    raise ValueError('Wrong environment for testing!')
 
 class TestTasks(unittest.TestCase):
     @nottest
     def test_task(self):
-        app = run_uri(echo=True, database=testingdb)
+        app = run_uri(echo=True)
         cel.init_app(app)
         @app.route('/loltesting')  # to we need to be inside here or what?
         def test():

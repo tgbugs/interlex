@@ -4,7 +4,8 @@ debug = False
 ilx_pattern = 'ilx_<regex("[0-9]{7}"):id>'
 
 user = 'interlex-user'
-database = os.environ.get('INTERLEX_DATABASE')
+testing_database = '__interlex_testing'
+database = os.environ.get('INTERLEX_DATABASE', testing_database)
 vhost = 'interlex'
 broker_url = os.environ.get('CELERY_BROKER_URL',
                             os.environ.get('BROKER_URL',

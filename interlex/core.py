@@ -13,6 +13,7 @@ import requests
 import sqlalchemy as sa
 from sqlalchemy import create_engine, inspect, MetaData, Table, types
 from sqlalchemy.sql import expression
+from sqlalchemy.orm import sessionmaker, scoped_session
 # from sqlalchemy.orm import Session
 from flask import Flask, url_for, redirect, request, render_template, render_template_string
 from flask import make_response, abort
@@ -90,6 +91,12 @@ def dbUri(user=config.user, host='localhost', port=5432, database=config.databas
 
 def mqUri():
     return config.broker_url
+
+def getScopedSession(dburi=dbUri()):
+    engine = create_engine(dburi)
+    session_factory = sessionmaker(bind=engine)
+    ScopedSession = scoped_session(session_factory)
+    return ScopedSession
 
 def makeParamsValues(*value_sets, constants=tuple()):
     # TODO variable sized records and
