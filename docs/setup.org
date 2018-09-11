@@ -1,10 +1,11 @@
 * Setting up a new InterLex
 ** Requirements
    1. >=dev-db/postgresql-10
-   2. >=app-misc/elasticsearch-6.3.0
-   3. >=dev-lang/python-3.6
-   4. >=dev-python/pipenv-2018.6.25
-   5. dev-db/pguri
+   2. >=net-misc/rabbitmq-server-3.6.9
+   3. >=app-misc/elasticsearch-6.3.0
+   4. >=dev-lang/python-3.6
+   5. >=dev-python/pipenv-2018.6.25
+   6. dev-db/pguri
       - Gentoo
         =dev-db/pguri-9999.ebuild= is available in [[https://github.com/tgbugs/tgbugs-overlay]]
         #+BEGIN_SRC bash
@@ -31,14 +32,17 @@
       and interlex commands inside the venv and run any pyontutils commands outside
       the venv.
 ** Set up the database
-   1. From the working directly run =opt/dbsetup.sh $PORT $DBNAME=
+   1. From the working directly run =interlex-dbsetup $PORT $DBNAME=
       NOTE: if you change =$DBNAME= from =interlex_test= make sure you also
       change it in the python code since this has not been abstracted yet.
    2. You will need to set the passwords for =interlex-admin= and =interlex-user= manually
-      and then run =opt/dbsetup.sh $PORT $DBNAME= again. To accomplish this run the following.
+      and then run =interlex-dbsetup $PORT $DBNAME= again. To accomplish this run the following.
       =su postgres= =psql= =\password interlex-admin= =\password interlex-user=.
    3. Add the passwords for =interlex-admin= and =interlex-user= to =~/.pgpass=.
    4. Run =interlex dbsetup= to add an initial 'authenticated' user.
+** Set up the message broker
+   1. Install =rabbitmq= and add it and =epmd= to default services.
+   2. See =interlex-mqsetup=
 * Load content
 ** Sync with mysql
    At this point you should be able to synchronize the database with the existing mysql interlex installation.
