@@ -572,6 +572,11 @@ class BasicDBFactory:
                                       process_type=new_name))
         return classTypeInstance
 
+    @classmethod
+    def refresh(cls):
+        """ Reset any 'global' state. """
+        BasicDBFactory._cache_groups = {}
+
     def __init__(self, group, user, token, read_only=True):  # safe by default
         # FIXME make sure that each on of these is really its own instance and never reused
         # so that there is no chance of letting users spoof as using a race condition
@@ -694,6 +699,13 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         'n3':'n3',
         'nt':'nt',
     }
+
+    @classmethod
+    def refresh(cls):
+        TripleLoaderFactory._cache_names = set()
+        TripleLoaderFactory._cache_identities = set()
+        super().refresh()
+
     def __init__(self, group, user, reference_name, reference_host):
         super().__init__(group, user, read_only=False)  # FIXME WARNING
         self.debug = False

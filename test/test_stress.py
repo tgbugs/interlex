@@ -1,7 +1,7 @@
 import unittest
 from joblib import Parallel, delayed
 from pyontutils.ontutils import url_blaster
-from interlex.config import test_host, test_port
+from interlex.config import test_host, test_stress_port
 
 try:
     from nose.tools import nottest
@@ -19,7 +19,7 @@ def blast(scheme, host, port, start, stop):
 
 class TestStress(unittest.TestCase):
     host = test_host
-    port = test_port
+    port = test_stress_port
     scheme = 'http'
     @nottest
     def test_stress(self):
