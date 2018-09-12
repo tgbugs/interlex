@@ -109,9 +109,6 @@ class TestLoader(unittest.TestCase):
             session = s
         endpoints = Endpoints(db)
         FileFromIRI = FileFromIRIFactory(db.session)
-        # FIXME user_id and group_id are somehow getting set from the FakeResultProxy
-        # ANSWER: _cache_group is storing the fake result proxy values from the
-        # previous tests and _cache_group is (correctly) only set on BasicDBFactory
         rh = 'uri.interlex.org'  #FIXME
         loader = FileFromIRI('tgbugs', 'tgbugs', '', rh)
         iri = 'http://purl.obolibrary.org/obo/ro.owl'
