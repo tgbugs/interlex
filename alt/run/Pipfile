@@ -4,5 +4,5 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-rdflib = {editable = true, ref = "master", git = "https://github.com/tgbugs/rdflib.git"}
 interlex-alt = {path = "./../dist/InterLex_Alt-0.0.1-py2.py3-none-any.whl"}
+rdflib = {file = "https://github.com/tgbugs/rdflib/releases/download/v5.0.0-dev-tgbugs-b6/rdflib-5.0.0.dev0-py2.py3-none-any.whl"}
