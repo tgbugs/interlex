@@ -4,8 +4,8 @@ from setuptools import setup
 
 files = [
     '../interlex/__init__.py',
-    'interlex/alt.py',
-    'interlex/alt_server.py',
+    '../interlex/alt.py',
+    '../interlex/alt_server.py',
     '../interlex/config.py',
     '../interlex/core.py',
     '../interlex/dump.py',
@@ -19,7 +19,6 @@ try:
         if '../' in f:
             cpfile = f.replace('../','')
             shutil.copyfile(f, cpfile)
-            print(f, cpfile)
             cleanup.append(cpfile)
 
     setup(name='InterLex Alt',

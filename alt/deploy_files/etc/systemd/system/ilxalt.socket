@@ -1,0 +1,8 @@
+[Unit]
+Description=interlex alt gunicorn socket
+
+[Socket]
+ListenStream=/run/ilxalt/socket
+
+[Install]
+WantedBy=sockets.target

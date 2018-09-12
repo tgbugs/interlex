@@ -1,1 +1,2 @@
-gunicorn -b localhost:8618 -n interlex_alt -w 4 -k gevent -t 30 --preload --log-level debug interlex.alt_server:app
+#!/usr/bin/env sh
+gunicorn --bind unix:/run/ilxalt/socket --pid /run/ilxalt/pid -n interlex_alt -w 2 -k gevent -t 30 --preload --log-level info interlex.alt_server:app
