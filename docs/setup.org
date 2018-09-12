@@ -134,7 +134,13 @@
   
   pypy3 clearly faster with tornado than anything running 3.6, bonus is that rdflib will
   be way faster too if we can get the memory leak during serialization worked out
-  
+
   most of the pypy3 numbers are tainted by the fact that they were tested from the server
   remotely there seems to be some cycling in the cpu usage, not sure why, but tornado at 8
   seems like the best setup, eventlet might be ok too, more systematic testing would be needed
+
+  turning --log-level to critical gives maybe an extra second over 1000 requests
+
+  tested bjoern but got issues with hung processes and there is still quite high cpu usage
+  best approach seems like it will be to cache things since the issue is likely that we
+  are hitting python code to retrieve mostly static content anyway
