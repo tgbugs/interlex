@@ -1,113 +1,23 @@
 import os
 import json
-from datetime import datetime
 from functools import wraps
-import rdflib
 import sqlalchemy as sa
 from flask import request, redirect, url_for, abort
 from pyontutils.core import makeGraph
 from pyontutils.utils import TermColors as tc
-from pyontutils.ttlser import CustomTurtleSerializer
 from pyontutils.htmlfun import atag, btag, h2tag, htmldoc
-from pyontutils.htmlfun import table_style, details_style, render_table
-from pyontutils.qnamefix import cull_prefixes
+from pyontutils.htmlfun import table_style, render_table
 from pyontutils.namespaces import makePrefixes, definition
-from pyontutils.closed_namespaces import rdf, rdfs, owl
+from interlex import tasks
 from interlex import config
 from interlex.exc import NotGroup, NameCheckError
 from interlex.auth import Auth
 from interlex.core import printD
 from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
-from interlex import tasks
 from interlex.config import ilx_pattern
+from interlex.render import TripleRender  # FIXME need to move the location of this
 from IPython import embed
-
-
-class TripleRender:
-    def __init__(self):
-        self.mimetypes = {'text/html':self.html,
-                          'application/json':self.json,
-                          'text/ttl':self.ttl,  # not real
-                          'text/turtle':self.ttl,}
-
-    def __call__(self, request, mgraph, user, id, object_to_existing, title=None):
-        mimetype = request.mimetype if request.mimetype else 'text/html'
-        if not mgraph.g:
-            if mimetype == 'text/html':
-                return abort(404)
-            else:
-                return '', 404
-        try:
-            out = self.mimetypes[mimetype](request, mgraph, user, id, object_to_existing, title)
-            return out, 200, {'Content-Type': mimetype}
-        except KeyError:
-            print(mimetype)
-            return abort(415)
-
-    def iri_selection_logic(self):  # TODO
-        """ For a given set of conversion rules (i.e. from a user)
-            when given an iri, convert it to the preferred form.
-            Use a precedence list base on
-            1. users
-            2. orgs
-            3. curie prefixes
-            4. iri prefixes (?)
-            5. etc ...
-            See the ilx spec doc for this. We want this in its own class
-            and will just be calling it from here. """
-
-    def curie_selection_logic(self):
-        """ Same as iri selection but for curies """
-
-    def html(self, request, mgraph, user, id, object_to_existing, title):
-        graph = mgraph.g
-        cts = CustomTurtleSerializer(graph)
-        gsortkey = cts._globalSortKey
-        psortkey = lambda p: cts.predicate_rank[p]
-        def sortkey(triple):
-            s, p, o = triple
-            return gsortkey(s), psortkey(p), gsortkey(o)
-
-        trips = (tuple(atag(e, mgraph.qname(e))
-                       if isinstance(e, rdflib.URIRef) and e.startswith('http')
-                       else str(e)
-                       for e in t)
-                 for t in sorted(graph, key=sortkey))
-
-        return htmldoc(render_table(trips, 'subject', 'predicate', 'object'),
-                       title=title,
-                       styles=(table_style,))
-
-    def ttl(self, request, mgraph, user, id, object_to_existing, title):
-        graph = mgraph.g
-        nowish = datetime.utcnow()  # request doesn't have this
-        epoch = nowish.timestamp()
-        iso = nowish.isoformat()
-        ontid = rdflib.URIRef(f'http://uri.interlex.org/{user}'
-                              f'/ontologies/ilx_{id}')
-        ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/ilx_{id}')
-        graph.add((ontid, rdf.type, owl.Ontology))
-        graph.add((ontid, owl.versionIRI, ver_ontid))
-        graph.add((ontid, owl.versionInfo, rdflib.Literal(iso)))
-        graph.add((ontid, rdfs.comment, rdflib.Literal('InterLex single term result for '
-                                                       f'{user}/ilx_{id} at {iso}')))
-        # TODO consider data identity?
-        ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
-        return ng.g.serialize(format='nifttl')
-
-    def json(self, request, mgraph, user, id, object_to_existing, title):
-        # lol
-        graph = mgraph.g
-        ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
-        out = {'prefixes': {k:v for k, v in ng.g.namespaces()},
-               'triples': [[mgraph.qname(e)
-                            if isinstance(e, rdflib.URIRef) and e.startswith('http')
-                            else str(e)
-                            for e in t ]
-                           for t in graph]}
-        return json.dumps(out)
-
 
 tripleRender = TripleRender()
 

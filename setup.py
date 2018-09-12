@@ -1,6 +1,5 @@
 import os
-import shutil
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(name='InterLex',
       version='0.0.1',
@@ -23,6 +22,7 @@ setup(name='InterLex',
           'pyontutils',
       ],
       extras_require={'dev':[]},
+      scripts=['bin/interlex-uri', 'bin/interlex-curies'],
       entry_points={
           'console_scripts': [
               'interlex=interlex.cli:main',
