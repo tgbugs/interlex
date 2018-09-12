@@ -1,0 +1,8 @@
+[[source]]
+url = "https://pypi.python.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+rdflib = {editable = true, ref = "master", git = "https://github.com/tgbugs/rdflib.git"}
+interlex-alt = {path = "./../dist/InterLex_Alt-0.0.1-py2.py3-none-any.whl"}

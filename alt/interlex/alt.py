@@ -9,7 +9,7 @@ from interlex.render import TripleRender  # FIXME need to move the location of t
 
 
 def dbUri(user='nif_eelg_secure', host='nif-mysql.crbs.ucsd.edu', port=3306, database='nif_eelg'):
-    DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'  # FIXME db => pyontutils refactor
+    DB_URI = 'mysql+pymysql://{user}:{password}@{host}:{port}/{db}'  # FIXME db => pyontutils refactor
     if socket.gethostname() != 'orpheus':
         config = mysql_conn_helper('localhost', database, user, 33060)  # see .ssh/config
     else:
