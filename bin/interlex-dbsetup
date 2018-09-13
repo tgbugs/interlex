@@ -24,9 +24,9 @@ else
     DATABASE=$2
 fi
 
-# postgres setup
-psql -U postgres -h localhost -p $PORT -d postgres  -f "${SQL}/postgres.sql" -v database=$DATABASE
-psql -U postgres -h localhost -p $PORT -d $DATABASE -f "${SQL}/extensions.sql"
+# postgres setup (these need to fail loudly)
+psql -U postgres -h localhost -p $PORT -d postgres  -f "${SQL}/postgres.sql" -v database=$DATABASE &&
+psql -U postgres -h localhost -p $PORT -d $DATABASE -f "${SQL}/extensions.sql" &&
 
 # interlex-admin setup
 psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/schemas.sql"

@@ -28,4 +28,5 @@ setup(name='InterLex',
               'interlex=interlex.cli:main',
           ],
       },
+      data_files=[('sql', ['*'])]
      )
