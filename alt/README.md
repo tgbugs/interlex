@@ -12,12 +12,14 @@ sed -ir "s/{interlex-user}/${INTERLX_USER}" deploy_files
 grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g"
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&
+rm -rf *.egg-info &&
+mv dist/* run/ &&
+rmdir dist &&
 #pipenv install  # leave this out for now due to gunicorn detection issues
-cd ../
 rm alt.zip;
-zip -r alt.zip alt/run/ &&
-zip -r alt.zip alt/dist/ &&
-zip -r alt.zip alt/deploy_files/
+zip -r alt.zip README.md &&
+zip -r alt.zip run/ &&
+zip -r alt.zip deploy_files/  # first time only
 scp alt.zip ${INTERLEX_SERVER}:
 ```
 4. ssh to the server and run the following or run the following via ssh.
@@ -25,15 +27,15 @@ scp alt.zip ${INTERLEX_SERVER}:
 ```bash
 unzip alt.zip
 sudo su root  # or similar
-cp alt/deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/
-cp alt/deploy_files/etc/systemd/system/ilxalt.socket /etc/systemd/system/
-cp alt/deploy_files/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/
-cp alt/deploy_files/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ # carful here
+cp deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/
+cp deploy_files/etc/systemd/system/ilxalt.socket /etc/systemd/system/
+cp deploy_files/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/
+cp deploy_files/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ # carful here
 ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf
 systemd-tmpfiles --create
 systemctl enable ilxalt
 exit
-cd alt/run &&
+cd run &&
 pipenv install &&
 cd ~/ &&
 touch .mypass &&
@@ -44,12 +46,11 @@ sudo systemctl start ilxalt
 * Other times.
 ```bash
 sudo systemctl stop ilxalt
-rm -rf alt.old/
-mv alt/ alt.old
+mv run/*.whl
 unzip -o alt.zip
-cd alt/run &&
-pipenv --rm &&
-pipenv install &&
+cd run &&
+pipenv --rm &&  # can skip this if only the interlex code has changed
+pipenv install *.whl &&
 sudo systemctl start ilxalt
 ```
 5. Make sure you create a `~/.mypass` file that conforms to the syntax of `~/.pgpass`

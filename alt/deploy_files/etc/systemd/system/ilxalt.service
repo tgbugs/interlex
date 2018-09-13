@@ -5,11 +5,11 @@ After=network.target
 
 [Service]
 PIDFile=/run/ilxalt/pid
-User={interlex-user}
-Group={interlex-user}
+User=
+Group=
 RuntimeDirectory=ilxalt
-WorkingDirectory=/home/{interlex-user}/alt/run
-ExecStart=/home/{interlex-user}/.local/bin/pipenv run interlex-alt
+WorkingDirectory=/home//alt/run
+ExecStart=/home//.local/bin/pipenv run interlex-alt
 ExecReload=/bin/kill -s HUP $MAINPID
 ExecStop=/bin/kill -s TERM $MAINPID
 PrivateTmp=true

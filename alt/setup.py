@@ -15,6 +15,7 @@ files = [
 
 try:
     cleanup = []
+    os.mkdir('interlex')
     for f in files:
         if '../' in f:
             cpfile = f.replace('../','')
@@ -48,3 +49,5 @@ try:
 finally:
     for f in cleanup:
         os.remove(f)
+
+    os.rmdir('interlex')
