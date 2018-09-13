@@ -22,7 +22,7 @@ setup(name='InterLex',
           'pyontutils',
       ],
       extras_require={'dev':[]},
-      scripts=['bin/interlex-uri', 'bin/interlex-curies'],
+      scripts=['bin/interlex-uri', 'bin/interlex-curies', 'bin/interlex-dbsetup'],
       entry_points={
           'console_scripts': [
               'interlex=interlex.cli:main',

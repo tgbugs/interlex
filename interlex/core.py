@@ -574,12 +574,12 @@ class InterLexLoad:
         from pyontutils.utils import mysql_conn_helper
         DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'
         if socket.gethostname() in config.dev_remote_hosts:
-            config = mysql_conn_helper('localhost', 'nif_eelg', 'nif_eelg_secure', 33060)  # see .ssh/config
+            dbconfig = mysql_conn_helper('localhost', 'nif_eelg', 'nif_eelg_secure', 33060)  # see .ssh/config
         else:
-            config = mysql_conn_helper('nif-mysql.crbs.ucsd.edu', 'nif_eelg', 'nif_eelg_secure')
-        self.engine = create_engine(DB_URI.format(**config), echo=True)
-        config = None
-        del(config)
+            dbconfig = mysql_conn_helper('nif-mysql.crbs.ucsd.edu', 'nif_eelg', 'nif_eelg_secure')
+        self.engine = create_engine(DB_URI.format(**dbconfig), echo=True)
+        dbconfig = None
+        del(dbconfig)
         self.insp = inspect(self.engine)
         self.graph = None
 

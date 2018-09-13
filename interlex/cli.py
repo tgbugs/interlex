@@ -9,7 +9,7 @@ Usage:
     interlex alt [options]
     interlex dbsetup [options] [<database>]
     interlex debug [options]   [<database>]
-    interlex sync [options]
+    interlex sync [options]    [<database>]
     interlex post ontology [options] <ontology-filename> ...
     interlex post triples  [options] (<reference-name> <triples-filename>) ...
     interlex post curies   [options] [<curies-filename>]
@@ -77,7 +77,6 @@ import requests
 from pyontutils.utils import setPS1
 from pyontutils.namespaces import PREFIXES as uPREFIXES
 from interlex.core import printD, InterLexLoad
-from interlex.config import port_api, port_uri, port_curies, port_alt
 from IPython import embed
 
 def main():
@@ -107,10 +106,12 @@ def main():
         api_key = os.environ.get('INTERLEX_API_KEY', group)  # FIXME
         headers = {'Authorization': 'Bearer ' + api_key}
         if args['--local']:
+            from interlex.config import port_uri
             host = f'localhost:{port_uri}'
             scheme = 'http'
         elif args['--gunicorn']:
-            host = f'localhost:8606'
+            from interlex.config import port_guni_uri
+            host = f'localhost:{port_guni_uri}'
             scheme = 'http'
         elif args['--port']:
             host = 'localhost:' + args['--port']
@@ -176,7 +177,7 @@ def main():
     elif args['debug']:
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
-        from interlex.load import TripleLoader
+        from interlex.load import TripleLoaderFactory
         from interlex.dump import Queries as _Q
         app = run_uri(database=args['database'])
         db = SQLAlchemy(app)
@@ -185,14 +186,15 @@ def main():
         embed()
 
     elif args['sync']:
+        if args['<database>']:
+            os.environ.update({'INTERLEX_DATABASE':args['<database>']})
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
-        from interlex.load import TripleLoader
+        from interlex.load import TripleLoaderFactory
         app = run_uri()
         db = SQLAlchemy(app)
-        ltl = type('TripleLoader', (TripleLoader,), {})
-        Loader = ltl(db.session)
-        il = InterLexLoad(Loader, do_cdes=False)
+        TripleLoader = TripleLoaderFactory(db.session)
+        il = InterLexLoad(TripleLoader, do_cdes=False)
         il.setup()
         # il.load()  # do this one yourself
         self = il
@@ -221,6 +223,7 @@ def main():
 
     else:
         if args['api']:
+            from interlex.config import port_api
             from interlex.core import run_api, __file__
             app = run_api()
             port = port_api
@@ -229,14 +232,17 @@ def main():
             # just have to make sure to set it before config is imported
             if args['<database>']:
                 os.environ.update({'INTERLEX_DATABASE':args['<database>']})
+            from interlex.config import port_uri
             from interlex.uri import run_uri, __file__
             app = run_uri(echo=args['--debug'])
             port = port_uri
         elif args['curies']:
+            from interlex.config import port_curies
             from interlex.core import run_curies, __file__
             app = run_curies()
             port = port_curies
         elif args['alt']:
+            from interlex.config import port_alt
             from interlex.alt import run_alt, __file__
             app = run_alt()
             port = port_alt

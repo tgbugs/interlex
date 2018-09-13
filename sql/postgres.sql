@@ -32,7 +32,7 @@ CREATE DATABASE :database -- interlex
     WITH OWNER = 'interlex-admin'
     ENCODING = 'UTF8'
     TABLESPACE = pg_default
-    LC_COLLATE = 'en_US.utf8'  -- as opposed to 'en_US.UTF-8' for < 10.0 ??
-    LC_CTYPE = 'en_US.utf8'
+    LC_COLLATE = 'en_US.UTF-8'  -- this was a gentoo locale issue check ${LANG}
+    LC_CTYPE = 'en_US.UTF-8'
     CONNECTION LIMIT = -1;
 
