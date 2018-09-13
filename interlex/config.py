@@ -15,6 +15,9 @@ port_guni_uri = 8606       # interlex-uri
 port_guni_curies = 8612    # interlex-curies
 port_guni_alt = 8618       # interlex-alt
 
+# dev
+dev_remote_hosts = 'athena', 'arachne'
+
 # testing
 test_host = 'localhost'
 test_port = port_uri

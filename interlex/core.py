@@ -79,7 +79,7 @@ class uri(types.UserDefinedType):
 def bnodes(ts): return set(e for t in ts for e in t if isinstance(e, rdflib.BNode))
 
 def dbUri(user=config.user, host='localhost', port=5432, database=config.database):
-    if socket.gethostname() != 'orpheus':
+    if socket.gethostname() in config.dev_remote_hosts:
         port = 54321
     if hasattr(sys, 'pypy_version_info'):
         dialect = 'psycopg2cffi'
@@ -573,7 +573,7 @@ class InterLexLoad:
         self.admin_exec = self.admin_engine.execute
         from pyontutils.utils import mysql_conn_helper
         DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'
-        if socket.gethostname() != 'orpheus':
+        if socket.gethostname() in config.dev_remote_hosts:
             config = mysql_conn_helper('localhost', 'nif_eelg', 'nif_eelg_secure', 33060)  # see .ssh/config
         else:
             config = mysql_conn_helper('nif-mysql.crbs.ucsd.edu', 'nif_eelg', 'nif_eelg_secure')
