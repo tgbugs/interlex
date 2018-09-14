@@ -606,7 +606,7 @@ class InterLexLoad:
         #self.loader.expected_bound_name = name
         self.loader._serialization = repr((name, self.triples)).encode()
         expected_bound_name = name
-        setup_ok = self.loader(name, expected_bound_name)
+        setup_ok = self.loader(expected_bound_name)
 
         if setup_ok is not None:
             raise LoadError(setup_ok)
