@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy import create_engine, inspect, MetaData, Table, types
 from sqlalchemy.sql import expression
 from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.sql.expression import bindparam
 # from sqlalchemy.orm import Session
 from flask import Flask, url_for, redirect, request, render_template, render_template_string
 from flask import make_response, abort
@@ -98,7 +99,7 @@ def getScopedSession(dburi=dbUri()):
     ScopedSession = scoped_session(session_factory)
     return ScopedSession
 
-def makeParamsValues(*value_sets, constants=tuple()):
+def makeParamsValues(*value_sets, constants=tuple(), types=tuple()):
     # TODO variable sized records and
     # common value names
     if constants and not all(':' in c for c in constants):
@@ -135,7 +136,10 @@ def makeParamsValues(*value_sets, constants=tuple()):
     getname = getName()
 
     params = {}
-    for values in value_sets:
+    if types:
+        bindparams = []
+        itertypes = (t for ts in types for t in ts)
+    for i, values in enumerate(value_sets):
         # proto_params doesn't need to be a dict
         # values will be reduced when we create params as a dict
         proto_params = [(tuple(getname(value) for value in row), row) for row in values]
@@ -145,12 +149,17 @@ def makeParamsValues(*value_sets, constants=tuple()):
                                                           for name in names)) + ')'
                                     for names, _ in proto_params)
         yield values_template
-        params.update({name:value
-                       for names, values in proto_params
-                       for name, value in zip(names, values)})
+        for names, values in proto_params:
+            for name, value in zip(names, values):
+                params[name] = value
+                if types:
+                    maybe_type = next(itertypes)
+                    if maybe_type is not None:
+                        bindparams.append(bindparam(name, type_=maybe_type))
 
     yield params
-
+    if types:
+        yield bindparams  # TODO not sure if there are dupes here
 
 class FakeSession:
     def __init__(self):
