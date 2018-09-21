@@ -189,7 +189,7 @@ class FakeSession:
 
 
 class IdentityBNode(rdflib.BNode):
-    # TODO this requries a new serialization rule which 'dismbiguates'
+    # TODO this requires a new serialization rule which 'disambiguates'
     # subgraphs with the same identity that appear as an object in
     # different triples
     """ An identity blank node is a blank node that is identified by
@@ -205,13 +205,13 @@ class IdentityBNode(rdflib.BNode):
 
         IBNodes should only be used at the head of an unnamed graph or
         a collection of triples. Even if the triples around bound to a
-        name by convetion, the IBNode should still be used to identify them.
+        name by convention, the IBNode should still be used to identify them.
 
         When calculating the identity, it may be useful to use the identity
         function to provide a total ordering on all nodes.
 
         When directly mapping an IBNode to a set of pairs that has a name
-        the identity can be reattached, but it must be by convetion, otherwise
+        the identity can be reattached, but it must be by convention, otherwise
         the identity of the pairs will change.
 
         This is also true for lists. Note that IBNodes bound by convention are
@@ -224,7 +224,7 @@ class IdentityBNode(rdflib.BNode):
     encoding = 'utf-8'
     sortlast = b'\xff' * 64
 
-    def __new__(cls, triples_or_pairs_or_thing, debug=False):
+    def __new__(cls, triples_or_pairs_or_thing, symmetric_predicates=tuple(), debug=False):
         self = super().__new__(cls)  # first time without value
         self.debug = debug
         self.id_lookup = {}
@@ -234,6 +234,7 @@ class IdentityBNode(rdflib.BNode):
         self.cypher_check()
         m = self.cypher()
         self.null_identity = m.digest()
+        self.symmetric_predicates = symmetric_predicates  # FIXME this is ok, but a bit awkward
         self._thing = triples_or_pairs_or_thing
         self.identity = self.identity_function(triples_or_pairs_or_thing)
         real_self = super().__new__(cls, self.identity)
@@ -243,6 +244,7 @@ class IdentityBNode(rdflib.BNode):
         real_self.debug = debug
         real_self.identity = self.identity
         real_self.null_identity = self.null_identity
+        real_self.symmetric_predicates = self.symmetric_predicates
         real_self.cypher_field_separator_hash = self.cypher_field_separator_hash
         return real_self
 
@@ -278,6 +280,10 @@ class IdentityBNode(rdflib.BNode):
 
     def ordered_identity(self, *things, separator=True):
         """ this assumes that the things are ALREADY ordered correctly """
+        # FIXME symmetric predicates like owl:disjointWith where
+        # some serializations will randomly flop the order
+        # ideally this would be defined by the semantics implied
+        # by the type of the bound metadata (e.g. owl:Ontology)
         m = self.cypher()
         for i, thing in enumerate(things):
             if separator and i > 0:  # insert field separator
@@ -297,7 +303,16 @@ class IdentityBNode(rdflib.BNode):
         return identity
 
     def triple_identity(self, subject, predicate, object):
-        return self.ordered_identity(*self.recurse((subject, predicate, object)))
+        # TODO symmetric predicates should be dealt with here
+        # NOTE that ordering here is computed on the bytes representation
+        # of a node, regardless of whether it is has already been digested
+        # in most cases symmetric predicates will be operating on uris and
+        # bnodes only, so it is less of an issue
+        bytes_s, bytes_p, bytes_o = self.recurse((subject, predicate, object))
+        if predicate in self.symmetric_predicates and bytes_s < bytes_o:
+            return self.ordered_identity(bytes_o, bytes_p, bytes_s)
+        else:
+            return self.ordered_identity(bytes_s, bytes_p, bytes_o)
 
     def add_to_subgraphs(self, thing, subgraphs, subgraph_mapping):
         # useful for debug and load use cases
@@ -368,16 +383,22 @@ class IdentityBNode(rdflib.BNode):
                 else:
                     raise ValueError('BNodes only have names or collective identity...')
             else:
-                if len(thing) == 3 or len(thing) == 2:
+                lt = len(thing)
+                if lt == 3 or lt == 2:
                     if not any(isinstance(e, rdflib.BNode) for e in thing):
-                        yield self.ordered_identity(*self.recurse(thing))
+                        if lt == 3:
+                            yield self.triple_identity(*thing)
+                        elif lt == 2:
+                            yield self.ordered_identity(*self.recurse(thing))
+                        else:
+                            raise NotImplemented('shouldn\'t ever get here ...')
                     else:
                         if self.debug:
                             self.add_to_subgraphs(thing, self.subgraphs, self.subgraph_mappings)
 
-                        if len(thing) == 3:
+                        if lt == 3:
                             s, p, o = thing
-                        elif len(thing) == 2:
+                        elif lt == 2:
                             s = None  # safe, only isinstance(o, rdflib.BNode) will trigger below
                             p, o = thing
 
@@ -411,7 +432,7 @@ class IdentityBNode(rdflib.BNode):
                         elif isinstance(s, rdflib.BNode):
                             self.bsubjects.add(s)
                             # leaves
-                            ident = self.ordered_identity(*self.recurse((None, p, o)))
+                            ident = self.triple_identity(None, p, o)
                             self.bnode_identities[s].append(ident)
                         elif isinstance(o, rdflib.BNode):
                             self.bobjects.add(o)

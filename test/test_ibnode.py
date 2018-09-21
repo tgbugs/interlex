@@ -144,6 +144,14 @@ class TestIBNode(unittest.TestCase):
 
         assert id1.identity == id2.identity, 'identities do not match'
 
+    def test_symmetric(self):
+        msp = 'my-sym-pred'
+        forward = 'a', msp, 'b'
+        backward = tuple(reversed(forward))
+        f = IdentityBNode([forward], symmetric_predicates=[msp])
+        b = IdentityBNode([backward], symmetric_predicates=[msp])
+        assert f == b
+
     def test_check(self):
         id1 = IdentityBNode(self.graph1)
         assert id1.check(self.graph2), 'check failed!'
