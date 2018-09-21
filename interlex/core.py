@@ -280,10 +280,6 @@ class IdentityBNode(rdflib.BNode):
 
     def ordered_identity(self, *things, separator=True):
         """ this assumes that the things are ALREADY ordered correctly """
-        # FIXME symmetric predicates like owl:disjointWith where
-        # some serializations will randomly flop the order
-        # ideally this would be defined by the semantics implied
-        # by the type of the bound metadata (e.g. owl:Ontology)
         m = self.cypher()
         for i, thing in enumerate(things):
             if separator and i > 0:  # insert field separator
@@ -303,11 +299,12 @@ class IdentityBNode(rdflib.BNode):
         return identity
 
     def triple_identity(self, subject, predicate, object):
-        # TODO symmetric predicates should be dealt with here
-        # NOTE that ordering here is computed on the bytes representation
-        # of a node, regardless of whether it is has already been digested
-        # in most cases symmetric predicates will be operating on uris and
-        # bnodes only, so it is less of an issue
+        """ Compute the identity of a triple.
+            Also handles symmetric predicates.
+
+            NOTE that ordering for sympreds is on the bytes representation
+            of a node, regardless of whether it is has already been digested """
+
         bytes_s, bytes_p, bytes_o = self.recurse((subject, predicate, object))
         if predicate in self.symmetric_predicates and bytes_s < bytes_o:
             return self.ordered_identity(bytes_o, bytes_p, bytes_s)
@@ -504,20 +501,7 @@ class IdentityBNode(rdflib.BNode):
             return done
 
         count = 0
-        saved = {k:v for k, v in self.awaiting_object_identity.items()}
-        #from pprint import pprint
         while self.awaiting_object_identity:
-            # the issue here is that the dangling cases are never being entered into the awaiting pool
-            # because I am assuming that they will appear as subjects, and they do not
-            #pprint(self.symmetric_predicates, self.awaiting_object_identity)
-            #not_done = set(e
-                           #for s in self.awaiting_object_identity.values()
-                           #for t in s for e in t
-                           #if isinstance(e, rdflib.BNode))
-            # bnodes that appear only as objects, sometimes cryptically
-            #not_in = [b for b in not_done if b not in saved]
-            #not_bobjs = [b for b in not_done if b not in self.bobjects]
-            #embed()
             # first process all bnodes that already have identities
             for subject, subject_idents in list(self.bnode_identities.items()):  # list to pop from dict
                 # it is safe to pop here only if all objects attached to the bnode are not in awaiting
