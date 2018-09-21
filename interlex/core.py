@@ -499,6 +499,7 @@ class IdentityBNode(rdflib.BNode):
 
         count = 0
         while self.awaiting_object_identity:
+            print(self.awaiting_object_identity)
             # first process all bnodes that already have identities
             for subject, subject_idents in list(self.bnode_identities.items()):  # list to pop from dict
                 # it is safe to pop here only if all objects attached to the bnode are not in awaiting
