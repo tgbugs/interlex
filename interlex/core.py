@@ -412,14 +412,16 @@ class IdentityBNode(rdflib.BNode):
                                     raise ValueError('this should never happen')
                                 self.find_heads[o] = s
                                 self.to_skip.add(thing)
-                                self.bobjects.add(o)
+                                if isinstance(o, rdflib.BNode):
+                                    self.bobjects.add(o)
 
                             self.bsubjects.add(s)
                             continue
                         elif p == rdf.first:
                             self.to_lift.add(thing)
                             self.bsubjects.add(s)
-                            self.bobjects.add(o)
+                            if isinstance(o, rdflib.BNode):
+                                self.bobjects.add(o)
                             continue
 
                         if isinstance(s, rdflib.BNode) and isinstance(o, rdflib.BNode):
@@ -462,6 +464,10 @@ class IdentityBNode(rdflib.BNode):
                 ident = self.triple_identity(None, p, o)
                 self.bnode_identities[upstream].append(ident)
 
+        # resolve dangling cases
+        for o in self.dangling_objs:
+            self.bnode_identities[o].append(self.null_identity)
+
         def process_awaiting_triples(subject, triples, subject_idents=None):
             done = True
             for t in list(triples):  # list to allow remove from set
@@ -484,7 +490,7 @@ class IdentityBNode(rdflib.BNode):
                             self.named_subgraph_identities[s, p].append(ident)
                             self.linked_object_identities[object_ident] = o
 
-
+                        # in a sane world ...
                         # there is only single triple where a
                         # bnode is an object so it is safe to pop
                         gone = self.bnode_identities.pop(o)
@@ -498,8 +504,20 @@ class IdentityBNode(rdflib.BNode):
             return done
 
         count = 0
+        saved = {k:v for k, v in self.awaiting_object_identity.items()}
+        #from pprint import pprint
         while self.awaiting_object_identity:
-            print(self.awaiting_object_identity)
+            # the issue here is that the dangling cases are never being entered into the awaiting pool
+            # because I am assuming that they will appear as subjects, and they do not
+            #pprint(self.symmetric_predicates, self.awaiting_object_identity)
+            #not_done = set(e
+                           #for s in self.awaiting_object_identity.values()
+                           #for t in s for e in t
+                           #if isinstance(e, rdflib.BNode))
+            # bnodes that appear only as objects, sometimes cryptically
+            #not_in = [b for b in not_done if b not in saved]
+            #not_bobjs = [b for b in not_done if b not in self.bobjects]
+            #embed()
             # first process all bnodes that already have identities
             for subject, subject_idents in list(self.bnode_identities.items()):  # list to pop from dict
                 # it is safe to pop here only if all objects attached to the bnode are not in awaiting
@@ -562,6 +580,7 @@ class IdentityBNode(rdflib.BNode):
             self.named_identities = tuple(self.recurse(triples_or_pairs_or_thing))  # memory :/
 
             self.unnamed_heads = self.bsubjects - self.bobjects
+            self.dangling_objs = self.bobjects - self.bsubjects
 
             self.unnamed_subgraph_identities = {}
             self.named_subgraph_identities = defaultdict(list)

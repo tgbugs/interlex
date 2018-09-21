@@ -25,6 +25,16 @@ class TestIBNode(unittest.TestCase):
         self.graph2 = rdflib.Graph()
         self.graph2.parse(data=self.ser2, format=g2format)
 
+        # FIXME this doesn't account for changes in identity
+        # under normalization for example by ttlser
+        # IBNode should not do the normalization itself
+        # because we do want normalized forms to have a
+        # different identity, the question does arrise however
+        # about where symmetric predicates fit ... I think those
+        # are not a normalization of representation case I think
+        # they are clearly an ordering cases and thus in scope for
+        # IBNode, in the say way reordering lists is in scope
+
     def test_ser(self):
         assert IdentityBNode(self.ser1) != IdentityBNode(self.ser2), 'serialization matches!'
 
