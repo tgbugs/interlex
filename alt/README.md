@@ -46,7 +46,7 @@ sudo systemctl start ilxalt
 * Other times.
 ```bash
 sudo systemctl stop ilxalt
-mv run/*.whl
+mv run/*.whl .
 unzip -o alt.zip
 cd run &&
 pipenv --rm &&  # can skip this if only the interlex code has changed
