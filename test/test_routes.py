@@ -56,7 +56,7 @@ class TestRoutes(unittest.TestCase):
             f'{self.scheme}://{self.host}:{self.port}/tgbugs/curies/BIRNLEX:796?local=true',
             f'{self.scheme}://{self.host}:{self.port}/tgbugs/curies/BIRNLEX:796',
             ]
-        urls = [f'http://{self.host}{r}' for r in routes] + urls
+        urls = [f'http://{self.host}:{self.port}{r}' for r in routes] + urls
         [print(u) for u in urls]
         url_blaster(urls, 0, fail=True)
 

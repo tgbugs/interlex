@@ -1,5 +1,5 @@
-#!/usr/bin/env pypy3
 #!/usr/bin/env python3.6
+#!/usr/bin/env pypy3
 """ InterLex python implementaiton
 
 Usage:
@@ -76,7 +76,7 @@ from urllib.parse import urlparse
 import requests
 from pyontutils.utils import setPS1
 from pyontutils.namespaces import PREFIXES as uPREFIXES
-from interlex.core import printD, InterLexLoad
+from interlex.utils import printD
 from IPython import embed
 
 def main():
@@ -84,6 +84,12 @@ def main():
     defaults = {o.name:o.value if o.argcount else None for o in parse_defaults(__doc__)}
     args = docopt(__doc__, version='interlex 0.0.0')
     print(args)
+    # run all database settings through the environment
+    # just have to make sure to set it before config is imported
+    if args['<database>']:
+        os.environ.update({'INTERLEX_DATABASE':args['<database>']})
+        os.environ['INTERLEX_DATABASE'] = args['<database>']#.update({'INTERLEX_DATABASE':args['<database>']})
+
     if args['post']:
         if args['--group'] == defaults['--group']:
             # NOTE: there is a security consideration here
@@ -178,19 +184,21 @@ def main():
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
         from interlex.load import TripleLoaderFactory
-        from interlex.dump import Queries as _Q
-        app = run_uri(database=args['database'])
+        from interlex.endpoints import Endpoints
+        app = run_uri()
+        # not sure why this is needed here but not
+        # runonce is called ...
+        app.config['SQLALCHEMY_ECHO'] = args['--debug']
         db = SQLAlchemy(app)
+        endpoints = Endpoints(db)
         session = db.session
-        queries = _Q(session)
+        queries = endpoints.queries
         embed()
 
     elif args['sync']:
-        if args['<database>']:
-            os.environ.update({'INTERLEX_DATABASE':args['<database>']})
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
-        from interlex.load import TripleLoaderFactory
+        from interlex.load import TripleLoaderFactory, InterLexLoad
         app = run_uri()
         db = SQLAlchemy(app)
         TripleLoader = TripleLoaderFactory(db.session)
@@ -201,10 +209,6 @@ def main():
         embed()
 
     elif args['dbsetup']:
-        # run all database settings through the environment
-        # just have to make sure to set it before config is imported
-        if args['<database>']:
-            os.environ.update({'INTERLEX_DATABASE':args['<database>']})
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
         app = run_uri()
@@ -228,10 +232,6 @@ def main():
             app = run_api()
             port = port_api
         elif args['uri']:
-            # run all database settings through the environment
-            # just have to make sure to set it before config is imported
-            if args['<database>']:
-                os.environ.update({'INTERLEX_DATABASE':args['<database>']})
             from interlex.config import port_uri
             from interlex.uri import run_uri, __file__
             app = run_uri(echo=args['--debug'])

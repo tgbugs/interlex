@@ -76,6 +76,7 @@ INSERT INTO groups (own_role, groupname)
                          'ontologies',
                          'vocabulary',
                          'vocabularies',
+                         'lexical',
                          'lexicon',
                          'version',
                          'versions',

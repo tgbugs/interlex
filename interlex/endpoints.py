@@ -235,7 +235,7 @@ class Endpoints:
             defs = [(g.qname(s), d) for s, d in identifier_or_defs]
             title = f'{label} (disambiguation)'  # mirror wiki
             # TODO resolve existing_iri mappings so they don't show up here
-            content = render_table(defs, 'Identifier', atag(definition, 'definition:')),
+            content = render_table(defs, 'Identifier', atag(definition, 'definition:'))
             return htmldoc(h2tag(f'{label} (disambiguation)'),
                            content, title=title, styles=(table_style,))
 

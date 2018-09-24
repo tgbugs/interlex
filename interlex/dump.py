@@ -5,7 +5,8 @@ from pyontutils.namespaces import NIFRID, ilxtr, definition
 from pyontutils.combinators import annotation
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex.exc import ShouldNotHappenError
-from interlex.core import InterLexLoad, logger, makeParamsValues
+from interlex.core import logger, makeParamsValues
+from interlex.load import InterLexLoad
 
 class MysqlExport:
     def __init__(self, session):
@@ -328,14 +329,14 @@ class Queries:
 
     def getByLabel(self, label, user):
         # TODO user mapping of lexical
-        args = dict(p=rdfs.label, label=label)
+        args = dict(p=rdfs.label.toPython(), label=label)
         sql = f'SELECT s FROM triples WHERE p = :p AND o_lit ~~* :label'  # ~~* is LIKE case insensitive
         results = [r.s for r in self.session.execute(sql, args)]
         if not results:
             # NOTE if ambiguation is done by a user, then they keep that mapping
             return False, None  # redlink? ambiguate
         elif len(results) == 1:
-            return True, results[0].s  # redirect
+            return True, results[0]  # redirect
         else:
             defs = self.getDefinitions(*results)
             return False, [(s, _def) for s, _def in zip(results, defs)]  # disambiguate
