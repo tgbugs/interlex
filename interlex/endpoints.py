@@ -6,7 +6,7 @@ from flask import request, redirect, url_for, abort
 from pyontutils.core import makeGraph
 from pyontutils.utils import TermColors as tc
 from pyontutils.htmlfun import atag, btag, h2tag, htmldoc
-from pyontutils.htmlfun import table_style, render_table
+from pyontutils.htmlfun import table_style, render_table, redlink_style
 from pyontutils.namespaces import makePrefixes, definition
 from interlex import tasks
 from interlex import config
@@ -229,12 +229,19 @@ class Endpoints:
         if do_redirect:
             return redirect(identifier_or_defs)
         elif not identifier_or_defs:
-            return 'REDLINK -> AMBIGUATION -> TODO'
+            # FIXME this does not route to uri.interlex.org (probably)?
+            title = f'{label} (ambiguation)'
+            ambiguate = 'https://interlex.org/ambiguation/{label}'
+            body = (f'<a href="{ambiguate}" class="redlink">{label}</a> is undefined.')
+            return htmldoc(body,
+                           title=title,
+                           styles=(redlink_style,))
         else:
             PREFIXES, g = self.getGroupCuries(user)
             defs = [(g.qname(s), d) for s, d in identifier_or_defs]
             title = f'{label} (disambiguation)'  # mirror wiki
             # TODO resolve existing_iri mappings so they don't show up here
+            # also always resolve to the interlex page for a term not external
             content = render_table(defs, 'Identifier', atag(definition, 'definition:'))
             return htmldoc(h2tag(f'{label} (disambiguation)'),
                            content, title=title, styles=(table_style,))

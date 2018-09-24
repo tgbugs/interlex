@@ -24,6 +24,7 @@ class TripleRender:
                 return '', 404
         try:
             out = self.mimetypes[mimetype](request, mgraph, user, id, object_to_existing, title)
+            code = 303 if mimetype == 'text/html' else 200  # cool uris
             return out, 200, {'Content-Type': mimetype}
         except KeyError:
             print(mimetype)
