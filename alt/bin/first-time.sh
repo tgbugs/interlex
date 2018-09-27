@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
 
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do # resolve all symlinks
+  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # resolve relative symlinks
+done
+ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+
+ALT_PATH="${ABS_PATH}/../"
+echo ${ALT_PATH}
+
+cd ${ALT_PATH} &&
 grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&
