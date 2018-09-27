@@ -23,4 +23,4 @@ rm alt.zip;
 zip -r alt.zip README.md &&
 zip -r alt.zip run/ &&
 zip -r alt.zip deploy_files/  # first time only
-scp alt.zip ${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
+scp -v alt.zip ${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
