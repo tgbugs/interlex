@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "unzip alt.zip &&
-    sudo /bin/cp deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/ &&
-    sudo /bin/cp deploy_files/etc/systemd/system/ilxalt.socket /etc/systemd/system/ &&
-    sudo /bin/cp deploy_files/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ &&
-    sudo /bin/cp deploy_files/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ && # carful here
+    sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/ &&
+    sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.socket /etc/systemd/system/ &&
+    sudo /bin/cp -f deploy_files/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ &&
+    sudo /bin/cp -f deploy_files/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ && # carful here
     sudo unlink /etc/nginx/sites-enabled/uri.interlex.org.conf;
     sudo ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf &&
     sudo systemd-tmpfiles --create &&
