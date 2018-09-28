@@ -4,6 +4,6 @@ ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "mv run/*.whl . ;
     unzip -o alt.zip &&
     sudo systemctl stop ilxalt &&
     cd run &&
-    pipenv install *.whl &&
-    pipenv update &&
+    ~/.local/bin/pipenv install *.whl &&
+    ~/.local/bin/pipenv update &&
     sudo systemctl start ilxalt"
