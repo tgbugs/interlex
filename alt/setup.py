@@ -11,6 +11,7 @@ files = [
     '../interlex/dump.py',
     '../interlex/exc.py',
     '../interlex/render.py',
+    '../interlex/utils.py',
 ]
 
 try:
