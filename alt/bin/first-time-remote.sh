@@ -2,7 +2,7 @@
 
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "rm -rf run/;  # in case it is not actually the first time
     rm -rf deploy_files/;
-    unzip alt.zip &&
+    unzip -o alt.zip &&
     sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/ &&
     sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.socket /etc/systemd/system/ &&
     sudo /bin/cp -f deploy_files/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ &&
