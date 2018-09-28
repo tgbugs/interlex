@@ -13,7 +13,7 @@ ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "rm -rf run/;  # in case it is not actua
     sudo systemctl enable ilxalt &&
     pip3.6 install --user --ignore-installed pipenv &&
     cd run &&
-    ~/.local/bin/pipenv pipenv install &&
+    ~/.local/bin/pipenv install &&
     cd ~/ &&
     touch .mypass &&
     chmod 0600 .mypass"
