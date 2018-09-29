@@ -12,7 +12,7 @@ class TripleRender:
     def __init__(self):
         self.mimetypes = {'text/html':self.html,
                           'application/json':self.json,
-                          'text/ttl':self.ttl,  # not real
+                          #'text/ttl':self.ttl,  # not real
                           'text/turtle':self.ttl,
                           'application/rdf+xml':self.rdf_ser,
                           'application/n-triples':self.rdf_ser,
@@ -118,7 +118,7 @@ class TripleRender:
         ng = self.graph(request, mgraph, user, id, object_to_existing, title, mimetype)
         return ng.g.serialize(format=mimetype)
 
-    def json(self, request, mgraph, user, id, object_to_existing, title):
+    def json(self, request, mgraph, user, id, object_to_existing, title, mimetype):
         # lol
         graph = mgraph.g
         ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual

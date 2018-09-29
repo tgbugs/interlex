@@ -47,6 +47,14 @@ def server_alt(db=None, dburi=dbUri()):
             raise e
             return abort(404)
 
+    @app.route('/base/ilx_<id>.<extension>')
+    def ilx_get(id, extension):
+        try:
+            return ilx(id)
+        except KeyError as e:
+            print(extension, e)
+            return abort(415)
+
     return app
 
 
