@@ -8,7 +8,8 @@ ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "mv -f run/*.whl . ;
     ~/.local/bin/pipenv install *.whl &&
     sudo systemctl start ilxalt &&
     sleep 5
-    if [ -n $(sudo systemctl is-active --quiet ilxalt) ]; then
+    sudo systemctl is-active --quiet ilxalt
+    if [ $? -ne 0 ]; then
         sudo journalctl -u ilxalt.service | tail -n 50;
         exit 1;
     fi"
