@@ -5,8 +5,8 @@ from pyontutils.namespaces import NIFRID, ilxtr, definition
 from pyontutils.combinators import annotation
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex.exc import ShouldNotHappenError
-from interlex.core import logger, makeParamsValues
-from interlex.load import InterLexLoad
+from interlex.core import logger, makeParamsValues, synonym_types
+
 
 class MysqlExport:
     def __init__(self, session):
@@ -102,7 +102,7 @@ class MysqlExport:
             if p == '':  # we are in synonym space also FIXME because this is dumb
                 p = NIFRID.synonym
             elif p == 'abbrev':
-                stype = InterLexLoad.stype_lookup[p]
+                stype = synonym_types[p]
                 p = NIFRID.synonym
                 triple = preferred_iri, p, oo
                 yield from annotation(triple, (ilxtr.synonymType, stype))()

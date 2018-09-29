@@ -14,9 +14,8 @@ from pyontutils.namespaces import makeNamespaces, definition, ILX, NIFRID, ilxtr
 from interlex.exc import hasErrors, LoadError, NotGroup, NoCopyingError, NoSelfLoadError
 from interlex.exc import bigError
 from interlex.auth import Auth
-from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode
+from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode, synonym_types
 from IPython import embed
-
 
 ilxr, *_ = makeNamespaces('ilxr')
 
@@ -1540,7 +1539,7 @@ class FileFromVCSFactory(TripleLoaderFactory):
 
 # get interlex
 class InterLexLoad:
-    stype_lookup = {'abbrev':ilxtr['synonyms/abbreviation']}
+    stype_lookup = synonym_types
     def __init__(self, Loader, do_cdes=False, debug=False):
         self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex', 'uri.interlex.org')
         self.do_cdes = do_cdes

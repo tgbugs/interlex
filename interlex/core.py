@@ -31,6 +31,8 @@ from interlex.utils import printD, makeSimpleLogger
 from IPython import embed
 
 logger = makeSimpleLogger('ilx_core')
+synonym_types = {'abbrev':ilxtr['synonyms/abbreviation']}
+
 
 class uri(types.UserDefinedType):
     def __init__(self, uri):
