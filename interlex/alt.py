@@ -12,11 +12,11 @@ from interlex.render import TripleRender  # FIXME need to move the location of t
 def dbUri(user='nif_eelg_secure', host='nif-mysql.crbs.ucsd.edu', port=3306, database='nif_eelg'):
     DB_URI = 'mysql+pymysql://{user}:{password}@{host}:{port}/{db}'  # FIXME db => pyontutils refactor
     if socket.gethostname() in config.dev_remote_hosts:
-        config = mysql_conn_helper('localhost', database, user, 33060)  # see .ssh/config
+        db_cfg_kwargs = mysql_conn_helper('localhost', database, user, 33060)  # see .ssh/config
     else:
-        config = mysql_conn_helper(host, database, user, port)
+        db_cfg_kwargs = mysql_conn_helper(host, database, user, port)
 
-    return DB_URI.format(**config)
+    return DB_URI.format(**db_cfg_kwargs)
 
 
 def server_alt(db=None, dburi=dbUri()):
