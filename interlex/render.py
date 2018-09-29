@@ -13,19 +13,48 @@ class TripleRender:
         self.mimetypes = {'text/html':self.html,
                           'application/json':self.json,
                           'text/ttl':self.ttl,  # not real
-                          'text/turtle':self.ttl,}
-
+                          'text/turtle':self.ttl,
+                          'application/rdf+xml':self.rdf_ser,
+                          'application/n-triples':self.rdf_ser,
+                          'text/n3':self.rdf_ser,
+                          #'application/n-quads':self.rdf_ser  # TODO need qualifier context store
+        }
+        self.extensions = {'html': 'text/html',
+                           'json': 'application/json',
+                           'ttl': 'text/turtle',  # InterLex rdf?
+                           'xml': 'application/rdf+xml',
+                           'owl': 'application/rdf+xml',  # FIXME conversion rules for owl?
+                           'nt': 'application/n-triples',
+                           'n3': 'text/n3',
+                           #'nq': 'application/n-quads',  # TODO need qualifier context store
+        }
+ 
     def __call__(self, request, mgraph, user, id, object_to_existing, title=None):
         mimetype = request.mimetype if request.mimetype else 'text/html'
+        extension = (request.view_args['extension'] if
+                     'extension' in request.view_args else
+                     None)
+        if extension:
+            try:
+                mimetype = self.extensions[extension]
+            except KeyError:
+                print(extension)
+                return abort(415)
+
         if not mgraph.g:
             if mimetype == 'text/html':
                 return abort(404)
             else:
                 return '', 404
         try:
-            out = self.mimetypes[mimetype](request, mgraph, user, id, object_to_existing, title)
-            code = 303 if mimetype == 'text/html' else 200  # cool uris
-            return out, 200, {'Content-Type': mimetype}
+            out = self.mimetypes[mimetype](request, mgraph, user, id,
+                                           object_to_existing, title, mimetype)
+            code = 303 if mimetype == 'text/html' and extension != 'html' else 200  # cool uris
+            to_plain = 'ttl', 'nt', 'n3', 'nq'
+            headers = {'Content-Type': ('text/plain; charset=utf-8'
+                                        if extension in to_plain
+                                        else mimetype)}
+            return out, code, headers
         except KeyError:
             print(mimetype)
             return abort(415)
@@ -45,7 +74,7 @@ class TripleRender:
     def curie_selection_logic(self):
         """ Same as iri selection but for curies """
 
-    def html(self, request, mgraph, user, id, object_to_existing, title):
+    def html(self, request, mgraph, user, id, object_to_existing, title, mimetype):
         graph = mgraph.g
         cts = CustomTurtleSerializer(graph)
         gsortkey = cts._globalSortKey
@@ -64,7 +93,7 @@ class TripleRender:
                        title=title,
                        styles=(table_style,))
 
-    def ttl(self, request, mgraph, user, id, object_to_existing, title):
+    def graph(self, request, mgraph, user, id, object_to_existing, title, mimetype):
         graph = mgraph.g
         nowish = datetime.utcnow()  # request doesn't have this
         epoch = nowish.timestamp()
@@ -79,7 +108,15 @@ class TripleRender:
                                                        f'{user}/ilx_{id} at {iso}')))
         # TODO consider data identity?
         ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
+        return ng
+
+    def ttl(self, request, mgraph, user, id, object_to_existing, title, mimetype):
+        ng = self.graph(request, mgraph, user, id, object_to_existing, title, mimetype)
         return ng.g.serialize(format='nifttl')
+
+    def rdf_ser(self, request, mgraph, user, id, object_to_existing, title, mimetype):
+        ng = self.graph(request, mgraph, user, id, object_to_existing, title, mimetype)
+        return ng.g.serialize(format=mimetype)
 
     def json(self, request, mgraph, user, id, object_to_existing, title):
         # lol

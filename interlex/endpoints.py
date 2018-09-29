@@ -170,8 +170,10 @@ class Endpoints:
             return f'Unknown prefix {prefix}', 404
 
     def get_func(self, nodes):
+        ilx_get = ilx_pattern + '.<extension>'
         mapping = {
             ilx_pattern:self.ilx,
+            ilx_get:self.ilx_get,
             'lexical':self.lexical,
             'readable':self.readable,
             'uris':self.uris,
@@ -222,6 +224,17 @@ class Endpoints:
             title = f'ilx.{user}:ilx_{id}'
 
         return tripleRender(request, g, user, id, object_to_existing, title)
+
+    @basic
+    def ilx_get(self, user, id, extension, db=None):
+        # TODO these are not cool uris
+        # TODO move this lookup to config?
+        try:
+            return self.ilx(user=user, id=id, db=db)
+            #return tripleRender(request, g, user, id, object_to_existing, title)
+        except KeyError as e:
+            print(extension, e)
+            return abort(415)
 
     @basic
     def lexical(self, user, label, db=None):

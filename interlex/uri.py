@@ -14,13 +14,14 @@ log = makeSimpleLogger('setup')
 
 def uriStructure():
     basic = [ilx_pattern, 'readable']
+    ilx_get = ilx_pattern + '.<extension>'
     branches = ['uris', 'curies', 'ontologies', 'versions']  # 'prov'
     compare = ['own', 'diff']
     version_compare = []  # TODO? probably best to deal with the recursion in make_paths
     versioned_ids = basic + ['curies', 'uris']
     intermediate_filename = ['<filename>.<extension>', '<filename>']
     parent_child = {
-        '<user>':              basic + ['lexical'] + branches + compare + ['contributions', 'upload', 'prov'],
+        '<user>':              basic + [ilx_get, 'lexical'] + branches + compare + ['contributions', 'upload', 'prov'],
         '<other_user>':        branches,  # no reason to access /user/own/otheruser/ilx_ since identical to /user/ilx_
         '<other_user_diff>':   basic + ['lexical'] + branches,
         'lexical':             ['<label>'],
