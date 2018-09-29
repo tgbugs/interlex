@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
-from interlex.core import makeSimpleLogger
+from interlex.utils import makeSimpleLogger
 from IPython import embed
+
 
 class Auth:
 

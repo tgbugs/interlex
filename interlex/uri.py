@@ -3,9 +3,9 @@ from flask import Flask
 from flask_restplus import Api, Resource
 from flask_sqlalchemy import SQLAlchemy
 from interlex import config
-from interlex.core import printD, makeSimpleLogger
 from interlex.core import dbUri, mqUri, diffCuries
 from interlex.core import RegexConverter, make_paths, makeParamsValues
+from interlex.utils import printD, makeSimpleLogger
 from interlex.tasks import cel
 from interlex.config import ilx_pattern
 

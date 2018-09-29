@@ -3,7 +3,6 @@
 import sys
 import socket
 import hashlib
-import logging
 from pathlib import Path, PurePath
 from tempfile import gettempdir
 from functools import partialmethod
@@ -28,21 +27,8 @@ from pyontutils.namespaces import PREFIXES as uPREFIXES
 from pyontutils.combinators import annotation
 from pyontutils.closed_namespaces import rdf, rdfs, owl, oboInOwl
 from interlex import config
-from interlex.utils import printD
+from interlex.utils import printD, makeSimpleLogger
 from IPython import embed
-
-def makeSimpleLogger(name):
-    # TODO use extra ...
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
-    ch = logging.StreamHandler()  # FileHander goes to disk
-    formatter = logging.Formatter('[%(asctime)s] - %(levelname)s - '
-                                  '%(name)s - '
-                                  '%(filename)s:%(lineno)d - '
-                                  '%(message)s')
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-    return logger
 
 logger = makeSimpleLogger('ilx_core')
 
