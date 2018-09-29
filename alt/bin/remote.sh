@@ -9,6 +9,7 @@ ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "mv -f run/*.whl . ;
     sudo systemctl start ilxalt &&
     sleep .2
     if [ -n $(sudo systemctl is-active --quiet ilxalt) ]; then
+        sudo journalctl -u ilxalt.service | tail -n 50;
         exit 1;
     fi"
 if [ $? -ne 0 ]; then

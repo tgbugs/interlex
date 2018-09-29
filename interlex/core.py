@@ -25,7 +25,7 @@ from pyontutils.config import devconfig
 from pyontutils.ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
 from pyontutils.namespaces import PREFIXES as uPREFIXES
 from pyontutils.combinators import annotation
-from pyontutils.closed_namespaces import rdf, rdfs, owl, oboInOwl
+from pyontutils.closed_namespaces import rdf, rdfs, owl, oboInOwl, ilxtr
 from interlex import config
 from interlex.utils import printD, makeSimpleLogger
 from IPython import embed
