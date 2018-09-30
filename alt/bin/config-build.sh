@@ -22,5 +22,5 @@ rmdir dist &&
 rm alt.zip;
 zip -r alt.zip README.md &&
 zip -r alt.zip run/ &&
-zip -r alt.zip deploy_files/  # first time only
+zip -r alt.zip deploy_files/
 scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "rm -rf run/;  # in case it is not actually the first time
+ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "rm -rf run/;
     rm -rf deploy_files/;
     unzip -o alt.zip &&
     sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/ &&
@@ -16,9 +16,19 @@ ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "rm -rf run/;  # in case it is not actua
     ~/.local/bin/pipenv install &&
     cd ~/ &&
     touch .mypass &&
-    chmod 0600 .mypass"
-if [ $? -ne 0 ]; then
-    exit 1
+    chmod 0600 .mypass
+    if [ -s .mypass ]; then
+        sudo systemctl restart ilxalt &&
+        sudo systemctl restart nginx;
+    else
+        echo ~/.mypass has no records;
+        exit 2;
+    fi"
+SSH_EXIT=$?
+if [ $SSH_EXIT -eq 2 ]; then
+    echo you need to edit ~/.mypass on ${INTERLEX_SERVER} as ${INTERLEX_USER} to complete setup
+    echo the pattern used to set the password is deocumented in step five of README.md on the server
+    exit $SSH_EXIT
+elif [ $SSH_EXIT -ne 0 ]; then
+    exit $SSH_EXIT
 fi
-echo you need to edit ~/.mypass on ${INTERLEX_SERVER} as ${INTERLEX_USER} to complete the setup
-echo the pattern used to set the password is deocumented in step five of README.md on the server
