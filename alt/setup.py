@@ -39,6 +39,7 @@ try:
               'flask_sqlalchemy',
               'gevent',
               'gunicorn',
+              'neurdflib-jsonld',
               'pyontutils',
           ],
           extras_require={'dev':[]},

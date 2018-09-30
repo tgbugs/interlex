@@ -32,12 +32,12 @@ class TestRoutes(unittest.TestCase):
 
     def test_extension(self):
         urls = [
-            f'{self.scheme}://{self.host}:{self.port}/base/ilx_0101431.html',
-            f'{self.scheme}://{self.host}:{self.port}/base/ilx_0101431.ttl',
-            f'{self.scheme}://{self.host}:{self.port}/base/ilx_0101431.xml',
-            f'{self.scheme}://{self.host}:{self.port}/base/ilx_0101431.nt',
-            f'{self.scheme}://{self.host}:{self.port}/base/ilx_0101431.n3',
+            f'{self.scheme}://{self.host}:{self.port}/base/ilx_0101431',
         ]
-        for url in urls:
-            out = requests.get(url, headers={'host': self.hostname})
-            assert out.ok
+        for base_url in urls:
+            for ex in tr.extensions:
+                url = base_url + '.' + ex
+                out = requests.get(url, headers={'host': self.hostname})
+                if ex == 'jsonld':
+                    print(out.json())
+                assert out.ok

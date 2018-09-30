@@ -12,7 +12,7 @@ class TripleRender:
     def __init__(self):
         self.mimetypes = {'text/html':self.html,
                           'application/json':self.json,
-                          #'text/ttl':self.ttl,  # not real
+                          'application/ld+json':self.jsonld,
                           'text/turtle':self.ttl,
                           'application/rdf+xml':self.rdf_ser,
                           'application/n-triples':self.rdf_ser,
@@ -21,6 +21,7 @@ class TripleRender:
         }
         self.extensions = {'html': 'text/html',
                            'json': 'application/json',
+                           'jsonld': 'application/ld+json',
                            'ttl': 'text/turtle',  # InterLex rdf?
                            'xml': 'application/rdf+xml',
                            'owl': 'application/rdf+xml',  # FIXME conversion rules for owl?
@@ -111,12 +112,19 @@ class TripleRender:
         return ng
 
     def ttl(self, request, mgraph, user, id, object_to_existing, title, mimetype):
-        ng = self.graph(request, mgraph, user, id, object_to_existing, title, mimetype)
+        ng = self.graph(request, mgraph, user, id,
+                        object_to_existing, title, mimetype)
         return ng.g.serialize(format='nifttl')
 
-    def rdf_ser(self, request, mgraph, user, id, object_to_existing, title, mimetype):
-        ng = self.graph(request, mgraph, user, id, object_to_existing, title, mimetype)
-        return ng.g.serialize(format=mimetype)
+    def rdf_ser(self, request, mgraph, user, id, object_to_existing, title, mimetype,
+                **kwargs):
+        ng = self.graph(request, mgraph, user, id,
+                        object_to_existing, title, mimetype)
+        return ng.g.serialize(format=mimetype, **kwargs)
+
+    def jsonld(self, request, mgraph, user, id, object_to_existing, title, mimetype):
+        return self.rdf_ser(request, mgraph, user, id,
+                            object_to_existing, title, mimetype, auto_compact=True)
 
     def json(self, request, mgraph, user, id, object_to_existing, title, mimetype):
         # lol
