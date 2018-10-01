@@ -12,6 +12,7 @@ ALT_PATH="${ABS_PATH}/../"
 echo ${ALT_PATH}
 
 cd ${ALT_PATH} &&
+git clean -fxd &&  # cleans only the alt subdir
 grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&

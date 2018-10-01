@@ -12,6 +12,7 @@ ALT_PATH="${ABS_PATH}/../"
 echo ${ALT_PATH}
 
 cd ${ALT_PATH} &&
+git clean -fxd &&  # cleans only the alt subdir
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&
 rm -rf *.egg-info &&

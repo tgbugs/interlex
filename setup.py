@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from setuptools import setup
 
 setup(name='InterLex',
@@ -29,5 +30,5 @@ setup(name='InterLex',
               'interlex=interlex.cli:main',
           ],
       },
-      data_files=[('sql', ['*'])]
+      data_files=[('sql', [f.as_posix() for f in Path('sql').iterdir()])]
      )
