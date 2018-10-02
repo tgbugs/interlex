@@ -109,7 +109,7 @@ def long_ffi(self, group, user, reference_name, reference_host,
 
 
 @cel.task(bind=True)
-def long_ffp(self, group, user, reference_host, serialization, header, create):
+def long_ffp(self, group, user, reference_host, name, serialization, header, create):
     global session
     #pprint(dir(self))
     FileFromPost = FileFromPostFactory(session)

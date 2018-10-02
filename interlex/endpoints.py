@@ -423,7 +423,8 @@ class Endpoints:
         for name, file in request.files.items():
             will_batch = loader.check(name, file, header)
             if will_batch:
-                task = tasks.long_ffp.apply_async((group, user, self.reference_host, loader.serialization, dict(header), create),
+                # FIXME sending the serialization very slow?
+                task = tasks.long_ffp.apply_async((group, user, self.reference_host, name, loader.serialization, dict(header), create),
                                                   serializer='pickle')
                 job_url = request.scheme + '://' + self.reference_host + url_for("route_api_job", jobid=task.id)
                 return f'that\'s quite a large file you\'ve go there!\nit has been submitted for processing {job_url}', 202
