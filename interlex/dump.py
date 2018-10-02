@@ -174,11 +174,6 @@ class Queries:
                     'WHERE c.group_id = idFromGroupname(:group)')  # FIXME idFromGroupname??
         resp = self.session.execute(sql, params)
         PREFIXES = {cp:ip for cp, ip in resp}
-        if not PREFIXES:  # we get the base elsewhere
-            PREFIXES = {'rdf':str(rdflib.RDF),
-                        'rdfs':str(rdflib.RDFS),
-                        'owl':str(rdflib.OWL)}
-
         return PREFIXES
 
     def getAll(self, qualifier=None, unmapped=False):  # TODO qualit
@@ -217,8 +212,8 @@ class Queries:
         return resp
 
     def getById(self, id, user):
-        uri = f'http://uri.interlex.org/base/ilx_{id}'
-        args = dict(uri=uri, id=id)
+        uri = f'http://uri.interlex.org/base/ilx_{id}'  # FIXME reference_host from db ...
+        args = dict(uri=uri, id=id, p=str(ilxtr.hasExistingId))
         #sql = ('SELECT e.iri, c.p, c.o, c.qualifier_id, c.transform_rule_id '
                 #'FROM existing_iris as e JOIN core as c ON c.s = e.iri OR c.s = :uri '
                 #'WHERE e.ilx_id = :id')
@@ -260,10 +255,14 @@ class Queries:
             FROM triples as sg, graph as g
             WHERE sg.subgraph_identity = g.subgraph_identity AND sg.s is NULL
         )
-        SELECT * FROM graph UNION SELECT * from subgraphs;
+        SELECT * FROM graph UNION SELECT * from subgraphs
+        UNION SELECT :uri, NULL, :p, iri, NULL, NULL, NULL, NULL, NULL FROM existing_iris WHERE ilx_id = :id;
         '''
+        # FIXME serialization choices means that any and all ilx ids that are pulled out from here need
+        # to have their existing ids pulled in as well, it is just easy to get the existing of the primary
+        # in a single query here
+        # FIXME is it worth considering not using base but instead using s_ilx p_ilx, and o_ilx since they they have known size?
 
-        # forget it, do it as two queries for now
         sql2 = f'''
         SELECT *
             FROM ({sql}) as sq

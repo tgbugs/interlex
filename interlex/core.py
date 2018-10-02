@@ -32,6 +32,10 @@ from IPython import embed
 
 logger = makeSimpleLogger('ilx_core')
 synonym_types = {'abbrev':ilxtr['synonyms/abbreviation']}
+default_prefixes = {'rdf':str(rdf),
+                    'rdfs':str(rdfs),
+                    'owl':str(owl)}
+
 
 
 class uri(types.UserDefinedType):

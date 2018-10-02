@@ -8,13 +8,16 @@ import rdflib
 import hashlib
 import requests
 import sqlalchemy as sa
-from pyontutils.core import rdf, owl, OntId
+from pyontutils.core import OntId
 from pyontutils.utils import TermColors as tc
-from pyontutils.namespaces import makeNamespaces, definition, ILX, NIFRID, ilxtr
+from pyontutils.namespaces import definition
+from pyontutils.namespaces import makeNamespaces, ILX, NIFRID, ilxtr
+from pyontutils.combinators import annotation
+from pyontutils.closed_namespaces import rdf, rdfs, owl, oboInOwl
 from interlex.exc import hasErrors, LoadError, NotGroup, NoCopyingError, NoSelfLoadError
 from interlex.exc import bigError
 from interlex.auth import Auth
-from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode, synonym_types
+from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode, synonym_types, dbUri
 from IPython import embed
 
 ilxr, *_ = makeNamespaces('ilxr')
@@ -1541,6 +1544,9 @@ class FileFromVCSFactory(TripleLoaderFactory):
 class InterLexLoad:
     stype_lookup = synonym_types
     def __init__(self, Loader, do_cdes=False, debug=False):
+        import socket
+        from sqlalchemy import create_engine, inspect
+        from interlex import config
         self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex', 'uri.interlex.org')
         self.do_cdes = do_cdes
         self.debug = debug
@@ -1565,6 +1571,7 @@ class InterLexLoad:
 
     @bigError
     def local_load(self):
+        from pyontutils.core import makeGraph
         loader = self.loader
         self.loader.session.execute(self.ilx_sql, self.ilx_params)
         loader.session.execute(self.eid_sql, self.eid_params)

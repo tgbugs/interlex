@@ -12,7 +12,7 @@ from interlex import tasks
 from interlex import config
 from interlex.exc import NotGroup, NameCheckError
 from interlex.auth import Auth
-from interlex.core import printD
+from interlex.core import printD, diffCuries, makeParamsValues, default_prefixes
 from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
 from interlex.config import ilx_pattern
@@ -111,6 +111,7 @@ def basic2(function):
 
 class Endpoints:
     reference_host = None  # this has to be set globally later
+
     def __init__(self, db):
         self.db = db
         self.session = self.db.session
@@ -145,14 +146,17 @@ class Endpoints:
             printD('not group?')
             return None
 
-    def getGroupCuries(self, group, epoch_verstr=None):
+    def getGroupCuries(self, group, epoch_verstr=None,
+                       default=default_prefixes):
         PREFIXES = self.queries.getGroupCuries(group, epoch_verstr)
         currentHost = request.headers['Host']
         PREFIXES = {cp:ip.replace('uri.interlex.org', currentHost) if config.debug else ip
                     # TODO app.debug should probably be switched out for something configurable
                     for cp, ip in PREFIXES.items()}
+        if not PREFIXES:  # we get the base elsewhere
+            PREFIXES = default
         #printD(PREFIXES)
-        g = makeGraph(group + '_curies_helper', prefixes=PREFIXES)
+        g = makeGraph(group + '_curies_helper', prefixes=PREFIXES if PREFIXES else default_prefixes)
         return PREFIXES, g
 
     def build_reference_name(self, user, path):
@@ -234,7 +238,8 @@ class Endpoints:
             #return tripleRender(request, g, user, id, object_to_existing, title)
         except KeyError as e:
             print(extension, e)
-            return abort(415)
+            raise e
+            return abort(500)
 
     @basic
     def lexical(self, user, label, db=None):
@@ -251,7 +256,7 @@ class Endpoints:
                            styles=(redlink_style,))
         else:
             PREFIXES, g = self.getGroupCuries(user)
-            defs = [(g.qname(s), d) for s, d in identifier_or_defs]
+            defs = [(atag(s, g.qname(s)), d) for s, d in identifier_or_defs]
             title = f'{label} (disambiguation)'  # mirror wiki
             # TODO resolve existing_iri mappings so they don't show up here
             # also always resolve to the interlex page for a term not external
@@ -303,9 +308,9 @@ class Endpoints:
     @basic
     def curies_(self, user, db=None):
         # TODO auth
-        PREFIXES, g = self.getGroupCuries(user)
         if request.method == 'POST':
-            # TODO diff against existing
+            PREFIXES, g = self.getGroupCuries(user, default={})
+            # FIXME enforce rdf rdfs and owl? or only no empty?
             if request.json is None:
                 return 'No curies were sent\n', 400
             newPrefixes = request.json
@@ -331,13 +336,15 @@ class Endpoints:
                 self.session.rollback()
                 return f'Curie exists\n{e.orig.pgerror}', 409  # conflict
                 return f'Curie exists\n{e.args[0]}', 409  # conflict
-
+        else:
+            PREFIXES, g = self.getGroupCuries(user)
 
         return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
     # TODO POST PATCH PUT
     @basic
     def curies(self, user, prefix_iri_curie, db=None):
+        print(prefix_iri_curie)
         PREFIXES, g = self.getGroupCuries(user)
         qname, expand = g.qname, g.expand
         if prefix_iri_curie.startswith('http') or prefix_iri_curie.startswith('file'):  # TODO decide about urlencoding
@@ -346,24 +353,34 @@ class Endpoints:
             return curie
         elif ':' in prefix_iri_curie:
             curie = prefix_iri_curie
+            prefix, suffix = curie.split(':', 1)
+            if prefix == 'ILX':  # TODO more matches?
+                id = suffix
+            else:
+                id = None
+
             try:
                 iri = expand(curie)
             except KeyError:
-                prefix, *_ = curie.split(':')
                 return f'Unknown prefix {prefix}', 404
+
             if 'local' in request.args and request.args['local'].lower() == 'true':
-                sql = ('SELECT ilx_id FROM existing_iris AS e WHERE e.iri = :iri '
-                        'AND (e.group_id = :group_id OR e.group_id = 0)')  # base vs curated
-                try:
-                    resp = next(self.session.execute(sql, dict(iri=iri, group_id=db.group_id)))
-                    return redirect(url_for(f'Endpoints.ilx /<user>/{ilx_pattern}',
-                                            user=user, id=resp.ilx_id), code=302)
-                except AttributeError as e:
-                    embed()
-                    raise e
-                except StopIteration:
-                    return abort(404)
-                    pass
+                if id is None:
+                    sql = ('SELECT ilx_id FROM existing_iris AS e WHERE e.iri = :iri '
+                            'AND (e.group_id = :group_id OR e.group_id = 0)')  # base vs curated
+                    args = dict(iri=iri, group_id=db.group_id)
+                    try:
+                        resp = next(self.session.execute(sql, args))
+                        id = resp.ilx_id
+                    except AttributeError as e:
+                        embed()
+                        raise e
+                    except StopIteration:
+                        return abort(404)
+                        pass
+
+                return redirect(url_for(f'Endpoints.ilx /<user>/{ilx_pattern}',
+                                        user=user, id=id), code=302)
 
                 #return redirect('https://curies.interlex.org/' + curie, code=302)  # TODO abstract
             return redirect(iri, code=302)

@@ -1,11 +1,15 @@
+from IPython import embed
 import json
 from datetime import datetime
+from itertools import chain
 import rdflib
 from flask import abort  # FIXME decouple this??
+from pyontutils.core import OntId
 from pyontutils.ttlser import CustomTurtleSerializer
 from pyontutils.htmlfun import atag, htmldoc
 from pyontutils.htmlfun import table_style, render_table
 from pyontutils.qnamefix import cull_prefixes
+from pyontutils.namespaces import isAbout, ilxtr
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 
 class TripleRender:
@@ -38,8 +42,9 @@ class TripleRender:
         if extension:
             try:
                 mimetype = self.extensions[extension]
-            except KeyError:
-                print(extension)
+            except KeyError as e:
+                print(extension, e)
+                raise e
                 return abort(415)
 
         if not mgraph.g:
@@ -56,8 +61,9 @@ class TripleRender:
                                         if extension in to_plain
                                         else mimetype)}
             return out, code, headers
-        except KeyError:
-            print(mimetype)
+        except KeyError as e:
+            print(mimetype, e)
+            raise e
             return abort(415)
 
     def iri_selection_logic(self):  # TODO
@@ -94,17 +100,56 @@ class TripleRender:
                        title=title,
                        styles=(table_style,))
 
+    def renderPreferences(self, user, graph, id):
+        uri = rdflib.URIRef(f'http://uri.interlex.org/{user}/ilx_{id}')  # FIXME reference_host from db ...
+        new_graph = rdflib.Graph()
+        [new_graph.bind(p, n) for p, n in graph.namespaces()]
+        ranking = ('UBERON', 'CHEBI', 'GO', 'PR', 'BIRNLEX', 'NLX',
+                   # FIXME TODO much more complex than this and source user rankings from db ...
+                   'NDA.CDE', 'ILX')
+        not_in_rank = len(ranking) + 1
+        def by_rank(oid):
+            # FIXME preferring lower sorting identifiers seems
+            # like a bad hack
+            try:
+                print('AAAAAAAAA', oid, oid.prefix)
+                return ranking.index(oid.prefix), '', oid.suffix
+            except ValueError:
+                # fail over to ilx, but alpha in even of weirdness
+                return not_in_rank, oid.prefix, oid.suffix
+
+        uri  # needed to backstop unranked
+        existing = sorted((OntId(o) for _, o in chain(graph[:ilxtr.hasExistingId:], ((None, uri),))),
+                          key=by_rank)  # can use [uri::] for now because of the mysql logic
+        preferred_iri = existing[0].u
+        if preferred_iri != uri:
+            new_graph.add((preferred_iri, ilxtr.hasIlxId, uri))
+        for s, p, o in graph:
+            if o == preferred_iri and p == ilxtr.hasExistingId and preferred_iri != uri:
+                continue
+            elif preferred_iri == uri == o and p == ilxtr.hasIlxId:
+                # mysql case
+                continue
+
+            ns = preferred_iri
+            np = p  # TODO
+            no = o  # TODO
+            new_graph.add((ns, np, no))
+        return preferred_iri, new_graph
+
     def graph(self, request, mgraph, user, id, object_to_existing, title, mimetype):
-        graph = mgraph.g
+        preferred_iri, graph = self.renderPreferences(user, mgraph.g, id)
         nowish = datetime.utcnow()  # request doesn't have this
         epoch = nowish.timestamp()
         iso = nowish.isoformat()
         ontid = rdflib.URIRef(f'http://uri.interlex.org/{user}'
                               f'/ontologies/ilx_{id}')
         ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/ilx_{id}')
+        # FIXME this should be the preferred it ...
         graph.add((ontid, rdf.type, owl.Ontology))
         graph.add((ontid, owl.versionIRI, ver_ontid))
         graph.add((ontid, owl.versionInfo, rdflib.Literal(iso)))
+        graph.add((ontid, isAbout, preferred_iri))
         graph.add((ontid, rdfs.comment, rdflib.Literal('InterLex single term result for '
                                                        f'{user}/ilx_{id} at {iso}')))
         # TODO consider data identity?
