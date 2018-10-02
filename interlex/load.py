@@ -1459,8 +1459,21 @@ class FileFromPostFactory(FileFromIRIFactory):
     def __init__(self, group, user, reference_host, reference_name=None):
         super().__init__(group, user, reference_name, reference_host)
 
+    def check(self, name, file, header, ser=None):  # FIXME ... reference names and stuff
+        self.name = name
+        self._header = {k:v for k, v in header.items()}
+        if file is not None:
+            self.file = file
+        elif ser is not None:
+            self._serialization = ser
+        else:
+            raise ValueError('no file or serialization')
+
+        return not (self.content_length_mb < self.immediate_loading_limit_mb and  # FIXME fails fake header
+                    self.actual_length_mb < self.immediate_loading_limit_mb)
+
     @hasErrors(LoadError)
-    def __call__(self, file, header, create):
+    def __call__(self, create):
         if not self.times:
             self.times = {'begin':time.time()}
         self.create = create
@@ -1468,9 +1481,7 @@ class FileFromPostFactory(FileFromIRIFactory):
         self.name = f'file://{file.filename}'
         #self._extension = file.filename.rsplit('.', 1)[-1]
         self._mimetype = file.mimetype
-        self._header = {k:v for k, v in header.items()}
 
-        self.file = file
         self.reference_name
         super().__call__(self.name, self.expected_bound_name)
         self.file = None  # cleanup

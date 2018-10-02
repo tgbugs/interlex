@@ -4,7 +4,7 @@ from celery import Celery, Task
 from celery.signals import worker_process_init, worker_process_shutdown
 from interlex import config
 from interlex.core import getScopedSession
-from interlex.load import FileFromIRIFactory
+from interlex.load import FileFromIRIFactory, FileFromPostFactory
 from IPython import embed
 from pprint import pprint
 
@@ -102,10 +102,27 @@ def base_ffi(group, user, reference_name, reference_host,
 @cel.task(bind=True)
 def long_ffi(self, group, user, reference_name, reference_host,
              name, expected_bound_name, header=None, serialization=None):
-    pprint(dir(self))
+    #pprint(dir(self))
     return base_ffi(group, user, reference_name, reference_host,
                     name, expected_bound_name, header, serialization, self=self)
     # TODO logging and stats
+
+
+@cel.task(bind=True)
+def long_ffp(self, group, user, reference_host, serialization, header, create):
+    global session
+    #pprint(dir(self))
+    FileFromPost = FileFromPostFactory(session)
+    ffp = FileFromPost(group, user, reference_host)
+    self.update_state(state='CHECKING')
+    check_failed = ffp.check(name, None, header, ser=serialization)  # should have already been run
+    self.update_state(state='SETUP')
+    setup_failed = ffp(create)
+    self.update_state(state='LOAD')
+    if not setup_failed:
+        ffp.load()
+    self.update_state(state='SUCCESS')  # FIXME use the real success value
+    return 'done'
 
 
 @cel.task(bind=True)

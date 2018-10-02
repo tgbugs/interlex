@@ -401,9 +401,12 @@ class Endpoints:
         # only POST
         # TODO auth
 
+        group = user
+        user = db.user
+
         # TODO load stats etc
         try:
-            loader = self.FileFromPost(user, user, self.reference_host)
+            loader = self.FileFromPost(group, user, self.reference_host)
         except NotGroup:
             return abort(404)
 
@@ -418,17 +421,24 @@ class Endpoints:
 
         names = []
         for name, file in request.files.items():
-            setup_ok = loader(file, header, create)
-            if setup_ok is not None:
-                return setup_ok
-            names.append({'reference_name':loader.reference_name,
-                            'bound_name':loader.Loader.bound_name})  # sigh json
-            load_ok = loader.load()
-            if load_ok is not None:
-                msg, code = load_ok
-                data = {'error':msg, 'names':names}
-                sigh = json.dumps(data)
-                return sigh, code, {'Content-Type':'application/json'}
+            will_batch = loader.check(name, file, header)
+            if will_batch:
+                task = tasks.long_ffp.apply_async((group, user, self.reference_host, loader.serialization, dict(header), create),
+                                                  serializer='pickle')
+                job_url = request.scheme + '://' + self.reference_host + url_for("route_api_job", jobid=task.id)
+                return f'that\'s quite a large file you\'ve go there!\nit has been submitted for processing {job_url}', 202
+            else:
+                setup_ok = loader(create)
+                if setup_ok is not None:
+                    return setup_ok
+                names.append({'reference_name':loader.reference_name,
+                              'bound_name':loader.Loader.bound_name})  # sigh json
+                load_ok = loader.load()
+                if load_ok is not None:
+                    msg, code = load_ok
+                    data = {'error':msg, 'names':names}
+                    sigh = json.dumps(data)
+                    return sigh, code, {'Content-Type':'application/json'}
 
         return json.dumps(names)
 
@@ -487,6 +497,9 @@ class Endpoints:
                     printD(request.json)
                     if 'name' in request.json:
                         name = request.json['name']  # FIXME not quite right?
+                        if name.startswith('file://'):
+                            return 'file:// scheme not allowed', 400
+
                         if 'bound-name' in request.json:
                             expected_bound_name = request.json['bound-name']
                         else:
@@ -521,8 +534,9 @@ class Endpoints:
                                 # ya so this doesn't quite work ...
                                 #task = tasks.long_load.apply_async((loader, expected_bound_name),
                                                                    #serializer='pickle')
-                                embed()
-                                return f'that\'s quite a large file you\'ve go there!\nit has been submitted for processing {url_for("route_api_job")}{task.id}', 202
+
+                                job_url = request.scheme + '://' + self.reference_host + url_for("route_api_job", jobid=task.id)
+                                return f'that\'s quite a large file you\'ve go there!\nit has been submitted for processing {job_url}', 202
                         except NameCheckError as e:
                             return e.message, e.code
 
