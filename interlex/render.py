@@ -11,6 +11,7 @@ from pyontutils.htmlfun import table_style, render_table
 from pyontutils.qnamefix import cull_prefixes
 from pyontutils.namespaces import isAbout, ilxtr
 from pyontutils.closed_namespaces import rdf, rdfs, owl
+from interlex import exc
 
 class TripleRender:
     def __init__(self):
@@ -33,38 +34,43 @@ class TripleRender:
                            'n3': 'text/n3',
                            #'nq': 'application/n-quads',  # TODO need qualifier context store
         }
- 
-    def __call__(self, request, mgraph, user, id, object_to_existing, title=None):
+
+    def check(self, request):
         mimetype = request.mimetype if request.mimetype else 'text/html'
         extension = (request.view_args['extension'] if
                      'extension' in request.view_args else
                      None)
+
         if extension:
             try:
                 mimetype = self.extensions[extension]
             except KeyError as e:
-                print(extension, e)
-                raise e
-                return abort(415)
+                raise exc.UnsupportedType(f"don't know what to do with {extension}", 415) from e
+
+        try:
+            func = self.mimetypes[mimetype]
+        except KeyError as e:
+            raise exc.UnsupportedType(f"don't know what to do with {mimetype}", 415) from e
+
+        return extension, mimetype, func
+
+    def __call__(self, request, mgraph, user, id, object_to_existing, title=None):
+        extension, mimetype, func = self.check(request)
 
         if not mgraph.g:
             if mimetype == 'text/html':
                 return abort(404)
             else:
                 return '', 404
-        try:
-            out = self.mimetypes[mimetype](request, mgraph, user, id,
-                                           object_to_existing, title, mimetype)
-            code = 303 if mimetype == 'text/html' and extension != 'html' else 200  # cool uris
-            to_plain = 'ttl', 'nt', 'n3', 'nq'
-            headers = {'Content-Type': ('text/plain; charset=utf-8'
-                                        if extension in to_plain
-                                        else mimetype)}
-            return out, code, headers
-        except KeyError as e:
-            print(mimetype, e)
-            raise e
-            return abort(415)
+
+        out = func(request, mgraph, user, id,
+                   object_to_existing, title, mimetype)
+        code = 303 if mimetype == 'text/html' and extension != 'html' else 200  # cool uris
+        to_plain = 'ttl', 'nt', 'n3', 'nq'
+        headers = {'Content-Type': ('text/plain; charset=utf-8'
+                                    if extension in to_plain
+                                    else mimetype)}
+        return out, code, headers
 
     def iri_selection_logic(self):  # TODO
         """ For a given set of conversion rules (i.e. from a user)

@@ -9,18 +9,23 @@ from interlex.core import logger, makeParamsValues, synonym_types
 
 
 class MysqlExport:
+    types = {'term': owl.Class,
+             'annotation': owl.AnnotationProperty,
+             'relation': owl.ObjectProperty,
+             'cde': owl.Class,}
+
     def __init__(self, session):
         self.session = session
 
     def existing_ids(self, id):
-        sql = 'select preferred, iri from term_existing_ids te where tid = :id'
+        sql = 'SELECT preferred, iri FROM term_existing_ids WHERE tid = :id'
         args = dict(id=id)
         yield from self.session.execute(sql, args)
 
     def term(self, ilx_fragment):
         #args = dict(ilx=request.url.rsplit('/', 1)[-1])
         args = dict(ilx=ilx_fragment)
-        sql = 'select * from terms where ilx = :ilx'
+        sql = 'SELECT * FROM terms WHERE ilx = :ilx'
 
         rp = self.session.execute(sql, args)
         term = next(rp)
@@ -35,24 +40,24 @@ class MysqlExport:
     def predicate_objects(self, id):
         args = dict(id=id)
         sql = f'''
-        select type, literal from term_synonyms where literal != '' and tid = :id
-        union
-        select te.iri, value from term_annotations as ta
-            join term_existing_ids as te
-            on ta.annotation_tid = te.tid
-            where ta.tid = :id and te.preferred = '1'
-        union
-        select te1.iri, te2.iri from term_relationships as tr
-            join term_existing_ids as te1
-            on te1.tid = tr.relationship_tid
-            join term_existing_ids as te2
-            on te2.tid = tr.term2_id
-            where tr.term1_id = :id and te1.preferred = '1' and te2.preferred = '1'
-        union
-        select {str(rdfs.subClassOf)!r}, te.iri from term_superclasses as tsc
-            join term_existing_ids as te
-            on te.tid = tsc.superclass_tid
-            where tsc.tid = :id and te.preferred = '1'
+        SELECT type, literal FROM term_synonyms WHERE literal != '' AND tid = :id
+        UNION
+        SELECT te.iri, value FROM term_annotations AS ta
+            JOIN term_existing_ids AS te
+            ON ta.annotation_tid = te.tid
+            WHERE ta.tid = :id AND te.preferred = '1'
+        UNION
+        SELECT te1.iri, te2.iri FROM term_relationships AS tr
+            JOIN term_existing_ids AS te1
+            ON te1.tid = tr.relationship_tid
+            JOIN term_existing_ids AS te2
+            ON te2.tid = tr.term2_id
+            WHERE tr.term1_id = :id AND te1.preferred = '1' AND te2.preferred = '1'
+        UNION
+        SELECT {str(ilxtr.subThingOf)!r}, te.iri FROM term_superclasses AS tsc
+            JOIN term_existing_ids AS te
+            ON te.tid = tsc.superclass_tid
+            WHERE tsc.tid = :id AND te.preferred = '1'
         '''
 
         yield from self.session.execute(sql, args)
@@ -64,6 +69,7 @@ class MysqlExport:
         term = self.term(ilx_fragment)  # FIXME handle value error or no?
 
         id = term.id
+        type = self.types[term.type]
 
         preferred_iri = None
         existing = []
@@ -79,6 +85,7 @@ class MysqlExport:
             if preferred_iri is None:
                 raise ShouldNotHappenError(f'There is no preferred_iri iri for {base_iri}')
 
+        yield preferred_iri, rdf.type, type
         yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
         if term.definition:
             yield preferred_iri, definition, rdflib.Literal(term.definition)
@@ -108,7 +115,16 @@ class MysqlExport:
                 yield from annotation(triple, (ilxtr.synonymType, stype))()
             else:
                 p = rdflib.URIRef(p)
-            
+
+            print(p, oo)
+            if p == rdf.type:
+                type = p
+            elif p == ilxtr.subThingOf:
+                if type == owl.Class:
+                    p = rdfs.subClassOf
+                else:
+                    p = rdfs.subPropertyOf
+
             yield preferred_iri, p, oo
 
 

@@ -3,14 +3,13 @@ from functools import wraps
 
 class IlxException(Exception):
     pass
-
 class NotGroup(IlxException):
     pass
 
 class ShouldNotHappenError(IlxException):
     pass
 
-class LoadError(IlxException):
+class RESTError(IlxException):
     def __init__(self, message, code=400):
         self.message = message
         self.code = code
@@ -18,6 +17,15 @@ class LoadError(IlxException):
     @property
     def external_return(self):
         return self.message, self.code
+
+class DumpError(RESTError):
+    pass
+
+class UnsupportedType(DumpError):
+    pass
+
+class LoadError(RESTError):
+    pass
 
 class NameCheckError(LoadError):
     pass

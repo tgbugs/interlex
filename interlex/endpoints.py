@@ -10,7 +10,7 @@ from pyontutils.htmlfun import table_style, render_table, redlink_style
 from pyontutils.namespaces import makePrefixes, definition
 from interlex import tasks
 from interlex import config
-from interlex.exc import NotGroup, NameCheckError
+from interlex.exc import NotGroup, NameCheckError, UnsupportedType
 from interlex.auth import Auth
 from interlex.core import printD, diffCuries, makeParamsValues, default_prefixes
 from interlex.dump import TripleExporter, Queries
@@ -220,6 +220,11 @@ class Endpoints:
             except StopIteration:
                 return abort(404)
 
+        try:
+            tripleRender.check(request)
+        except UnsupportedType as e:
+            return e.message, e.code
+
         PREFIXES, g = self.getGroupCuries(user)
         resp = self.queries.getById(id, user)
         #printD(resp)
@@ -242,13 +247,8 @@ class Endpoints:
     def ilx_get(self, user, id, extension, db=None):
         # TODO these are not cool uris
         # TODO move this lookup to config?
-        try:
-            return self.ilx(user=user, id=id, db=db)
-            #return tripleRender(request, g, user, id, object_to_existing, title)
-        except KeyError as e:
-            print(extension, e)
-            raise e
-            return abort(500)
+        return self.ilx(user=user, id=id, db=db)
+        #return tripleRender(request, g, user, id, object_to_existing, title)
 
     @basic
     def lexical(self, user, label, db=None):
@@ -321,6 +321,8 @@ class Endpoints:
     @basic
     def curies_(self, user, db=None):
         # TODO auth
+        # TODO DELETE yes, sometimes you make a typo when the system is this easy to use
+        # and you need to fix it ...
         if request.method == 'POST':
             PREFIXES, g = self.getGroupCuries(user, default={})
             # FIXME enforce rdf rdfs and owl? or only no empty?

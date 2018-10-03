@@ -5,6 +5,7 @@ from pyontutils.utils import mysql_conn_helper, TermColors as tc
 from pyontutils.core import makeGraph
 from pyontutils.namespaces import PREFIXES as uPREFIXES  # FIXME
 from interlex import config
+from interlex import exc
 from interlex.dump import MysqlExport
 from interlex.render import TripleRender  # FIXME need to move the location of this
 
@@ -38,6 +39,12 @@ def server_alt(db=None, dburi=dbUri()):
             title = f'ILX:{id}'
         else:
             title = f'ilx.{user}:ilx_{id}'
+
+        try:
+            tripleRender.check(request)
+        except exc.UnsupportedType as e:
+            return e.message, e.code
+
         mgraph = makeGraph('base' + '_export_helper', prefixes=uPREFIXES)
         [mgraph.g.add(t) for t in ilxexp(id)]
         try:
@@ -49,11 +56,7 @@ def server_alt(db=None, dburi=dbUri()):
 
     @app.route('/base/ilx_<id>.<extension>')
     def ilx_get(id, extension):
-        try:
-            return ilx(id)
-        except KeyError as e:
-            print(extension, e)
-            return abort(415)
+        return ilx(id)
 
     return app
 
@@ -73,7 +76,7 @@ def main():
     ilxexp = MysqlExport(session)
     ilx_fragment = 'ilx_0101431'
     trips = list(ilxexp(ilx_fragment))
-    embed()
+
 
 if __name__ == '__main__':
     main()
