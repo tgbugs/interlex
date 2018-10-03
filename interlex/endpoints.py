@@ -197,6 +197,15 @@ class Endpoints:
         else:
             raise KeyError(f'could not find any value for {nodes}')
 
+    def isIlxIri(self, iri):
+        # FIXME the is a horrible way to define valid uri structure
+        scheme, rest = iri.split('://', 1)
+        prefix, maybe_ilx = rest.rsplit('/', 1)
+        if prefix.startswith(self.reference_host) and maybe_ilx.startswith('ilx_'):  # TODO allow configurable prefix here
+            _, user, _ = (prefix + '/').split('/', 2)  # at trailing in case user was terminal
+            _, id = maybe_ilx.split('_')
+            return user, id
+
     # TODO PATCH
     @basic
     def ilx(self, user, id, db=None):
@@ -243,9 +252,13 @@ class Endpoints:
 
     @basic
     def lexical(self, user, label, db=None):
+        # TODO FIXME consider normalization in cases where there is not an exact match?
+        # like with my request to n2t, check for exact, then normalize
         do_redirect, identifier_or_defs = self.queries.getByLabel(label, user)
         if do_redirect:
-            return redirect(identifier_or_defs)
+            # FIXME devel hack
+            identifier = identifier_or_defs.replace(self.reference_host, request.host)
+            return redirect(identifier, code=302)
         elif not identifier_or_defs:
             # FIXME this does not route to uri.interlex.org (probably)?
             title = f'{label} (ambiguation)'
@@ -344,7 +357,7 @@ class Endpoints:
     # TODO POST PATCH PUT
     @basic
     def curies(self, user, prefix_iri_curie, db=None):
-        print(prefix_iri_curie)
+        #printD(prefix_iri_curie)
         PREFIXES, g = self.getGroupCuries(user)
         qname, expand = g.qname, g.expand
         if prefix_iri_curie.startswith('http') or prefix_iri_curie.startswith('file'):  # TODO decide about urlencoding
@@ -363,6 +376,17 @@ class Endpoints:
                 iri = expand(curie)
             except KeyError:
                 return f'Unknown prefix {prefix}', 404
+
+            maybe_ilx = self.isIlxIri(iri)
+            if not suffix and maybe_ilx:
+                user, id = maybe_ilx
+                # overwrite user here because there are (admittedly strange)
+                # cases where someone will have a curie that points to another
+                # user's namespace, and we already controlled for the requesting user
+                # when we asked for their curies
+                # TODO FIXME consider how this interacts with whether the user has
+                # set to have all the common curies point to their own space
+                # TODO failover behavior for curies is needed for the full consideration
 
             if 'local' in request.args and request.args['local'].lower() == 'true':
                 if id is None:

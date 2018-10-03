@@ -112,14 +112,15 @@ class TripleRender:
             # FIXME preferring lower sorting identifiers seems
             # like a bad hack
             try:
-                print('AAAAAAAAA', oid, oid.prefix)
+                #print('AAAAAAAAA', oid, oid.prefix)
                 return ranking.index(oid.prefix), '', oid.suffix
             except ValueError:
                 # fail over to ilx, but alpha in even of weirdness
                 return not_in_rank, oid.prefix, oid.suffix
 
-        uri  # needed to backstop unranked
-        existing = sorted((OntId(o) for _, o in chain(graph[:ilxtr.hasExistingId:], ((None, uri),))),
+        existing = sorted((OntId(o)
+                           for _, o in chain(graph[:ilxtr.hasExistingId:],
+                                             ((None, uri),))),  # uri backstops unmapped prefixes
                           key=by_rank)  # can use [uri::] for now because of the mysql logic
         preferred_iri = existing[0].u
         if preferred_iri != uri:

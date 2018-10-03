@@ -84,7 +84,7 @@ class MysqlExport:
             yield preferred_iri, definition, rdflib.Literal(term.definition)
 
         if preferred_iri != baseiri:
-            yield preferred_iri, ilxtr.hasIlxId, baseiri
+            yield preferred_iri, ilxtr.hasIlxId, baseiri  # TODO hasIlxId sco hasRefId, hasMutualId for non ref ids
 
         for oo in existing:
             yield preferred_iri, ilxtr.hasExistingId, oo

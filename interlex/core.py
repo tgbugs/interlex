@@ -37,7 +37,6 @@ default_prefixes = {'rdf':str(rdf),
                     'owl':str(owl)}
 
 
-
 class uri(types.UserDefinedType):
     def __init__(self, uri):
         self.uri = uri
