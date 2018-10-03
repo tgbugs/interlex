@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "mv -f run/*.whl . ;
+    rm run/Pipenv.lock;
     unzip -o alt.zip &&
     cd run &&
     ~/.local/bin/pipenv --rm &&
