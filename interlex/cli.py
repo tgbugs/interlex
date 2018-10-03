@@ -184,7 +184,12 @@ def main():
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
         from interlex.load import TripleLoaderFactory
+        from interlex.dump import TripleExporter
         from interlex.endpoints import Endpoints
+        te = TripleExporter()
+        def tripit(query_result):
+            return [te.triple(*r) for r in query_result]
+
         app = run_uri()
         # not sure why this is needed here but not
         # runonce is called ...

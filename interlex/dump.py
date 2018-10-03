@@ -213,16 +213,26 @@ class Queries:
         sql = 'SELECT * FROM existing_iris'
         return self.session.execute(sql)
 
+    def _getExistingFromCurie(self, curie, user):  # FIXME multiple
+        prefix, suffix = curie.split(':', 1)
+        # is there a way to do this in a single sql statement?
+        # we can always get curies and then getExistingFromIri but that is slow...
+        #args = dict(prefix=prefix, suffix=suffix)
+        #sql = ('SELECT s, iri FROM triples JOIN existing_iris ')
+        return 'TODO'
+
     def getExistingFromIri(self, *iris):
         args = dict(iris=iris)
-        sql = ('SELECT s, iri FROM triples JOIN existing_iris '
-               'ON s = iri WHERE s IN :iris')
+        sql = ('SELECT distinct(e2.ilx_id, e1.iri) FROM existing_iris as e1 '
+               'JOIN existing_iris as e2 '
+               'ON e1.ilx_id = e2.ilx_id '
+               'WHERE e2.iri IN :iris')
         resp = list(self.session.execute(sql, args))
         return resp
 
-    def getExistingIrisForIlxId(self, *iris):
-        args = dict(iris=list(iris))
-        sql = ('SELECT i, iri FROM unnest(ARRAY[:iris]) WITH ORDINALITY i '
+    def getExistingIrisForIlxId(self, *ilx_ids):
+        args = dict(ilx_ids=list(ilx_ids))
+        sql = ('SELECT i, iri FROM unnest(ARRAY[:ilx_ids]) WITH ORDINALITY i '
                'JOIN existing_iris ON i = ilx_id')
         resp = list(self.session.execute(sql, args))
         return resp

@@ -131,6 +131,7 @@ class TripleRender:
         preferred_iri = existing[0].u
         if preferred_iri != uri:
             new_graph.add((preferred_iri, ilxtr.hasIlxId, uri))
+        #print(repr(uri), repr(preferred_iri))
         for s, p, o in graph:
             if o == preferred_iri and p == ilxtr.hasExistingId and preferred_iri != uri:
                 continue
@@ -138,10 +139,15 @@ class TripleRender:
                 # mysql case
                 continue
 
-            ns = preferred_iri
+            if s == uri:
+                ns = preferred_iri
+            else:
+                ns = s
             np = p  # TODO
             no = o  # TODO
-            new_graph.add((ns, np, no))
+            t = (ns, np, no)
+            #print(repr(s), repr(uri), repr(ns))  # TODO user iri vs base iri issues
+            new_graph.add(t)
         return preferred_iri, new_graph
 
     def graph(self, request, mgraph, user, id, object_to_existing, title, mimetype):
