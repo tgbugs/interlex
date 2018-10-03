@@ -159,8 +159,10 @@ def main():
                     mimetypes = {'ttl':'text/turtle'}  # TODO put this somewhere more practical
                     path = Path(filename).resolve().absolute()
                     mimetype = mimetypes.get(path.suffix[1:], None)
+                    form_key = 'ontology-file'  # TODO this could be used to suggest endpoints or something?
+                    # though, that could also be a security vuln?
                     with open(path.as_posix(), 'rb') as f:
-                        files = {'file':(path.name, f, mimetype)}
+                        files = {form_key:(path.name, f, mimetype)}
                         data = {'create':True}
                         resp = requests.post(url,
                                              data=data,

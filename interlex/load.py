@@ -14,8 +14,8 @@ from pyontutils.namespaces import definition
 from pyontutils.namespaces import makeNamespaces, ILX, NIFRID, ilxtr
 from pyontutils.combinators import annotation
 from pyontutils.closed_namespaces import rdf, rdfs, owl, oboInOwl
-from interlex.exc import hasErrors, LoadError, NotGroup, NoCopyingError, NoSelfLoadError
-from interlex.exc import bigError
+from interlex import exc
+from interlex.exc import hasErrors, bigError
 from interlex.auth import Auth
 from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode, synonym_types, dbUri
 from IPython import embed
@@ -191,8 +191,8 @@ class GraphIdentities:
             self._bound_name = str(next(subjects))
             try:
                 extra = next(subjects)
-                raise LoadError('More than one owl:Ontology in this file!\n'
-                                '{self.ontology_iri}\n{extra}\n', 409)
+                raise exc.LoadError('More than one owl:Ontology in this file!\n'
+                                    '{self.ontology_iri}\n{extra}\n', 409)
             except StopIteration:
                 pass
 
@@ -779,7 +779,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         # TODO expected filesize to determine live or batch load
         return False
 
-    @hasErrors(LoadError)
+    @hasErrors(exc.LoadError)
     def __call__(self, expected_bound_name):
         if not self.times:
             self.times = {'begin':time.time()}
@@ -871,7 +871,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
         return bde_switch
 
-    @hasErrors(LoadError)
+    @hasErrors(exc.LoadError)
     def load(self):
         output = ''
         try:
@@ -883,7 +883,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             return output
         except BaseException as e:
             self.session.rollback()
-            if type(e) == LoadError:
+            if type(e) == exc.LoadError:
                 raise e
 
             embed()
@@ -967,7 +967,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             printD('WARNING: trying to set expected bound name again!')
         elif self.expected_bound_name is not None:
             # NOTE this is also enforced in the database
-            raise LoadError('Cannot change expected bound names once they have been set!')
+            raise exc.LoadError('Cannot change expected bound names once they have been set!')
         else:
             if self.reference_name_in_db:
                 sql = ('UPDATE reference_names SET expected_bound_name = :e WHERE name = :r')
@@ -1000,7 +1000,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         if self._format is None:
             if self.extension not in self.formats and self.mimetype not in self.formats:
                 # TODO use ttlfmt parser attempter
-                raise LoadError(f"Don't know how to parse either {self.extension} or {self.mimetype}", 415)
+                raise exc.LoadError(f"Don't know how to parse either {self.extension} or {self.mimetype}", 415)
             elif self.extension not in self.formats:
                 self._format = self.formats[self.mimetype]
             else:
@@ -1015,7 +1015,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             ident = IdentityBNode(self.serialization).identity
             if self.ident_exists(ident):
                 # TODO user options for what to do about qualifiers
-                raise LoadError(f'The exact file dereferenced to by {self.name} is already in InterLex', 202)
+                raise exc.LoadError(f'The exact file dereferenced to by {self.name} is already in InterLex', 202)
             self._serialization_identity = ident
             self._transaction_cache_identities.add(ident)
 
@@ -1065,7 +1065,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                 self.reference_name_in_db = False
                 printD('WARNING reference name has not been created yet!\n')
         elif self._reference_name != value:
-            raise LoadError('cannot change reference names', 409)
+            raise exc.LoadError('cannot change reference names', 409)
 
     def batch_ident_check(self, *idents):
         sql = 'SELECT identity FROM identities WHERE identity IN '
@@ -1224,7 +1224,8 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
         self.times['load_end'] = time.time()
         # TODO create qualifiers
-        return 'TODO\n'
+        #return 'aaaaaaaaaaaaaaaaTODO\n'  # FIXME returning this makes downstream think we are in error
+        return ''
 
 
 class InterLexFactory(TripleLoaderFactory):
@@ -1342,18 +1343,18 @@ class FileFromIRIFactory(FileFromBaseFactory):
             # handle this case properly though... name = None and _serialization already set
             # NOTE for direct user contributions name should be their orcid
             # or the interface/api endpoint they were using if we want to track that?
-            raise NoSelfLoadError('you cannot load an ontology into itself from '
-                                  'itself unless you are interlex itself')
+            raise exc.NoSelfLoadError('you cannot load an ontology into itself from '
+                                      'itself unless you are interlex itself')
         elif self.reference_host in name:
             # TODO provide an alternative
             # FIXME the error messages should not be sent here
             # these need to be translated into load errors
-            raise NoCopyingError('you cannot copy content from one '
-                                 'reference name to another in this way')
+            raise exc.NoCopyingError('you cannot copy content from one '
+                                     'reference name to another in this way')
 
         return super().check(name)
 
-    @hasErrors(LoadError)
+    @hasErrors(exc.LoadError)
     def __call__(self, expected_bound_name=None):
         if 'begin' not in self.times:
             self.times['begin'] = time.time()
@@ -1380,7 +1381,7 @@ class FileFromIRIFactory(FileFromBaseFactory):
                     break
 
             if head.status_code >= 400:
-                raise LoadError(f'Nothing found at {self.name}\n')
+                raise exc.LoadError(f'Nothing found at {self.name}\n')
 
             self._header = head.headers
 
@@ -1433,14 +1434,14 @@ class FileFromIRIFactory(FileFromBaseFactory):
         if self.isGzipped:
             if self.content_length_mb > self.maxsize_mbgz:
                 if not is_admin:
-                    raise LoadError(self.lfmessage, 413)  # TODO error handling
+                    raise exc.LoadError(self.lfmessage, 413)  # TODO error handling
             resp = requests.get(self.name)
         else:
             resp = None
 
         if self.content_length_mb > self.maxsize_mb:
             if not is_admin:
-                raise LoadError(self.lfmessage, 413)
+                raise exc.LoadError(self.lfmessage, 413)
 
         if resp is None:
             resp = requests.get(self.name)
@@ -1459,37 +1460,30 @@ class FileFromPostFactory(FileFromIRIFactory):
     def __init__(self, group, user, reference_host, reference_name=None):
         super().__init__(group, user, reference_name, reference_host)
 
-    def check(self, name, file, header, ser=None):  # FIXME ... reference names and stuff
-        self.name = name
+    def check(self, header):  # FIXME ... reference names and stuff
         self._header = {k:v for k, v in header.items()}
-        if file is not None:
-            self.file = file
-        elif ser is not None:
-            self._serialization = ser
-        else:
-            raise ValueError('no file or serialization')
+        # NOTE content length will be longer than actual length
+        # since there is additional form data
+        return not (self.content_length_mb < self.immediate_loading_limit_mb)
 
-        return not (self.content_length_mb < self.immediate_loading_limit_mb and  # FIXME fails fake header
-                    self.actual_length_mb < self.immediate_loading_limit_mb)
-
-    @hasErrors(LoadError)
-    def __call__(self, create):
+    @hasErrors(exc.LoadError)
+    def __call__(self, file_meta, serialization, create):
         if not self.times:
             self.times = {'begin':time.time()}
         self.create = create
 
-        self.name = f'file://{file.filename}'
+        self.name = f'file://{file_meta.filename}'
         #self._extension = file.filename.rsplit('.', 1)[-1]
-        self._mimetype = file.mimetype
+        self._mimetype = file_meta.mimetype
+        self._serialization = serialization
 
         self.reference_name
-        super().__call__(self.name, self.expected_bound_name)
-        self.file = None  # cleanup
+        super().__call__(self.expected_bound_name)
 
     @property
     def serialization(self):
         if self._serialization is None:
-            self._serialization = self.file.stream.read()  # we may need to parse more than once
+            raise exc.ShouldNotHappenError('How did you manage this one!?')
 
         return self._serialization
 

@@ -446,29 +446,45 @@ class Endpoints:
                 create = False
 
         names = []
-        for name, file in request.files.items():
-            will_batch = loader.check(name, file, header)
-            if will_batch:
-                # FIXME sending the serialization very slow?
-                # FIXME file.read() bad?! there has got to be a better way ...
-                task = tasks.long_ffp.apply_async((group, user, self.reference_host, name, file.read(), header, create),
-                                                  serializer='pickle')
-                job_url = request.scheme + '://' + self.reference_host + url_for("route_api_job", jobid=task.id)
-                return f'that\'s quite a large file you\'ve go there!\nit has been submitted for processing {job_url}', 202
-            else:
-                setup_ok = loader(create)
-                if setup_ok is not None:
-                    return setup_ok
-                names.append({'reference_name':loader.reference_name,
-                              'bound_name':loader.Loader.bound_name})  # sigh json
-                load_ok = loader.load()
-                if load_ok is not None:
-                    msg, code = load_ok
-                    data = {'error':msg, 'names':names}
-                    sigh = json.dumps(data)
-                    return sigh, code, {'Content-Type':'application/json'}
+        form_key = 'ontology-file'
+        try:
+            file = request.files[form_key]
+        except KeyError:
+            return f"expected form field named {form_key!r}", 400
 
-        return json.dumps(names)
+        name = file.filename
+        # as it turns out, we can actually trust Content-Length
+        # because the server only reads that many bytes
+
+        will_batch = loader.check(header)
+        serialization = file.read()
+        file.stream = None  # make it pickleable, just don't try to read anymore
+        if will_batch:
+            # FIXME sending the serialization very slow?
+            # FIXME file.read() bad?! there has got to be a better way ...
+            task = tasks.long_ffp.apply_async((group, user, self.reference_host,
+                                                header, file, serialization, create),
+                                                serializer='pickle')
+            job_url = (request.scheme +
+                        '://' + self.reference_host +
+                        url_for("route_api_job", jobid=task.id))
+            return ('that\'s quite a large file you\'ve go there!\n'
+                    f'it has been submitted for processing {job_url}', 202)
+        else:
+            setup_failed = loader(file, serialization, create)
+            if setup_failed:
+                return setup_failed
+            names = {'reference_name':loader.reference_name,
+                     'bound_name':loader.Loader.bound_name}
+            load_failed = loader.load()
+            if load_failed:
+                print(load_failed)
+                msg, code = load_failed
+                data = {'error':msg, 'names':names}
+                sigh = json.dumps(data)
+                return sigh, code, {'Content-Type':'application/json'}
+            else:
+                return json.dumps(names), 200, {'Content-Type':'application/json'}
 
     # TODO enable POST here from users (via apikey) that are contributor or greater in a group admin is blocked from posting in this way
     # TODO curies from ontology files vs error on unknown? vs warn that curies were not added << last option best, warn that they were not added

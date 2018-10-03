@@ -109,15 +109,15 @@ def long_ffi(self, group, user, reference_name, reference_host,
 
 
 @cel.task(bind=True)
-def long_ffp(self, group, user, reference_host, name, serialization, header, create):
+def long_ffp(self, group, user, reference_host, header, file_meta, serialization, create):
     global session
     #pprint(dir(self))
     FileFromPost = FileFromPostFactory(session)
     ffp = FileFromPost(group, user, reference_host)
     self.update_state(state='CHECKING')
-    check_failed = ffp.check(name, None, header, ser=serialization)  # should have already been run
+    check_failed = ffp.check(header)  # should have already been run
     self.update_state(state='SETUP')
-    setup_failed = ffp(create)
+    setup_failed = ffp(file_meta, serialization, create)
     self.update_state(state='LOAD')
     if not setup_failed:
         ffp.load()
