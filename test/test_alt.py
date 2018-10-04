@@ -20,6 +20,16 @@ class TestRoutes(unittest.TestCase):
             msg = out.url + '\n' + out.content.decode()
             assert out.ok, msg
 
+    def test_no_user_content_type(self):
+        urls = [
+            f'{self.scheme}://{self.host}:{self.port}/ilx_0101431',
+        ]
+        ct = 'text/turtle'
+        for url in urls:
+            out = requests.get(url, headers={'host': self.hostname, 'Accept':ct})
+            msg = out.url + '\n' + out.content.decode()
+            assert out.ok, msg
+
     def test_content_type(self):
         urls = [
             f'{self.scheme}://{self.host}:{self.port}/base/ilx_0101431',
