@@ -834,23 +834,27 @@ def diffCuries(old, new):
 
     only_new_curies = snc - soc
     to_add = {}
-    try:
-        for cur in only_new_curies:  # hilariously inefficient
+    errors = []
+    for cur in only_new_curies:  # hilariously inefficient
+        try:
             o_curs[cur] = n_curs[cur]
             to_add[cur] = n_curs[cur]
-    except injective_dict.NotInjectiveError as e:
-        # trying to bind a new curie to and old iri
-        return (*err, e)
+        except injective_dict.NotInjectiveError as e:
+            # trying to bind a new curie to and old iri
+            errors.append(e)
 
     existing_curies = snc & soc
     existing = {}
-    try:
-        for cur in existing_curies:
-            o_curs[cur] = n_curs[cur]
-            existing[cur] = n_curs[cur]
-    except injective_dict.NotInjectiveError as e:
-        # trying to bind an old curie to a new iri
-        return (*err, e)
+    for cur in existing_curies:
+        try:
+                o_curs[cur] = n_curs[cur]
+                existing[cur] = n_curs[cur]
+        except injective_dict.NotInjectiveError as e:
+            # trying to bind an old curie to a new iri
+            errors.append(e)
+
+    if errors:
+        return (*err, '\n'.join(str(e) for e in errors))
 
     return True, to_add, existing, f'\nNew curies added. Existing were not modified.\n{to_add}\n'
 
