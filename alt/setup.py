@@ -10,6 +10,7 @@ files = [
     '../interlex/core.py',
     '../interlex/dump.py',
     '../interlex/exc.py',
+    '../interlex/namespaces.py',
     '../interlex/render.py',
     '../interlex/utils.py',
 ]

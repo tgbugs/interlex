@@ -1,4 +1,3 @@
-from IPython import embed
 import json
 from datetime import datetime
 from itertools import chain
@@ -36,7 +35,9 @@ class TripleRender:
         }
 
     def check(self, request):
-        mimetype = request.mimetype if request.mimetype else 'text/html'
+        mimetype = (request.accept_mimetypes.best if
+                    request.accept_mimetypes.best != '*/*' else
+                    'text/html')
         extension = (request.view_args['extension'] if
                      'extension' in request.view_args else
                      None)

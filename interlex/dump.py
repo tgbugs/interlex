@@ -6,13 +6,15 @@ from pyontutils.combinators import annotation
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex.exc import ShouldNotHappenError
 from interlex.core import logger, makeParamsValues, synonym_types
+from interlex.namespaces import ilxr, ilxrtype
 
 
 class MysqlExport:
     types = {'term': owl.Class,
              'annotation': owl.AnnotationProperty,
-             'relation': owl.ObjectProperty,
-             'cde': owl.Class,}
+             'relationship': owl.ObjectProperty,
+             'cde': owl.Class,
+             'fde': owl.Class,}
 
     def __init__(self, session):
         self.session = session
@@ -70,6 +72,7 @@ class MysqlExport:
 
         id = term.id
         type = self.types[term.type]
+        ilxtype = ilxrtype[term.type]
 
         preferred_iri = None
         existing = []
@@ -86,6 +89,7 @@ class MysqlExport:
                 raise ShouldNotHappenError(f'There is no preferred_iri iri for {base_iri}')
 
         yield preferred_iri, rdf.type, type
+        yield preferred_iri, ilxr.type, ilxtype
         yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
         if term.definition:
             yield preferred_iri, definition, rdflib.Literal(term.definition)
@@ -116,7 +120,7 @@ class MysqlExport:
             else:
                 p = rdflib.URIRef(p)
 
-            print(p, oo)
+            #print(p, oo)
             if p == rdf.type:
                 type = p
             elif p == ilxtr.subThingOf:

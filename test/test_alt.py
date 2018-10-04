@@ -24,7 +24,7 @@ class TestRoutes(unittest.TestCase):
         ]
         for url in urls:
             for ct in tr.mimetypes:
-                out = requests.get(url, headers={'host': self.hostname, 'Content-Type': ct})
+                out = requests.get(url, headers={'host': self.hostname, 'Accept': ct})
                 assert out.ok
                 oct = out.headers['Content-Type']
                 # charset may be added so use startswith
@@ -38,6 +38,23 @@ class TestRoutes(unittest.TestCase):
             for ex in tr.extensions:
                 url = base_url + '.' + ex
                 out = requests.get(url, headers={'host': self.hostname})
-                if ex == 'jsonld':
-                    print(out.json())
-                assert out.ok
+                #if ex == 'jsonld':
+                    #print(out.json())
+                assert out.ok, out.url + '\n' + out.content.decode()
+
+    def test_ilx_types(self):
+        ids = dict(fde='0381413',
+                   cde='0301431',
+                   term='0101431',
+                   annotation='0381355',
+                   relation='0381385')
+
+        for type, id in ids.items():
+            url = f'{self.scheme}://{self.host}:{self.port}/base/ilx_{id}'
+            ct = 'text/turtle'
+            out = requests.get(url, headers={'host': self.hostname, 'Accept':ct})
+            msg = out.url + '\n' + out.content.decode()
+            oct = out.headers['Content-Type']
+            assert out.ok, msg
+            assert oct.startswith(ct), f'{out.status_code} {oct} != {ct}'
+            print(url, msg, ct, oct)
