@@ -10,13 +10,15 @@ class TestRoutes(unittest.TestCase):
     port = '80'
     scheme = 'http'
     hostname = 'uri.interlex.org'
+
     def test_no_user(self):
         urls = [
-            f'{self.scheme}://{self.host}:{self.port}/ilx_0101431',
+            f'{self.scheme}://{self.host}:{self.port}/ilx_0101431.ttl',
         ]
         for url in urls:
             out = requests.get(url, headers={'host': self.hostname})
-            assert out.ok
+            msg = out.url + '\n' + out.content.decode()
+            assert out.ok, msg
 
     def test_content_type(self):
         urls = [
@@ -57,4 +59,4 @@ class TestRoutes(unittest.TestCase):
             oct = out.headers['Content-Type']
             assert out.ok, msg
             assert oct.startswith(ct), f'{out.status_code} {oct} != {ct}'
-            print(url, msg, ct, oct)
+            #print(url, msg, ct, oct)
