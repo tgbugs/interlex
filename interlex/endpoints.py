@@ -2,7 +2,7 @@ import os
 import json
 from functools import wraps
 import sqlalchemy as sa
-from flask import request, redirect, url_for, abort
+from flask import request, redirect, url_for, abort, Response
 from pyontutils.core import makeGraph
 from pyontutils.utils import TermColors as tc
 from pyontutils.htmlfun import atag, btag, h2tag, htmldoc
@@ -510,7 +510,36 @@ class Endpoints:
         if request.method == 'HEAD':
             # TODO return bound_name + metadata
             return 'HEAD TODO\n'
-        if request.method == 'POST':
+
+        elif request.method == 'GET':
+            if filename == 'interlex':  # FIXME
+                if extension != 'nt':
+                    return "we only support 'application/n-triples' (.nt) for a full dump", 415
+                oof = self.queries.dumpAllNt(user)
+                # FIXME TODO task this sucker and have it dump to disk by qualifier
+                # FIXME user auth
+                def gen():
+                    yield from (r[0].tobytes() for s in oof for r in s)
+                    #yield from (r[0].encode() for s in oof for r in s)
+                #te = TripleExporter()
+                def _gen():
+                    for r in oof:
+                        yield te.nt(*r)
+                        # unscientific benchmarks
+                        # te.nt pypy3 17s cpython3.6 24s
+                        # FIXME 31 seconds for 262MB, pypy3 23s
+                        #s, p, o = te.star_triple(*r)
+                        #yield f'{s.n3()} {p.n3()} {o.n3()} .\n'.encode()
+                        
+                return Response(gen(), mimetype='application/n-triples')
+                #object_to_existing = self.queries.getResponseExisting(oof, type='o')
+                #PREFIXES, mgraph = self.getGroupCuries(group)
+                #_ = [mgraph.g.add(te.star_triple(*r)) for r in oof]
+                #return tripleRender(request, mgraph, user, 'FIXMEFIXME', object_to_existing)
+
+            return 'NOT IMPLEMENTED\n', 400
+
+        elif request.method == 'POST':
             extension = '.' + extension if extension else ''
             match_path = os.path.join(ont_path, filename + extension)
             path = os.path.join('ontologies', match_path)  # FIXME get middle from request?

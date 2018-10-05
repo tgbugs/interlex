@@ -143,6 +143,40 @@ class TripleExporter:
         self._subgraph_counter += 1
         return self._subgraph_counter
 
+    def star_triple(self, id, s, s_blank, p, o, o_lit, o_blank, datatype, language, subgraph_identity):
+        return self.triple(s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity)
+
+    def nt(self, id, s, s_blank, p, o, o_lit, o_blank, datatype, language, subgraph_identity):
+        """ For dump. """
+        if subgraph_identity is not None:
+            if subgraph_identity not in self.subgraph_identities:
+                self.subgraph_identities[subgraph_identity] = self.subgraph_counter
+
+            si = 'sg_' + str(self.subgraph_identities[subgraph_identity])
+
+        if s is not None:
+            s = f'<{s}> '.encode()
+        elif s_blank is not None:
+            s = f'_:{si}_{s_blank} '.encode()
+
+        p = f'<{p}> '.encode()  # FIXME _:asdf is allowed for predicates or no?
+
+        if o is not None:
+            o = f'<{o}> '.encode()
+        elif o_lit is not None:
+            b = rdflib.Literal(o_lit).n3()
+            if datatype:
+                o = f'{b}^^<{datatype}> '.encode()
+            elif language:
+                o = f'{b}@{language} '.encode()
+            else:
+                o = b.encode()
+
+        elif o_blank is not None:
+            o = f'_:{si}_{o_blank} '.encode()
+
+        return s + p + o + b'.\n'
+
     def triple(self, s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity):
         if subgraph_identity is not None:
             if subgraph_identity not in self.subgraph_identities:
@@ -152,14 +186,18 @@ class TripleExporter:
 
         if s is not None:
             s = rdflib.URIRef(s)
-        if s_blank is not None:
+        elif s_blank is not None:
             s = rdflib.BNode(si + '_' + str(s_blank))
 
-        if o is not None: o = rdflib.URIRef(o)
+        if o is not None:
+            o = rdflib.URIRef(o)
         elif o_lit is not None:
             o = rdflib.Literal(o_lit, datatype=datatype, lang=language)
-        if o_blank is not None:
+        elif o_blank is not None:
             o = rdflib.BNode(si + '_' + str(o_blank))
+        else:
+            raise ValueError(f'What have you done!\n{o}\n{o_lit}\n{o_blank}\n'
+                             f'{s} {p} {datatype} {language}')
 
         return s, rdflib.URIRef(p), o
 
@@ -220,6 +258,38 @@ class Queries:
             resp += list(self.session.execute(sql2))
         return resp
 
+    def dumpAll(self, user=None):
+        """ Every triple we have ever seen. """
+        # TODO stick the id on the front as a quad
+        # and then dump the actual qualifier table
+        #return list(self.session.execute("SELECT * FROM triples WHERE s::text LIKE '%RO_0002005'"))
+        return self.session.execute('SELECT * FROM triples')  # this streams
+
+    def dumpAllNt(self, user=None):
+        ssc = "substring(encode(subgraph_identity, 'hex'), 0, 20)"
+        # so yes, I originally wrote a UNION select version of this, it was monumentally slow
+        # this one is blazingly fast
+        return (
+            self.session.execute("SELECT convert_to('<' || s || '> <' || p || '> <' || o || '> .\n', 'UTF8') "
+                                 "FROM triples WHERE s IS NOT NULL AND o IS NOT NULL"),
+            self.session.execute("SELECT convert_to('<' || s || '> <' || p || '> '  || to_json(o_lit)::text, 'UTF8') "
+                                 "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL"),
+            self.session.execute("SELECT convert_to('<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '@' || language || ' .\n', 'UTF8') "
+                                 "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL"),
+            self.session.execute("SELECT convert_to('<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '^^<' || datatype || '> .\n', 'UTF8') "
+                                 "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL"),
+            self.session.execute("SELECT convert_to('<' || s || '> <' || p || '> _:' || subgraph_identity::text || '_' || o_blank::text || ' .\n', 'UTF8') "
+                                 "FROM triples WHERE s IS NOT NULL AND o_blank IS NOT NULL"),
+            self.session.execute(f"SELECT convert_to('_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> _:' || {ssc} || '_'            || o_blank::text     || ' .\n', 'UTF8') "
+                                 "FROM triples WHERE s_blank IS NOT NULL AND o_blank IS NOT NULL"),
+            self.session.execute(f"SELECT convert_to('_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text || ' .\n', 'UTF8') "
+                                 "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL"),
+            self.session.execute(f"SELECT convert_to('_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '@'   || language || ' .\n', 'UTF8') "
+                                 "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL"),
+            self.session.execute(f"SELECT convert_to('_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n', 'UTF8') "
+                                 "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL"),
+            )
+        
     def getExistingIris(self):
         sql = 'SELECT * FROM existing_iris'
         return self.session.execute(sql)
