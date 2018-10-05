@@ -270,23 +270,23 @@ class Queries:
         # so yes, I originally wrote a UNION select version of this, it was monumentally slow
         # this one is blazingly fast
         return (
-            self.session.execute("SELECT convert_to('<' || s || '> <' || p || '> <' || o || '> .\n', 'UTF8') "
+            self.session.execute("SELECT '<' || s || '> <' || p || '> <' || o || '> .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o IS NOT NULL"),
-            self.session.execute("SELECT convert_to('<' || s || '> <' || p || '> '  || to_json(o_lit)::text, 'UTF8') "
+            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text "
                                  "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL"),
-            self.session.execute("SELECT convert_to('<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '@' || language || ' .\n', 'UTF8') "
+            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '@' || language || ' .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL"),
-            self.session.execute("SELECT convert_to('<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '^^<' || datatype || '> .\n', 'UTF8') "
+            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '^^<' || datatype || '> .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL"),
-            self.session.execute("SELECT convert_to('<' || s || '> <' || p || '> _:' || subgraph_identity::text || '_' || o_blank::text || ' .\n', 'UTF8') "
+            self.session.execute("SELECT '<' || s || '> <' || p || '> _:' || subgraph_identity::text || '_' || o_blank::text || ' .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o_blank IS NOT NULL"),
-            self.session.execute(f"SELECT convert_to('_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> _:' || {ssc} || '_'            || o_blank::text     || ' .\n', 'UTF8') "
+            self.session.execute(f"SELECT '_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> _:' || {ssc} || '_'            || o_blank::text     || ' .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_blank IS NOT NULL"),
-            self.session.execute(f"SELECT convert_to('_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text || ' .\n', 'UTF8') "
+            self.session.execute(f"SELECT '_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text || ' .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL"),
-            self.session.execute(f"SELECT convert_to('_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '@'   || language || ' .\n', 'UTF8') "
+            self.session.execute(f"SELECT '_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '@'   || language || ' .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL"),
-            self.session.execute(f"SELECT convert_to('_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n', 'UTF8') "
+            self.session.execute(f"SELECT '_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL"),
             )
         

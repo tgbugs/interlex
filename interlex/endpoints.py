@@ -519,8 +519,11 @@ class Endpoints:
                 # FIXME TODO task this sucker and have it dump to disk by qualifier
                 # FIXME user auth
                 def gen():
-                    yield from (r[0].tobytes() for s in oof for r in s)
-                    #yield from (r[0].encode() for s in oof for r in s)
+                    #yield from (r[0].tobytes() for s in oof for r in s)
+                    # returning bytes is about a second slower on pypy
+                    # using convert_to, which is weird, but ok
+                    yield from (r[0].encode() for s in oof for r in s)
+                    # pypy throughput is ~80MBps cpython ~ 20MBps
                 #te = TripleExporter()
                 def _gen():
                     for r in oof:
