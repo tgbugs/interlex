@@ -33,7 +33,9 @@ INSERT INTO groups (groupname) VALUES
        ('NDA'),
        ('MESH'),
        ('FSL'),
-       ('FreeSurfer');
+       ('FreeSurfer'),
+       ('fakeobo'),
+       ('dicom');
 
 -- blacklist
 -- populate more with with len > 4

@@ -68,6 +68,8 @@ Options:
     -c --gunicorn           run against local gunicorn
     -d --debug              enable debug mode
 
+    --do-cdes               when running sync include the cdes
+
 """
 
 import os
@@ -209,7 +211,7 @@ def main():
         app = run_uri()
         db = SQLAlchemy(app)
         TripleLoader = TripleLoaderFactory(db.session)
-        il = InterLexLoad(TripleLoader, do_cdes=False)
+        il = InterLexLoad(TripleLoader, do_cdes=args['--do-cdes'])
         il.setup()
         # il.load()  # do this one yourself
         self = il

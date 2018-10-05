@@ -97,7 +97,6 @@ def base_ffi(group, user, reference_name, reference_host,
     if not setup_failed:
         ffi.load()
     self.update_state(state='SUCCESS')  # FIXME use the real success value
-    return 'done'
 
 @cel.task(bind=True)
 def long_ffi(self, group, user, reference_name, reference_host,
@@ -122,7 +121,6 @@ def long_ffp(self, group, user, reference_host, header, file_meta, serialization
     if not setup_failed:
         ffp.load()
     self.update_state(state='SUCCESS')  # FIXME use the real success value
-    return 'done'
 
 
 @cel.task(bind=True)

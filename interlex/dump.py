@@ -182,6 +182,13 @@ class Queries:
     def getBuiltinGroups(self):
         return list(self.session.execute("SELECT * FROM groups WHERE own_role = 'builtin'"))
 
+    def getGroupIds(self, *group_names):
+        # have to type group_names as list because postgres doesn't know what to do with a tuple
+        return {r.g:r[1] for r in self.session.execute('SELECT g, idFromGroupname(g) '
+                                                        'FROM unnest(ARRAY[:group_names]) '
+                                                        'WITH ORDINALITY g',
+                                                        dict(group_names=list(group_names)))}
+
     def getGroupCuries(self, group, epoch_verstr=None):
         # TODO retrieve base/default curies
         params = dict(group=group)

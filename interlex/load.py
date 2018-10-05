@@ -18,6 +18,7 @@ from interlex import exc
 from interlex.exc import hasErrors, bigError
 from interlex.auth import Auth
 from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode, synonym_types, dbUri
+from interlex.dump import Queries
 from IPython import embed
 
 ilxr, *_ = makeNamespaces('ilxr')
@@ -801,6 +802,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         bde_switch = self.bound_database_expected(expected_bound_name)
 
         if self.name is None:
+            printD(tc.red('self.name is none'))
             embed()
 
         stop = bde_switch(self.Loader.bound_name, self.expected_bound_name, expected_bound_name)
@@ -1553,6 +1555,12 @@ class InterLexLoad:
         from sqlalchemy import create_engine, inspect
         from interlex import config
         self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex', 'uri.interlex.org')
+
+        class EP:
+            # FIXME hack :/
+            reference_host = next(self.loader.session.execute('SELECT reference_host()'))
+
+        self.queries = Queries(self.loader.session, EP)
         self.do_cdes = do_cdes
         self.debug = debug
         self.admin_engine = create_engine(dbUri(user='interlex-admin'), echo=True)
@@ -1571,6 +1579,7 @@ class InterLexLoad:
 
     def setup(self):
         self.existing_ids()
+        self.user_iris()
         self.make_triples()
         self.ids()
 
@@ -1578,8 +1587,9 @@ class InterLexLoad:
     def local_load(self):
         from pyontutils.core import makeGraph
         loader = self.loader
-        self.loader.session.execute(self.ilx_sql, self.ilx_params)
+        loader.session.execute(self.ilx_sql, self.ilx_params)
         loader.session.execute(self.eid_sql, self.eid_params)
+        loader.session.execute(self.uid_sql, self.uid_params)
         # FIXME this probably requires admin permissions
         self.admin_exec(f"SELECT setval('interlex_ids_seq', {self.current}, TRUE)")  # DANGERZONE
         if self.graph is None:
@@ -1642,7 +1652,6 @@ class InterLexLoad:
 
         any_mult = {k:v for k, v in maybe_mult.items() if len(v) > 1}
 
-
         dupe_report = {k:tuple(f'http://uri.interlex.org/base/ilx_{i}' for i in v)
                        for k, v in maybe_mult.items()
                        if len(set(v)) > 1}
@@ -1664,15 +1673,17 @@ class InterLexLoad:
                 skips.append((id_, iri))
 
         bads = sorted(bads, key=lambda ab:ab[1])
-        ins_values = [(ilx, iri) for ilx, iri, ver in values if
-                      (ilx, iri) not in bads and
-                      (ilx, iri) not in skips]
-        #self.user_iris = [v for v in ins_values if 'interlex.org' in v[1]]  # TODO
-        ins_values = [v for v in ins_values if 'interlex.org' not in v[1]]
+        _ins_values = [(ilx, iri) for ilx, iri, ver in values if
+                       (ilx, iri) not in bads and
+                       (ilx, iri) not in skips]
+        ins_values = [v for v in _ins_values if 'interlex.org' not in v[1]]
+        user_iris = [v for v in _ins_values if 'interlex.org' in v[1] and 'org/base/' not in v[1]]
+        base_iris = [v for v in _ins_values if 'interlex.org' in v[1] and 'org/base/' in v[1]]
+        assert len(ins_values) + len(user_iris) + len(base_iris) == len(_ins_values)
         #ins_values += [(v[0], k) for k, v in mult_curies.items()]  # add curies back now fixed
         if self.debug:
             embed()
-        return ins_values, bads, skips
+        return ins_values, bads, skips, user_iris
 
     def existing_ids(self):
         insp, engine = self.insp, self.engine
@@ -1688,9 +1699,13 @@ class InterLexLoad:
                 raise IndexError()
 
         if self.do_cdes:
-            query = engine.execute('SELECT * FROM term_existing_ids as teid JOIN terms as t ON t.id = teid.tid')
+            query = engine.execute('SELECT * FROM term_existing_ids as teid '
+                                   'JOIN terms as t '
+                                   'ON t.id = teid.tid')
         else:
-            query = engine.execute('SELECT * FROM term_existing_ids as teid JOIN terms as t ON t.id = teid.tid WHERE t.type != "cde"')
+            query = engine.execute('SELECT * FROM term_existing_ids as teid '
+                                   'JOIN terms as t '
+                                   'ON t.id = teid.tid WHERE t.type != "cde"')
 
         #data = query.fetchall()
         #cdata = list(zip(*data))
@@ -1702,22 +1717,69 @@ class InterLexLoad:
         eternal_screaming = list(query)
 
         start_values = [(row[ind('ilx')][4:], row[ind('iri')], row[ind('version')])
-                  for row in eternal_screaming if row[ind('ilx')] not in row[ind('iri')]]
+                        for row in eternal_screaming
+                        if row[ind('ilx')] not in row[ind('iri')]]
 
-        values, bads, skips = self.cull_bads(eternal_screaming, start_values, ind)
+        values, bads, skips, user_iris = self.cull_bads(eternal_screaming, start_values, ind)
 
         sql_base = 'INSERT INTO existing_iris (group_id, ilx_id, iri) VALUES '
         values_template, params = makeParamsValues(values, constants=('idFromGroupname(:group)',))
         params['group'] = 'base'
         sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'
+        self.eid_raw = eternal_screaming
+        self.eid_starts = start_values
         self.eid_values = values
         self.eid_sql = sql
         self.eid_params = params
         self.eid_bads = bads
         self.eid_skips = skips
+        self.eid_user_iris = user_iris
         if self.debug:
             printD(bads)
         return sql, params
+
+    def user_iris(self):
+        if not hasattr(self, 'eid_user_iris'):
+            self.existing_ids()
+
+        bads = []
+        def iri_to_group_uripath(iri):
+            if 'interlex.org' not in iri:
+                raise ValueError(f'goofed {iri}')
+
+            # FIXME do we really want this ... yes... because we don't want to
+            # have to look inside uris to enforce mapping rules per user
+
+            _, user_uris_path = iri.split('interlex.org/', 1)
+            user, uris_path = user_uris_path.split('/', 1)
+            if not uris_path.startswith('uris'):
+                msg = f'not a user uris path {iri}'
+                bads.append(msg)
+                return None, None
+
+            try:
+                _, path = uris_path.split('/', 1)  # TODO in the actual impl this needs to be sanitized
+            except ValueError:
+                path = None
+                bads.append(f'what is going on here!? {iri}')
+
+            return user, path
+
+        _values = [(ilx_id, *iri_to_group_uripath(iri))
+                    for ilx_id, iri in self.eid_user_iris]
+
+        if bads:
+            raise ValueError('\n'.join(bads))
+
+        gidmap = self.queries.getGroupIds(*sorted(set(u for _, u, _ in _values)))
+        print(gidmap)
+        values = [(ilx_id, gidmap[g], uri_path)
+                  for ilx_id, g, uri_path in _values]
+        sql_base = 'INSERT INTO uris (ilx_id, group_id, uri_path) VALUES '
+        values_template, params = makeParamsValues(values)
+        sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'
+        self.uid_sql = sql
+        self.uid_params = params
 
     def make_triples(self):
         insp, engine = self.insp, self.engine

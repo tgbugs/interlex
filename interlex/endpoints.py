@@ -458,7 +458,7 @@ class Endpoints:
 
         will_batch = loader.check(header)
         serialization = file.read()
-        file.stream = None  # make it pickleable, just don't try to read anymore
+        file.stream = None  # make it pickleable, just don't try to read anymore  # FIXME didn't work?!
         if will_batch:
             # FIXME sending the serialization very slow?
             # FIXME file.read() bad?! there has got to be a better way ...
@@ -580,7 +580,8 @@ class Endpoints:
                                                                    #serializer='pickle')
 
                                 job_url = request.scheme + '://' + self.reference_host + url_for("route_api_job", jobid=task.id)
-                                return f'that\'s quite a large file you\'ve go there!\nit has been submitted for processing {job_url}', 202
+                                return ('that\'s quite a large file you\'ve go there!'
+                                        f'\nit has been submitted for processing {job_url}', 202)
                         except NameCheckError as e:
                             return e.message, e.code
 
