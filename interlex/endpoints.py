@@ -262,11 +262,11 @@ class Endpoints:
         elif not identifier_or_defs:
             # FIXME this does not route to uri.interlex.org (probably)?
             title = f'{label} (ambiguation)'
-            ambiguate = 'https://interlex.org/ambiguation/{label}'
+            ambiguate = f'https://interlex.org/ambiguation/{label}'
             body = (f'<a href="{ambiguate}" class="redlink">{label}</a> is undefined.')
             return htmldoc(body,
                            title=title,
-                           styles=(redlink_style,))
+                           styles=(redlink_style,)), 404
         else:
             PREFIXES, g = self.getGroupCuries(user)
             defs = [(atag(s, g.qname(s)), d) for s, d in identifier_or_defs]

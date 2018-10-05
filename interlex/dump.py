@@ -289,7 +289,7 @@ class Queries:
             self.session.execute(f"SELECT '_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL"),
             )
-        
+
     def getExistingIris(self):
         sql = 'SELECT * FROM existing_iris'
         return self.session.execute(sql)
