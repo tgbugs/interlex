@@ -556,6 +556,10 @@ CREATE UNIQUE INDEX un__triples__s_blank_p_o_blank
 
 CREATE INDEX search_index ON triples USING GIN (to_tsvector('english', o_lit)) WHERE o_lit IS NOT NULL;
 
+-- GIN is slow here GIST is pretty fast as well, perhaps a bit faster than btree (the default)?
+-- the real answer here is the LOWER index so we can use LIKE AKA ~~ 'string'::text
+CREATE INDEX label_lower_index ON triples (LOWER(o_lit)) WHERE p = 'http://www.w3.org/2000/01/rdf-schema#label';
+
 -- ALTER TABLE triples DROP CONSTRAINT un__triples__s_p_o_lit;
 -- CREATE UNIQUE INDEX un__triples_s_p_o_lit_md5 ON triples (s, p, md5(o_lit), datatype, language);
 -- ALTER TABLE triples ADD CONSTRAINT un__triples_s_p_o_lit UNIQUE USING INDEX un__triples_s_p_o_lit_md5;

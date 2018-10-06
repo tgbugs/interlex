@@ -436,7 +436,9 @@ class Queries:
     def getByLabel(self, label, user):
         # TODO user mapping of lexical
         args = dict(p=rdfs.label.toPython(), label=label)
-        sql = f'SELECT s FROM triples WHERE p = :p AND o_lit ~~* :label'  # ~~* is LIKE case insensitive
+        #sql = f'SELECT s FROM triples WHERE p = :p AND o_lit ~~* :label'  # ~~* is LIKE case insensitive
+        sql = 'SELECT s FROM triples WHERE s IS NOT NULL AND p = :p AND LOWER(o_lit) LIKE :label'
+        # we can sort out the case sensitivity later if it is an issue
         results = [r.s for r in self.session.execute(sql, args)]
         if not results:
             # NOTE if ambiguation is done by a user, then they keep that mapping
