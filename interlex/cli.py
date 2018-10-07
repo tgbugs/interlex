@@ -13,6 +13,7 @@ Usage:
     interlex post ontology [options] <ontology-filename> ...
     interlex post triples  [options] (<reference-name> <triples-filename>) ...
     interlex post curies   [options] [<curies-filename>]
+    interlex post curies   [options] (<curie-prefix> <iri-prefix>) ...
     interlex post resource [options] <rdf-iri>
     interlex post class  [options] <rdfs:subClassOf> <rdfs:label> [<definition:>] [<synonym:> ...]
     interlex post entity [options] <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>] [<synonym:> ...]
@@ -149,6 +150,11 @@ def main():
                         raise TypeError(f'Don\'t know how to handle {ext} files')
 
                 resp = requests.post(url, json=data, headers=headers)
+            elif args['<curie-prefix>']:
+                # FIXME curie syntax validation? in the db?
+                data = {cp:ip for cp, ip in zip(args['<curie-prefix>'], args['<iri-prefix>'])}
+                resp = requests.post(url, json=data, headers=headers)
+
             else:
                 resp = requests.post(url, json=uPREFIXES, headers=headers)
 
