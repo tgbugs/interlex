@@ -334,6 +334,8 @@ class Endpoints:
             # FIXME this is not inside a transaction so it could fail!!!!
             if not ok:
                 return message, 409
+            elif not to_add:
+                return 'No new curies were added.', 409  # FIXME
 
             values = tuple((cp, ip) for cp, ip in to_add.items())
 
