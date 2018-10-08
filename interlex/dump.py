@@ -269,6 +269,7 @@ class Queries:
         ssc = "substring(encode(subgraph_identity, 'hex'), 0, 20)"
         # so yes, I originally wrote a UNION select version of this, it was monumentally slow
         # this one is blazingly fast
+        sep = "'x'"
         return (
             self.session.execute("SELECT '<' || s || '> <' || p || '> <' || o || '> .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o IS NOT NULL"),
@@ -278,16 +279,44 @@ class Queries:
                                  "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL"),
             self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '^^<' || datatype || '> .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL"),
-            self.session.execute(f"SELECT '<' || s || '> <' || p || '> _:' || {ssc} || '_' || o_blank::text || ' .\n' "
+            self.session.execute(f"SELECT '<' || s || '> <' || p || '> _:' || {ssc} || {sep} || o_blank::text || ' .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o_blank IS NOT NULL"),
-            self.session.execute(f"SELECT '_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> _:' || {ssc} || '_'            || o_blank::text     || ' .\n' "
+            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> _:' || {ssc} || {sep}            || o_blank::text     || ' .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_blank IS NOT NULL"),
-            self.session.execute(f"SELECT '_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text || ' .\n' "
+            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text || ' .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL"),
-            self.session.execute(f"SELECT '_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '@'   || language || ' .\n' "
+            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '@'   || language || ' .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL"),
-            self.session.execute(f"SELECT '_:' || {ssc} || '_' || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n' "
+            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL"),
+            )
+
+    def dumpSciGraphNt(self, user=None):
+        ssc = "substring(encode(subgraph_identity, 'hex'), 0, 20)"
+        sep = "'x'"
+        subselect = ("SELECT distinct(t.s) FROM triples AS t "
+                     "JOIN triples AS t2 ON t.s = t2.s "
+                     "WHERE t2.o::text LIKE '%owl#Ontology'")
+        condition = f'AND (s NOT IN ({subselect}) OR s IS NULL)'
+        return (
+            self.session.execute("SELECT '<' || s || '> <' || p || '> <' || o || '> .\n' "
+                                 f"FROM triples WHERE s IS NOT NULL AND o IS NOT NULL {condition}"),
+            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || ' .\n' "
+                                 f"FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL {condition}"),
+            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '@' || language || ' .\n' "
+                                 f"FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL {condition}"),
+            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '^^<' || datatype || '> .\n' "
+                                 f"FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL {condition}"),
+            self.session.execute(f"SELECT '<' || s || '> <' || p || '> _:' || {ssc} || {sep} || o_blank::text || ' .\n' "
+                                 f"FROM triples WHERE s IS NOT NULL AND o_blank IS NOT NULL {condition}"),
+            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> _:' || {ssc} || {sep}          || o_blank::text     || ' .\n' "
+                                 f"FROM triples WHERE s_blank IS NOT NULL AND o_blank IS NOT NULL {condition}"),
+            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || ' .\n' "
+                                 f"FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL {condition}"),
+            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '@'   || language || ' .\n' "
+                                 f"FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL {condition}"),
+            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n' "
+                                 f"FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL {condition}"),
             )
 
     def getExistingIris(self):

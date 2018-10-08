@@ -10,6 +10,7 @@ Usage:
     interlex dbsetup [options] [<database>]
     interlex debug [options]   [<database>]
     interlex sync [options]    [<database>]
+    interlex get           [options]
     interlex post ontology [options] <ontology-filename> ...
     interlex post triples  [options] (<reference-name> <triples-filename>) ...
     interlex post curies   [options] [<curies-filename>]
@@ -93,7 +94,9 @@ def main():
         os.environ.update({'INTERLEX_DATABASE':args['<database>']})
         os.environ['INTERLEX_DATABASE'] = args['<database>']#.update({'INTERLEX_DATABASE':args['<database>']})
 
-    if args['post']:
+    if args['get']:
+        raise NotImplemented
+    elif args['post']:
         if args['--group'] == defaults['--group']:
             # NOTE: there is a security consideration here
             # if someone obtains a random api key then they
@@ -208,6 +211,18 @@ def main():
         endpoints = Endpoints(db)
         session = db.session
         queries = endpoints.queries
+
+        def diffthing():
+            h1, h2 = (''.join(sorted(r for s in f('tgbugs')
+                                     for rp in s
+                                     for r in rp))
+                      for f in (queries.dumpSciGraphNt, queries.dumpAllNt))
+
+            with open('/tmp/d1.nt', 'wt') as f1, open('/tmp/d2.nt', 'wt') as f2:
+                f1.write(h1), f2.write(h2)
+
+            os.system('diff -u /tmp/d2.nt /tmp/d1.nt > /tmp/wut.patch')
+
         embed()
 
     elif args['sync']:

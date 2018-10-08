@@ -514,7 +514,18 @@ class Endpoints:
             return 'HEAD TODO\n'
 
         elif request.method == 'GET':
-            if filename == 'interlex':  # FIXME
+            if filename == 'scigraph-export':
+                if extension != 'nt':
+                    return "we only support 'application/n-triples' (.nt) for a full dump", 415
+                oof = self.queries.dumpSciGraphNt(user)
+                def gen():
+                    #yield from queries.ontology_header()  # TODO + send header first
+                    yield from (('<http://uri.interlex.org/base/ontologies/scigraph-export> '
+                                 '<http://www.w3.org/1999/02/22-rdf-syntax-ns#type> '
+                                 '<http://www.w3.org/2002/07/owl#Ontology> .'),)
+                    yield from (r[0].encode() for s in oof for r in s)
+                return Response(gen(), mimetype='application/n-triples')
+            elif filename == 'interlex':  # FIXME
                 if extension != 'nt':
                     return "we only support 'application/n-triples' (.nt) for a full dump", 415
                 oof = self.queries.dumpAllNt(user)
