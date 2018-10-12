@@ -135,8 +135,12 @@
   taking it to 8 shows a slowdown to ~145 rps 4 workers drops it to 133rps 5 hits 150rps
   so it seems that tornado with 6 is about the best for pypy3
   
-  pypy3 clearly faster with tornado than anything running 3.6, bonus is that rdflib will
-  be way faster too if we can get the memory leak during serialization worked out
+  pypy3 clearly faster with tornado than anything running 3.6, bonus is that rdflib +will
+  be way faster too if we can get the memory leak during serialization worked out+ is now
+  way faster since fixing the "turns out that allocating hundreds of thousands of empty
+  lists just looks like a memory leak" bug. pypy3 is also about 4x faster when dumping nt
+  straight from the database, peaking at about 80MBps to disk on the same computer while
+  python3.6 hits ~20MBps.
 
   most of the pypy3 numbers are tainted by the fact that they were tested from the server
   remotely there seems to be some cycling in the cpu usage, not sure why, but tornado at 8
