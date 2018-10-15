@@ -148,3 +148,9 @@ ORDER BY l.datetime
 
 -- horribly inefficient
 select s, p, o_lit, e.iri from triples as t join existing_iris as e on e.ilx_id = ilxIdFromIri(t.s)  where o_lit::text like '%isual cortex primary%' order by s;
+
+
+--
+
+-- annotations
+SELECT t.s, t.p, t.o, t.o_lit, a.p, a.o_lit FROM triples as t JOIN triples as a ON t.id = a.s_blank WHERE a.subgraph_identity IS NULL;

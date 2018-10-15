@@ -563,6 +563,14 @@ class IdentityBNode(rdflib.BNode):
 
             return self.ordered_identity(*self.all_idents)
 
+    def __repr__(self):
+        id = str(self)
+        return f'{self.__class__.__name__}({id!r})'
+
+    def __str__(self):
+        return self.identity.hex()
+
+
 class IdLocalBNode(rdflib.BNode):
     """ For use inside triples.
         Local ids should be consecutive integers.
@@ -572,6 +580,7 @@ class IdLocalBNode(rdflib.BNode):
     def __init__(self, identity, local_id):
         self.identity = identity
         self.local_id = local_id
+
     def __str__(self):
         return f'{self.identity}_{self.local_id}'
 
