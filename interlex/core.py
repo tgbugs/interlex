@@ -565,7 +565,7 @@ class IdentityBNode(rdflib.BNode):
 
     def __repr__(self):
         id = str(self)
-        return f'{self.__class__.__name__}({id!r})'
+        return f'{self.__class__.__name__}({id!r})'  # FIXME not quite right ... given what calling IBNode does ...
 
     def __str__(self):
         return self.identity.hex()
