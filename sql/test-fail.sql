@@ -28,7 +28,25 @@ INSERT INTO triples (s, p, o_lit) VALUES
        ('http://test.url/1',
         'http://test.url/annotationProperty',
         'your father was a hampster');
---DELETE FROM triples WHERE s = 'http://test.url/1';  -- FIXME for some reason this fails!?
+
+INSERT INTO triples (s, p, o) VALUES
+       ('http://test.url/1',
+        'http://test.url/annotationProperty',
+        'http://test.url/object');
+
+INSERT INTO triples (s, p, o_lit, datatype) VALUES
+       ('http://test.url/1',
+        'http://test.url/annotationProperty',
+        'object',
+        'http://test.url/datatype');
+
+INSERT INTO triples (s, p, o_lit, language) VALUES
+       ('http://test.url/1',
+        'http://test.url/annotationProperty',
+        'object',
+        'ja');
+
+--DELETE FROM triples WHERE s = 'http://test.url/1';  -- FIXME for some reason this fails!? -> .ur/ != .url/
 
 -- emails must be unique (group emails don't exist)
 INSERT INTO user_emails (user_id, email, email_primary) VALUES

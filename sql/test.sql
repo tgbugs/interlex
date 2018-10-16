@@ -56,9 +56,26 @@ SELECT * FROM user_permissions;
  -- test insert plus seed for no dupes later
 
 INSERT INTO triples (s, p, o_lit) VALUES
-       ('http://test.ur/1',
+       ('http://test.url/1',
         'http://test.url/annotationProperty',
         'your father was a hampster');
+
+INSERT INTO triples (s, p, o) VALUES
+       ('http://test.url/1',
+        'http://test.url/annotationProperty',
+        'http://test.url/object');
+
+INSERT INTO triples (s, p, o_lit, datatype) VALUES
+       ('http://test.url/1',
+        'http://test.url/annotationProperty',
+        'object',
+        'http://test.url/datatype');
+
+INSERT INTO triples (s, p, o_lit, language) VALUES
+       ('http://test.url/1',
+        'http://test.url/annotationProperty',
+        'object',
+        'ja');
 
  -- annotations
  -- FIXME this approach seriously risks data integrity issues :/
