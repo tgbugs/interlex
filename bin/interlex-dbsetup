@@ -37,6 +37,6 @@ psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/inserts.sql
 psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/permissions.sql" -v database=$DATABASE
 
 # tests
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/test.sql"
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/test-fail.sql"
-
+echo running python tests 
+cd ${ABS_PATH}/../
+python -m unittest test/test_constraints.py

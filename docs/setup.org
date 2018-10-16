@@ -44,6 +44,13 @@
 ** Set up the message broker
    1. Install =rabbitmq= and add it and =epmd= to default services.
    2. See =interlex-mqsetup=
+* Run tests
+  1. From the working directory run
+     =python -m unittest test/test_constraints.py=
+     (this is also run by =interlex-dbsetup=)
+  2. From the working directory run =nosetests=
+     (you may need to install it first e.g. via =pipenv install nose=)
+     NOTE: this will run stress tests.
 * Load content
 ** Sync with mysql
    At this point you should be able to synchronize the database with the existing mysql interlex installation.
@@ -71,10 +78,6 @@
       NOTE: currently this does not pull in the transitive closure.
 ** Load curies
    1. In the venv run =interlex post curies -o base= and then =interlex post curies -o $YOURUSERNAME=
-* Run tests
-  1. From the working directly run =nosetests=
-     (you may need to install it first e.g. via =pipenv install nose=)
-     NOTE: this will run stress tests.
 * Performance notes
   On =orpheus= the primary bottleneck seems to be the number of gunicorn workers.
   For total failures to respond in within 5 seconds when confronted 8 workers

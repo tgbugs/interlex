@@ -53,7 +53,22 @@ SELECT * FROM user_permissions;
  -- UPDATE new_users set email_validated = TRUE WHERE id = 9;
  -- UPDATE new_users set orcid_validated = TRUE WHERE id = 9;
 
+ -- test insert plus seed for no dupes later
+
+INSERT INTO triples (s, p, o_lit) VALUES
+       ('http://test.ur/1',
+        'http://test.url/annotationProperty',
+        'your father was a hampster');
+
+ -- annotations
+ -- FIXME this approach seriously risks data integrity issues :/
+ -- we *could* try to use subgraph_identity in this case to be the hash of the row??
+ -- for major dumps we wouldn't have to use that identity but for one off retireveal
+ -- it might actually be faster if the annotation identitiers were indexed? _BUT_ then
+ -- we can't use null to distingusih annotations from subgraphs
+
+INSERT INTO triples (s, s_blank, p, o_lit) VALUES
+('annotation', 1, 'https://this-is-an-annotation-on-a-triple-maybe.maybe/?', 'YAY COMMENTS USING THE DISTINGUSHING POWER OF NOTHINGNESS!');
 
 --END;
 --$body$ language plpgsql;
-

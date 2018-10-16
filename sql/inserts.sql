@@ -118,16 +118,7 @@ INSERT INTO user_permissions VALUES (0, idFromGroupname('tgbugs'), 'admin');
 -- INSERT INTO source_serialization VALUES (E'\\x00', E'\\x00');
 -- INSERT INTO sources (id, owner_group_id, interlex_source_path, external_source_iri) VALUES
        -- (0, 0, '/interlex.ttl', 'https://uri.interlex.org/base/interlex.ttl');  -- FIXME we really need an agnostic suffix :/ owl is too xml
-
--- annotaitons
--- FIXME this approach seriously risks data integrity issues :/
--- we *could* try to use subgraph_identity in this case to be the hash of the row??
--- for major dumps we wouldn't have to use that identity but for one off retireveal
--- it might actually be faster if the annotation identitiers were indexed? _BUT_ then
--- we can't use null to distingusih annotations from subgraphs
--- FIXME why do our triple ids start at 4?!
-INSERT INTO triples (s, s_blank, p, o_lit) VALUES
-('annotation', 4, 'https://this-is-an-annotation-on-a-triple-maybe.maybe/?', 'YAY COMMENTS USING THE DISTINGUSHING POWER OF NOTHINGNESS!');
+       -- the absolute madlads, they actually indended .owl as a semantic file extension O_O this explains so many things
 
 -- prov
 /*

@@ -3,6 +3,7 @@ from pathlib import Path
 from sqlalchemy.exc import IntegrityError
 from pyontutils.config import devconfig  # FIXME this will cause issues down the line
 from test.test_stress import nottest  # FIXME put nottest in test utils
+from pyontutils.utils import TermColors as tc
 
 
 class TestSQLs(unittest.TestCase):
@@ -14,33 +15,43 @@ class TestSQLs(unittest.TestCase):
     def load_sql(path):
         with open(path.as_posix(), 'rt') as f:
             raw = f.read()
+        in_comment = False
         for maybe_test in raw.split('\n\n'):
-            in_comment = False
             test = []
+            print(tc.blue(maybe_test))
             for line in maybe_test.split('\n'):
                 if line.strip().startswith('--'):
                     # FIXME I was doing something tricksy with moving -- in a space
                     # to prevent something from triggering ...
                     continue
                 elif line.startswith('/*'):
-                    in_comment = True
+                    if '*/' in line:
+                        continue
+                    else:
+                        in_comment = True
                 elif line.endswith('*/'):
                     in_comment = False
                 elif in_comment:
                     continue
                 elif line:
+                    print(tc.yellow(line))
                     test.append(line)
 
             if test:
                 yield '\n'.join(test)
         
     @nottest
-    def test_positive(self):
-        from test.setup_testing_db import session
+    def test_0_positive(self):
+        from test.setup_testing_db import getSession
+        session = getSession()
         failed = []
         for test in self.load_sql(self.positive_f):
+            print(f'++++++++++++++\n{test}')
             try:
-                session.execute(test)
+                out = session.execute(test)
+                if test.startswith('SELECT') or 'RETURNING' in test:
+                    print(list(out))
+                session.commit()
             except BaseException as e:
                 session.rollback()
                 failed.append((test, e))
@@ -52,12 +63,23 @@ class TestSQLs(unittest.TestCase):
                                                     for t, e in failed)))
 
     @nottest
-    def test_negative(self):
-        from test.setup_testing_db import session
+    def test_1_negative(self):
+        from test.setup_testing_db import getSession
+        session = getSession()
+        failed = []
         for test in self.load_sql(self.negative_f):
             try:
                 session.execute(test)
-                raise AssertionError(test)
+                failed.append((test, AssertionError('THIS TEST SHOULD HAVE FAILED')))
+                #raise AssertionError(test)
             except (IntegrityError, ) as e:
+                print('---------------\nGot expected error:')
                 print(e.orig.pgerror)
                 session.rollback()
+
+        if failed:
+            sep = '=' * 40
+            raise AssertionError('\n' +
+                                 f'\n{sep}\n'.join((f'test:\n\n{t}\n\nerror:\n\n{e}\n'
+                                                    for t, e in failed)))
+

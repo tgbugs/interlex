@@ -25,14 +25,10 @@ DELETE FROM triples WHERE s = 'http://test.url/1';
 
 -- no dupes s, p, o_lit
 INSERT INTO triples (s, p, o_lit) VALUES
-       ('http://test.ur/1',
-       'http://test.url/annotationProperty',
-       'your father was a hampster');
-INSERT INTO triples (s, p, o_lit) VALUES
        ('http://test.url/1',
-       'http://test.url/annotationProperty',
-       'your father was a hampster');
-DELETE FROM triples WHERE s = 'http://test.url/1';
+        'http://test.url/annotationProperty',
+        'your father was a hampster');
+--DELETE FROM triples WHERE s = 'http://test.url/1';  -- FIXME for some reason this fails!?
 
 -- emails must be unique (group emails don't exist)
 INSERT INTO user_emails (user_id, email, email_primary) VALUES

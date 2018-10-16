@@ -6,6 +6,7 @@ from pyontutils.config import devconfig
 from interlex.core import bnodes, IdentityBNode
 from IPython import embed
 
+
 class TestIBNode(unittest.TestCase):
     def setUp(self):
         self.graph1 = rdflib.Graph()

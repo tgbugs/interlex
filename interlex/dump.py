@@ -477,3 +477,17 @@ class Queries:
         else:
             defs = self.getDefinitions(user, *results)
             return False, [(s, _def) for s, _def in zip(results, defs)]  # disambiguate
+
+    def getTriplesById(self, *triples_ids):
+        # when using IN directly we don't have to convert to a list first
+        # unlike in the unnest case
+        yield from self.session.execute('SELECT * FROM triples WHERE id IN :triples_ids',
+                                        dict(triples_ids=triples_ids))
+
+    def tripleIdentity(self, *triples_ids):
+        """ light wrapper around built in function """
+        for (identity,) in self.session.execute('SELECT tripleIdentity(id)'
+                                                'FROM unnest(ARRAY[:triples_ids]) '
+                                                'WITH ORDINALITY id',
+                                                dict(triples_ids=list(triples_ids))):
+            yield identity
