@@ -111,7 +111,7 @@ class TripleRender:
         uri = rdflib.URIRef(f'http://uri.interlex.org/{user}/ilx_{id}')  # FIXME reference_host from db ...
         new_graph = rdflib.Graph()
         [new_graph.bind(p, n) for p, n in graph.namespaces()]
-        ranking = ('UBERON', 'CHEBI', 'GO', 'PR', 'BIRNLEX', 'NLX',
+        ranking = ('UBERON', 'CHEBI', 'GO', 'PR', 'NCBITaxon', 'IAO', 'BIRNLEX', 'NLX',
                    # FIXME TODO much more complex than this and source user rankings from db ...
                    'NDA.CDE', 'ILX')
         not_in_rank = len(ranking) + 1
@@ -135,8 +135,10 @@ class TripleRender:
         #print(repr(uri), repr(preferred_iri))
         for s, p, o in graph:
             if o == preferred_iri and p == ilxtr.hasExistingId and preferred_iri != uri:
+                # prevent the preferred iri from being listed as an existing iri of itself
                 continue
             elif preferred_iri == uri == o and p == ilxtr.hasIlxId:
+                # prevent ilx ids from being listed as ilx ids of themselves
                 # mysql case
                 continue
 
