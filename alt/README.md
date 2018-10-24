@@ -4,6 +4,8 @@ from the mysql database. The necessary subset of the code that is needed
 is copied into this directory and installed from the main interlex source.
 
 # Instructions
+NOTE: This has mostly been replaced by the scripts in alt/bin.
+## Setup
 1. Install `python3.6`, `pip` and `pipenv`.
 2. Build the package ~~and install to create Pipfile.lock for sanity~~
 and compress this folder for deployment.
@@ -55,3 +57,9 @@ sudo systemctl start ilxalt
 5. Make sure you create a `~/.mypass` file that conforms to the syntax of `~/.pgpass`
 i.e. each line should look like `server.url.org:port:dbname:user:password` and should
 have read write permission only for your user (`chmod 0600`).
+
+# Testing
+On a redeploy, the easiest way to test whether everything is working is to change
+TestRoutes.host in `test/test_alt.py` to match the test server and then run
+`python -m unittest test/test_alt.py`. TODO add this to the deploy scripts for the test server?
+Simple testing `curl --header 'Host: uri.interlex.org' http://${TEST_HOST}/base/ilx_0109470.ttl`
