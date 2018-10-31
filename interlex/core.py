@@ -422,7 +422,8 @@ class IdentityBNode(rdflib.BNode):
                             raise ValueError('should never get here')
 
                 else:
-                    raise ValueError('wat, dont know how to compute the identity of this thing')
+                    raise ValueError('wat, dont know how to compute the identity of '
+                                     f'{triples_or_pairs_or_thing}')
 
     def resolve_bnode_idents(self):
         # resolve lifts and skips
@@ -523,8 +524,11 @@ class IdentityBNode(rdflib.BNode):
     def identity_function(self, triples_or_pairs_or_thing):
         if isinstance(triples_or_pairs_or_thing, bytes):  # serialization
             return self.ordered_identity(triples_or_pairs_or_thing)
-        elif isinstance(triples_or_pairs_or_thing, str):  # a node
+        elif isinstance(triples_or_pairs_or_thing, rdflib.term.Identifier):
+            # NOTE rdflib.term.Node includes graphs themselves, which is good to know
             return next(self.recurse((triples_or_pairs_or_thing,)))
+        elif type(triples_or_pairs_or_thing) == str:  # FIXME isinstance? or is that dangerous? e.g. OntId
+            return self.ordered_identity(next(self.recurse((triples_or_pairs_or_thing,))))
         else:
             if self.debug:
                 self.subgraphs = []
