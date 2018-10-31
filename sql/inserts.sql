@@ -35,7 +35,13 @@ INSERT INTO groups (groupname) VALUES
        ('FSL'),
        ('FreeSurfer'),
        ('fakeobo'),
-       ('dicom');
+       ('dicom'),
+       ('biccn'),
+       ('dknet'),
+       ('sparc'),
+       ('neuinfo'),
+       ('NeuroLex'),
+       ('InterLex');
 
 -- blacklist
 -- populate more with with len > 4
@@ -65,6 +71,11 @@ INSERT INTO groups (own_role, groupname)
                          'anita',
                          'maryann',
 
+                         'q',  -- compact for qualifiers
+                         't',  -- compact for triples
+                         'hq',  -- compact for hasQualifier
+                         'ht',  -- compact for hasTriple
+                         'pq',  -- compact for parentQualifier FIXME iq? includeQualifier?
                          'api',
                          'read',
                          'readonly',
@@ -85,7 +96,15 @@ INSERT INTO groups (own_role, groupname)
                          'curie',
                          'curies',
                          'prefix',
-                         'prefixes'
+                         'prefixes',
+                         'qualifier',
+                         'qualifiers',
+                         'triple',
+                         'triples',
+                         'hasTriple',
+                         'hasQualifier',
+
+                         'brain'
                          ]);
 
 

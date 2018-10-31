@@ -173,7 +173,7 @@ class IdentityBNode(rdflib.BNode):
     # different triples
     """ An identity blank node is a blank node that is identified by
         the output of some identity function on the subgraph that it
-        identifies. IBNodes do not need to be linked into quads for
+        identifies. IBNodes do not need to be connected into quads for
         the named parts of a graph because they will fail to bind on
         any set of triples whose identity does not match their identity.
 
@@ -416,7 +416,7 @@ class IdentityBNode(rdflib.BNode):
                             self.bobjects.add(o)
                             # named head
                             self.named_heads.add(s)
-                            self.linked_heads.add(o)
+                            self.connected_heads.add(o)
                             self.awaiting_object_identity[s].add(thing)
                         else:
                             raise ValueError('should never get here')
@@ -464,13 +464,13 @@ class IdentityBNode(rdflib.BNode):
                         else:  # named case
                             ident = self.triple_identity(s, p, object_ident)
                             self.named_subgraph_identities[s, p].append(ident)
-                            self.linked_object_identities[object_ident] = o
+                            self.connected_object_identities[object_ident] = o
 
                         # in a sane world ...
                         # there is only single triple where a
                         # bnode is an object so it is safe to pop
                         gone = self.bnode_identities.pop(o)
-                        if self.debug and o in self.linked_heads or o in self.unnamed_heads:
+                        if self.debug and o in self.connected_heads or o in self.unnamed_heads:
                             self.blank_identities[o] = gone
                         assert gone == object_ident, 'something weird is going on'
                         triples.remove(t)
@@ -533,7 +533,7 @@ class IdentityBNode(rdflib.BNode):
 
             self.awaiting_object_identity = defaultdict(set)
             self.bnode_identities = defaultdict(list)
-            self.linked_heads = set()
+            self.connected_heads = set()
             self.named_heads = set()
             self.bsubjects = set()
             self.bobjects = set()
@@ -547,18 +547,18 @@ class IdentityBNode(rdflib.BNode):
 
             self.unnamed_subgraph_identities = {}
             self.named_subgraph_identities = defaultdict(list)
-            self.linked_object_identities = {}  # needed for proper identity calculation?
+            self.connected_object_identities = {}  # needed for proper identity calculation?
             self.resolve_bnode_idents()
 
             free = list(self.unnamed_subgraph_identities.values())
             assert all(type(i) == bytes for i in free), 'free contains a non identity!'
-            linked = [i for ids in self.named_subgraph_identities.values() for i in ids]
-            assert all(type(i) == bytes for i in linked), 'linked contains a non identity!'
+            connected = [i for ids in self.named_subgraph_identities.values() for i in ids]
+            assert all(type(i) == bytes for i in connected), 'connected contains a non identity!'
             self.free_identities = free
-            self.linked_identities = linked
+            self.connected_identities = connected
 
             self.all_idents = sorted(self.named_identities +
-                                     tuple(self.linked_identities) +
+                                     tuple(self.connected_identities) +
                                      tuple(self.free_identities))
 
             return self.ordered_identity(*self.all_idents)

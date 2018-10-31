@@ -36,6 +36,35 @@ class TestIBNode(unittest.TestCase):
         # they are clearly an ordering cases and thus in scope for
         # IBNode, in the say way reordering lists is in scope
 
+    def test_bytes(self):
+        test = b'hello'
+        ident = IdentityBNode(test).identity
+        m = IdentityBNode.cypher()
+        m.update(test)
+        h = m.digest()
+        assert ident == h, ident
+
+    def test_string(self):
+        test = 'hello'
+        ident = IdentityBNode(test).identity
+        m = IdentityBNode.cypher()
+        m.update(test.encode(IdentityBNode.encoding))
+        h = m.digest()
+        assert ident == h, ident
+
+    def test_pair(self):
+        test = 'hello', 'world'
+        ibn = IdentityBNode(test)
+        ident = ibn.identity
+        m = IdentityBNode.cypher()
+        for i, t in enumerate(test):
+            m.update(t.encode(IdentityBNode.encoding))
+            if not i % 2:
+                m.update(ibn.cypher_field_separator_hash)
+
+        h = m.digest()
+        assert ident == h, ident
+
     def test_ser(self):
         assert IdentityBNode(self.ser1) != IdentityBNode(self.ser2), 'serialization matches!'
 
@@ -115,8 +144,8 @@ class TestIBNode(unittest.TestCase):
         idni2 = sorted(id2.named_identities) 
         assert idni1 == idni2, 'named identities do not match'
 
-        idli1 = sorted(id1.linked_identities) 
-        idli2 = sorted(id2.linked_identities) 
+        idli1 = sorted(id1.connected_identities) 
+        idli2 = sorted(id2.connected_identities) 
         assert idli1 == idli2, 'linked identities do not match'
 
         idfi1 = sorted(id1.free_identities) 

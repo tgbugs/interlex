@@ -21,7 +21,7 @@ from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode, synon
 from interlex.dump import Queries
 from IPython import embed
 
-ilxr, *_ = makeNamespaces('ilxr')
+ilxr, *_ = makeNamespaces('ilxr', 'ilx')
 
 
 def async_load(iri=None, data=None, max_wait=10):
@@ -108,9 +108,9 @@ class GraphIdentities:
 
         self._curies_identity = None
         #self._subgraph_identities = None  # not used
-        #self._linked_subgraph_identities = None  # not used
-        self._metadata_linked_subgraph_identities = None
-        self._data_linked_subgraph_identities = None
+        #self._connected_subgraph_identities = None  # not used
+        self._metadata_connected_subgraph_identities = None
+        self._data_connected_subgraph_identities = None
         self._free_subgraph_identities = None
         self._bound_name_identity = None
         self._metadata_identity = None
@@ -140,25 +140,25 @@ class GraphIdentities:
 
     @property
     def subgraph_identities(self):
-        return {**self.linked_subgraph_identities, **self.free_subgraph_identities}
+        return {**self.connected_subgraph_identities, **self.free_subgraph_identities}
 
     @property
-    def linked_subgraph_identities(self):
-        return {**self.metadata_linked_subgraph_identities, **self.data_linked_subgraph_identities}
+    def connected_subgraph_identities(self):
+        return {**self.metadata_connected_subgraph_identities, **self.data_connected_subgraph_identities}
 
     @property
-    def metadata_linked_subgraph_identities(self):
-        if self._metadata_linked_subgraph_identities is None:
+    def metadata_connected_subgraph_identities(self):
+        if self._metadata_connected_subgraph_identities is None:
             self.process_graph()
 
-        return self._metadata_linked_subgraph_identities
+        return self._metadata_connected_subgraph_identities
 
     @property
-    def data_linked_subgraph_identities(self):
-        if self._data_linked_subgraph_identities is None:
+    def data_connected_subgraph_identities(self):
+        if self._data_connected_subgraph_identities is None:
             self.process_graph()
 
-        return self._data_linked_subgraph_identities
+        return self._data_connected_subgraph_identities
 
     @property
     def free_subgraph_identities(self):
@@ -255,17 +255,17 @@ class GraphIdentities:
         yield from self.subgraph_identities.values()
 
     @property
-    def linked_subgraphs(self):
-        yield from self.metadata_linked_subgraphs
-        yield from self.data_linked_subgraphs
+    def connected_subgraphs(self):
+        yield from self.metadata_connected_subgraphs
+        yield from self.data_connected_subgraphs
 
     @property
-    def metadata_linked_subgraphs(self):
-        yield from self.metadata_linked_subgraph_identities.values()
+    def metadata_connected_subgraphs(self):
+        yield from self.metadata_connected_subgraph_identities.values()
 
     @property
-    def data_linked_subgraphs(self):
-        yield from self.data_linked_subgraph_identities.values()
+    def data_connected_subgraphs(self):
+        yield from self.data_connected_subgraph_identities.values()
 
     @property
     def free_subgraphs(self):
@@ -287,29 +287,29 @@ class GraphIdentities:
         return len(list(self.metadata))
 
     @property
-    def metadata_linked_counts(self):
-        return {i:len(sg) for i, sg in self.metadata_linked_subgraph_identities.items()}
+    def metadata_connected_counts(self):
+        return {i:len(sg) for i, sg in self.metadata_connected_subgraph_identities.items()}
 
     @property
     def metadata_count(self):
-        return self.metadata_named_count + sum(self.metadata_linked_counts.values())
+        return self.metadata_named_count + sum(self.metadata_connected_counts.values())
 
     @property
     def data_named_count(self):  # FIXME unnamed should be called tainted
         return len(list(self.data))
 
     @property
-    def data_linked_counts(self):
-        return {i:len(sg) for i, sg in self.data_linked_subgraph_identities.items()}
+    def data_connected_counts(self):
+        return {i:len(sg) for i, sg in self.data_connected_subgraph_identities.items()}
 
     @property
     def data_count(self):
-        return self.data_named_count + sum(self.data_linked_counts.values())
+        return self.data_named_count + sum(self.data_connected_counts.values())
 
     @property
-    def linked_counts(self):
+    def connected_counts(self):
         # NOTE this double counts if added to metadata_counts and data_counts
-        return {**self.data_linked_counts, **self.data_linked_counts}
+        return {**self.data_connected_counts, **self.data_connected_counts}
 
     @property
     def free_counts(self):
@@ -320,7 +320,7 @@ class GraphIdentities:
         counts = {self.curies_identity:self.curies_count,
                   self.metadata_identity:self.metadata_count,
                   self.data_identity:self.data_count,
-                  **self.linked_counts,
+                  **self.connected_counts,
                   **self.free_counts}
 
         if self.bound_name_count is not None:
@@ -397,14 +397,14 @@ class GraphIdentities:
             if name == 'data':
                 self._free_subgraph_identities = free_subgraph_identities
 
-            for identity, o in idents.linked_object_identities.items():
+            for identity, o in idents.connected_object_identities.items():
                 idents.subgraph_mappings[o]
 
-            linked_subgraph_identities = {identity:normgraph(o, idents.subgraph_mappings[o])
-                                          for identity, o in idents.linked_object_identities.items()}
+            connected_subgraph_identities = {identity:normgraph(o, idents.subgraph_mappings[o])
+                                          for identity, o in idents.connected_object_identities.items()}
 
-            setattr(self, '_' + name + '_linked_subgraph_identities',
-                    linked_subgraph_identities)
+            setattr(self, '_' + name + '_connected_subgraph_identities',
+                    connected_subgraph_identities)
 
             if self._blank_identities:
                 #printD(self._blank_identities)
@@ -531,7 +531,7 @@ class GraphLoader(GraphIdentities):
 
             return out
 
-        # linked and free
+        # connected and free
         to_insert = defaultdict(list)  # should all be unique due to having already been identified
         for identity, subgraph in self.subgraph_identities.items():
             if self.debug:
@@ -567,6 +567,7 @@ class BasicDBFactory:
     def __new__(cls, session):
         newcls = cls.bindSession(session)
         newcls.__new__ = cls.___new__
+        newcls.queries = Queries(session)
         return newcls
 
     @classmethod
@@ -600,6 +601,10 @@ class BasicDBFactory:
         # read only does not need to be enforced in the database becuase user role
         # is the ultimate defense and that _is_ in the database
         # it is more of a convenience reminder
+
+    @property
+    def reference_host(self):
+        return self.queries.reference_host
 
     @property
     def group(self):
@@ -714,12 +719,11 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         TripleLoaderFactory._cache_identities = set()
         super().refresh()
 
-    def __init__(self, group, user, reference_name, reference_host):
+    def __init__(self, group, user, reference_name):
         super().__init__(group, user, read_only=False)  # FIXME WARNING
         self.debug = False
         self.preinit()
-        printD(group, user, reference_name, reference_host)
-        self.reference_host = reference_host
+        printD(group, user, reference_name, self.reference_host)
         self._reference_name = None
         self.reference_name_in_db = None
 
@@ -1117,24 +1121,115 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             bound_name_count = 0
             curies_count = len(self.curies)
             mtc = len(list(self.metadata))
-            m_linked_counts = {i:len(sg) for i, sg in self.metadata_linked_subgraph_identities.items()}
-            metadata_count = mtc + sum(m_linked_counts.values())
+            m_connected_counts = {i:len(sg) for i, sg in self.metadata_connected_subgraph_identities.items()}
+            metadata_count = mtc + sum(m_connected_counts.values())
             dtc = len(list(self.data))
-            d_linked_counts = {i:len(sg) for i, sg in self.data_linked_subgraph_identities.items()}
-            data_count = dtc + sum(d_linked_counts.values())
-            linked_counts = {**m_linked_counts, **d_linked_counts}
+            d_connected_counts = {i:len(sg) for i, sg in self.data_connected_subgraph_identities.items()}
+            data_count = dtc + sum(d_connected_counts.values())
+            connected_counts = {**m_connected_counts, **d_connected_counts}
             free_counts = {i:len(sg) for i, sg in self.free_subgraph_identities.items()}
             itc = {self.serialization_identity:data_count,
                    self.curies_identity:curies_count,
                    self.bound_name_identity:bound_name_count,
                    self.metadata_identity:metadata_count,
                    self.data_identity:data_count,
-                   **linked_counts,
+                   **connected_counts,
                    **free_counts}
             self._identity_triple_count = itc
 
         return self._identity_triple_count[identity]  # this should never key error
         """
+
+    def parent_qualifier(self):
+        self.query
+
+    def qualifier(self):
+        # NOTE the disadvantage of this approach
+        # is _in theory_ tampering
+        # EXCEPT that if the original qualifier
+        # has been published _WITH THE IDENTS_ of its parts
+        # AS HAVE THE PRIOR QUALIFIERS
+        # the boom, merkelish tree, by accident
+        # it means that the prior history before zero will
+        # always be 'off chain' that that is actually a good thing
+
+        # iq include qualifier
+        # eq exclude qualifier
+        # pq prior qualifier
+        # h hash
+        # uh unbound hash
+
+        def express(*tuple_or_generator):
+            for tog in tuple_or_generator:
+                if isinstance(tog, tuple):
+                    yield tog
+                else:
+                    yield from tog
+
+        # FIXME TODO I think that the zeroth q should probably be the hash of a uuid
+        # that we use as a random seed, it could also be the hash of the reference host
+        # along with the user in question, which probably makes the most sense
+        # also super handy for finding the first commit ^_^
+
+        q = 0  # nice thing about this? if we want to reconstruct prior history there's plenty of space
+        # TODO q should probably be?? integer? hash of what? not sure
+        # NOTE nice sideeffect of this is that we should be able to run
+        # an internal integrity check on the history so that the data
+        # identities that we get 'add' up to the identities of the diff
+        # in _theory_ we could make the qualifier id the hash of the state
+        # of the subest of the graph that it encompases at the moment, but that
+        # means that large graphs could take a ... very long time to compute
+        # identities for .. on the other hand, we do imagine that the total
+        # number of names that we will ever need should be much less than 5 billion
+
+        # integers are easier to read ... annoying they require a single global
+        # index ... EXCEPT that as along as we prefix the qualifier with domain
+        # that was managing the index at the time, then we should be good to go
+        # sure, some future programmer is going to loose their mind because
+        # I've forced an arbitrary id in as part of the identity, but what's a
+        # vanity here and there ;)
+
+        qualifier = 'https://uilx.org/q/{q}'
+        # remember: just because there is a merke tree
+        # doesn't mean that there we can't recombine individual
+        # qualifiers _AS IF_ they didn't have a history
+        # we still have their constituent ids which can be used
+        # for all sorts of stuff
+
+        def include(*include_parent_hashes):
+            for ihash in include_parent_hashes:
+                # TODO consider base64 encoding these ...
+                # "sha256 hash value"^^ilx:base64
+                yield qualifier, ilx.iq, rdflib.Literal(ihash)
+
+        def exclude(*exclude_parent_hashes):
+            for ehash in exclude_parent_hashes:
+                yield qualifier, ilx.eq, rdflib.Literal(ehash)  # TODO encoding
+
+        # NOTE when creating a new group there are a number of complexities
+        # that need to be considered, specifically that if they want to merge
+        # multiple other groups or other ontologies, then we will need them to
+        # reconcile conflicts in the cardinality 1 case and we should probably
+        # offer them a way to determine whether that particular merge of the graph
+        # will conconsistent or not, the easiest case is that they simply take the
+        # latest or curated and start from there since it is much easier to work
+        # from a merge commit than to compute a new history from scratch
+        # NOTE there is also the ilx:alwaysExclude qualifier relation which i think
+        # i have discussed before, though that could create some issues
+        include_hashes = self.get_parent_qualifiers_for_current_reference_name()
+        exclude_hashes = self.compute_exclude_and_create_qualifier()
+        triples = express(
+            (qualifier, rdf.type, ilx.q),
+            include(*include_hashes),  # allow octopus merge
+            exclude(*exclude_hashes),
+            (qualifier, ilx.dataHash, ),
+            (qualifier, ilx.sgHash, ),
+            (qualifier, ilx.dsgHash, ),
+        )
+
+        # the last step is to hash all the previous qualifiers and publish
+        # the this unbound hash (bound hashes are impossible)
+        (qualifier, ilx.unboundHash, qualifier_total_identity)
 
     def load_event(self):
         # FIXME only insert on success...
@@ -1162,7 +1257,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         # (:s, 'hasPart', :o)
         # FIXME only insert the anon subgraphs and definitely better
         # not to use identities on annotations
-        # also pretty sure that the linked subgraphs don't go in the idents table
+        # also pretty sure that the connected subgraphs don't go in the idents table
         # FIXME I need to know which subgraphs need to be parented ser
         sql_ident_base = 'INSERT INTO identities (reference_name, identity, type, triples_count) VALUES '
         types_idents = (('serialization', self.serialization_identity),  # TODO abstract... type + ident
@@ -1297,13 +1392,12 @@ class FileFromBaseFactory(TripleLoaderFactory):
 
 
 class FileFromFileFactory(FileFromBaseFactory):
-    def __init__(self, group, user, reference_name=None,
-                 reference_host='uri.interlex.org'):
+    def __init__(self, group, user, reference_name=None):
         if reference_name is None:
             # FIXME the way this is implemented will be one way to check to make
             # sure that users/groups match the reference_name?
-            reference_name = f'http://uri.interlex.org/{group}/upload/test'
-        super().__init__(group, user, reference_name, reference_host)
+            reference_name = f'http://{self.reference_host}/{group}/upload/test'
+        super().__init__(group, user, reference_name)
 
     def check(self, name):
         self.path = Path(name).resolve().absolute()
@@ -1459,8 +1553,8 @@ class FileFromIRIFactory(FileFromBaseFactory):
 
 
 class FileFromPostFactory(FileFromIRIFactory):
-    def __init__(self, group, user, reference_host, reference_name=None):
-        super().__init__(group, user, reference_name, reference_host)
+    def __init__(self, group, user, reference_name=None):
+        super().__init__(group, user, reference_name)
 
     def check(self, header):  # FIXME ... reference names and stuff
         self._header = {k:v for k, v in header.items()}
@@ -1556,11 +1650,7 @@ class InterLexLoad:
         from interlex import config
         self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex', 'uri.interlex.org')
 
-        class EP:
-            # FIXME hack :/
-            reference_host = next(self.loader.session.execute('SELECT reference_host()'))
-
-        self.queries = Queries(self.loader.session, EP)
+        self.queries = Queries(self.loader.session)
         self.do_cdes = do_cdes
         self.debug = debug
         self.admin_engine = create_engine(dbUri(user='interlex-admin'), echo=True)

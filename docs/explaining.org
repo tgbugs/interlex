@@ -135,6 +135,27 @@
 ** n-ary
 *** 1-card
 *** n-card
+* qualifiers in the identity data model
+  This is basically just git.
+  The unbound qid is essentially a commit hash.
+  Question: is it safe to use the artifact id as the qualifier, knowing that in
+  the qualifier prov header there will be the artifact id, plus the prior qual ids
+  along with those relations.
+  # FIXME check how we are computing the data id, is it on the triples + csgids + fsgids
+  # or is the order of operations different? The spec for this needs to be extremely clear.
+  |---------------------+-----------------|
+  | qualifier prov      | unbound qid     |
+  |---------------------+-----------------|
+  | prior qual ids      | (in prov)       |
+  | artifact            | bound mid + did |
+  |---------------------+-----------------|
+  | metadata            | mid             |
+  | data (inc. csgids)  | did             |
+  |---------------------+-----------------|
+  | connected subgraphs | csgids          |
+  | free subgraphs      | fsgids          |
+  |---------------------+-----------------|
+
 * Red links
   One of the most useful features for both expert and non-expert users of NeuroLex was the redlink.
   The redlink was a fantastic bookmarking and compiling tool that allowed users to use lexical entities

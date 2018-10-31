@@ -196,6 +196,7 @@ def main():
     elif args['debug']:
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
+        from interlex.core import IdentityBNode
         from interlex.load import TripleLoaderFactory
         from interlex.dump import TripleExporter
         from interlex.endpoints import Endpoints
@@ -220,6 +221,7 @@ def main():
 
             with open('/tmp/d1.nt', 'wt') as f1, open('/tmp/d2.nt', 'wt') as f2:
                 f1.write(h1), f2.write(h2)
+
 
             os.system('diff -u /tmp/d2.nt /tmp/d1.nt > /tmp/wut.patch')
 

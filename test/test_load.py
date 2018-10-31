@@ -18,6 +18,7 @@ class FakeResultProxy:
     identity = _deadbeef + (b'\xff' * (32 - len(_deadbeef)))
     id = 'this isnt actually an i'
     own_role = 'not actually a role'
+    reference_host = 'uri.interlex.org'
 
 
 def ident_exists(*args, **kwargs):

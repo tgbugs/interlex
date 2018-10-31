@@ -110,17 +110,19 @@ def basic2(function):
 
 
 class Endpoints:
-    reference_host = None  # this has to be set globally later
-
     def __init__(self, db):
         self.db = db
         self.session = self.db.session
+        self.queries = Queries(self.session)
         self.auth = Auth(self.session)
         self.FileFromIRI = FileFromIRIFactory(self.session)  # FIXME I think these go in tasks
         self.FileFromPost = FileFromPostFactory(self.session)  # FIXME I think these go in tasks
         self.BasicDB = BasicDBFactory(self.session)
         self.UnsafeBasicDB = UnsafeBasicDBFactory(self.session)
-        self.queries = Queries(self.session, self)
+
+    @property
+    def reference_host(self):
+        return self.queries.reference_host
 
     @property
     def link_to_new_token(self):

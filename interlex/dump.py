@@ -209,13 +209,16 @@ class Queries:
         pass
     sql = Sql()
 
-    def __init__(self, session, endpoints):
-        self.endpoints = endpoints
+    def __init__(self, session):
         self.session = session
+        self.__reference_host = None
 
     @property
     def reference_host(self):
-        return self.endpoints.reference_host
+        if self.__reference_host is None:
+            # NOTE this means you can't call this queries until you have set up the database
+            self.__reference_host = next(self.session.execute('SELECT reference_host()')).reference_host
+        return self.__reference_host
 
     def getBuiltinGroups(self):
         return list(self.session.execute("SELECT * FROM groups WHERE own_role = 'builtin'"))
