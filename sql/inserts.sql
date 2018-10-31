@@ -71,11 +71,18 @@ INSERT INTO groups (own_role, groupname)
                          'anita',
                          'maryann',
 
-                         'q',  -- compact for qualifiers
-                         't',  -- compact for triples
-                         'hq',  -- compact for hasQualifier
-                         'ht',  -- compact for hasTriple
-                         'pq',  -- compact for parentQualifier FIXME iq? includeQualifier?
+                         -- compact
+                         'l',  -- loads
+                         'q',  -- qualifiers
+                         'r',  -- readable
+                         't',  -- triples
+                         'hq',  -- hasQualifier
+                         'ht',  -- hasTriple
+                         'pq',  -- parentQualifier
+                         'iq',  -- includeQualifier
+                         'dq',  -- deleteQualifier
+                         'eq',  -- excludeQualifier (aka dq)
+
                          'api',
                          'read',
                          'readonly',
@@ -97,6 +104,8 @@ INSERT INTO groups (own_role, groupname)
                          'curies',
                          'prefix',
                          'prefixes',
+                         'load',
+                         'loads',
                          'qualifier',
                          'qualifiers',
                          'triple',

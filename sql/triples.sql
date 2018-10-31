@@ -167,6 +167,8 @@ CREATE TYPE named_type AS ENUM ('serialization',
                                 'metadata',  -- pairs, includes the type
                                 'data',  -- triples s p o type + lang
                                 'subgraph' -- FIXME how is this any different from data? unnamed subgraphs
+                                'qualifier',
+                                'load',
                                 -- singletion identified by hash on triple set  these are not named, that is the whole point, so they don't need to be here
                                 -- 'name-metadata' -- (name, metadata_identity)
                                 -- 'name-data' -- (name, data_identity)
@@ -250,6 +252,11 @@ CREATE TYPE qualifier_relations AS ENUM('includes',
 
 CREATE TYPE qualifier_types AS ENUM('group',
                                     'reference_name',  -- aka source qualifier
+                                    -- 'ilx_id',  -- NO, left as reminder that this is NOT how to architect this
+                                    -- users aren't really 'editing' the whole of the graph, they are
+                                    -- just saying, I want this triple and not these other triples
+                                    -- if _THEY_ 'merge' a triple back in later then the prior
+                                    -- exclude will be ignored, just like lines in files
                                     'computed',
                                     -- computed and static could be used for things like latest
                                     -- where there is a static rule that is used to generate

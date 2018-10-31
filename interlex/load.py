@@ -21,7 +21,7 @@ from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode, synon
 from interlex.dump import Queries
 from IPython import embed
 
-ilxr, *_ = makeNamespaces('ilxr', 'ilx')
+ilxr, *_ = makeNamespaces('ilxr')
 
 
 def async_load(iri=None, data=None, max_wait=10):
@@ -97,6 +97,11 @@ class GraphIdentities:
         # TODO there are two types of subgraphs
         # named subgraphs, and anonymous subgraphs
         # the anon subgraphs are bound by identity to their data_identity
+
+        # in the event someone is roundtripping an ilx qualifier section
+        # this would be the bound meta-meta-data
+        self._bound_qualifier = None
+
         self._curies = None
         self._bound_name = None
         #self._metadata = None  # not actually used
@@ -119,6 +124,19 @@ class GraphIdentities:
     @property
     def curies_identity(self):
         return self.get_identity('curies')
+
+    @property
+    def bound_qualifiers(self):
+        """ Note: this is technically bound qualifier identity since quals are hashes """
+        # is there any reason NOT to pub this in as part of the metadata
+        # rather than as its own section? We already technically taint
+        # the serialization identity no matter what, so I don't see the issue
+        # FIXME SECURITY we will need restrict which existing qualifiers can
+        # be used as source qualifiers so that someone doesn't accidentally
+        # create a qualifier that says 'delete all of interlex' though I suspect
+        # that we might be able to be smart about it and translate that into the
+        # more efficient "don't show me triples from these sources"
+        yield from self.graph[self.bound_name:ilxtr.sourceQualifier:]
 
     @property
     def bound_name_identity(self):
@@ -495,7 +513,7 @@ class GraphLoader(GraphIdentities):
             return tuple(e if isinstance(e, str) else str(e) for e in triple)
 
         prefix = 'INSERT INTO triples'
-        suffix = 'ON CONFLICT DO NOTHING'
+        suffix = 'ON CONFLICT DO NOTHING'  # FIXME BAD
         bn = self.bound_name
         if not metadata_done:
             to_insert = defaultdict(list)  # should all be unique
@@ -551,9 +569,174 @@ class GraphLoader(GraphIdentities):
                     # insert for free subgraphs?
 
         prefix = 'INSERT INTO triples'
-        suffix = 'ON CONFLICT DO NOTHING'
+        suffix = 'ON CONFLICT DO NOTHING'  # FIXME BAD
         if to_insert:
             yield prefix, suffix, {k:v for k, v in to_insert.items()}
+
+class LoadProv:
+    def __init__(self, user, group, graphqual):
+        name
+        graphqual.identity
+
+    def sql_to_make_change(self):
+        # emit_changes was the old name ?
+        pass
+
+
+class GraphQual:
+    """ Compute hash info """
+    def __init__(self, basicdb, loader):
+        queries = basicdb.queries
+
+        reference_name  # system name for subest
+        current_qualifier_rn = queries.getCurrentQualifierForReferenceName(reference_name)  # TODO
+        bound_name = loader.bound_name
+        current_qualifier_bn = queries.getCurrentQualifierForBoundName(bound_name)  # TODO
+        # TODO figure out if we need both
+        # 1) bn/rn issues should already have been resolved when this is called
+        current_qualifier = current_qualifier_rn
+
+        current_graph_sql = queries.getByQualifier(current_qualifier, with_qualifier=True)  # TODO
+        cloader = TripleExporter()()
+
+        # if a user is editing 'all' of interlex we can easily restrict the
+        # scope of the changes to just the single term, not that I really
+        # want to have per-term qualifiers, but it seems like a reasonable
+        # compromise, I do serialize them after all TODO
+        # XXX the above is incorrect, because individual users
+        # histories all start from a blank slate and we do a sort of
+        # auto merge of their contributions, which is why we have excludeQualifier
+        # it is used to mask out triples that they 'change' rather than trying
+        # to delete them, now, inside of interlex this works because we are able
+        # to keep track of which triples they "don't want" but if they are doing
+        # a bulk upload, the we can only infer that for card-1 predicates
+        # otherwise they have to give a signal which says 'overwrite all content for this class'
+        # and then we can go and pull whatever triples we have for that class (s, p, and o)
+        # another simple way to deal with this is that if people work on a subset of terms
+        # they can download them and the download qualifier will be what we use to create the
+        # reference, then the qualifiers triples tracks the rest for us
+        exclude_qualifier_if_any = graphDiff(loader, cloader)  # TODO pretty sure I already wrote this somewhere? or maybe that was for curies
+
+    def graphDiff(self):
+        # using upsert is bad
+
+        # 0) check the identities on each section in case we already have what we want
+        # 1) insert 'new' into temp table
+        # 2) union or full outer join with triples -> gives list of existing ids
+        #    do this using the usual null pattern technique on the subset
+        # 3) compare the resulting list of triple ids with the current qualifier ids
+        # 4) create the exclude qualifier from the ones in current that were not in the join
+        # 5) compare the resulting list of temp id to the total temp ids
+        # 6) insert triples with temp ids that were not in the join into triples returning id
+        # 7) insert the new triple ids along with the triple ids that were in the join with includeQualifier
+        # 8) if feeling very paranoid compute identities to compare with the python repr
+
+        # pretty sure there are other steps that will crop up
+
+        # for the triples table I think we can come up with a reasonable approach for
+        # efficient diffing that will only cause issues if
+        # select _all_ qualifiers for that name and select them into a temporary table
+
+    def parent_qualifier(self):
+        self.query
+
+    def qualifier(self):
+        # NOTE the disadvantage of this approach
+        # is _in theory_ tampering
+        # EXCEPT that if the original qualifier
+        # has been published _WITH THE IDENTS_ of its parts
+        # AS HAVE THE PRIOR QUALIFIERS
+        # the boom, merkelish tree, by accident
+        # it means that the prior history before zero will
+        # always be 'off chain' that that is actually a good thing
+
+        # iq include qualifier
+        # eq exclude qualifier
+        # pq prior qualifier
+        # h hash
+        # uh unbound hash
+
+        def express(*tuple_or_generator):
+            for tog in tuple_or_generator:
+                if isinstance(tog, tuple):
+                    yield tog
+                else:
+                    yield from tog
+
+        # FIXME TODO I think that the zeroth q should probably be the hash of a uuid
+        # that we use as a random seed, it could also be the hash of the reference host
+        # along with the user in question, which probably makes the most sense
+        # also super handy for finding the first commit ^_^
+
+        q = 0  # nice thing about this? if we want to reconstruct prior history there's plenty of space
+        # TODO q should probably be?? integer? hash of what? not sure
+        # NOTE nice sideeffect of this is that we should be able to run
+        # an internal integrity check on the history so that the data
+        # identities that we get 'add' up to the identities of the diff
+        # in _theory_ we could make the qualifier id the hash of the state
+        # of the subest of the graph that it encompases at the moment, but that
+        # means that large graphs could take a ... very long time to compute
+        # identities for .. on the other hand, we do imagine that the total
+        # number of names that we will ever need should be much less than 5 billion
+
+        # integers are easier to read ... annoying they require a single global
+        # index ... EXCEPT that as along as we prefix the qualifier with domain
+        # that was managing the index at the time, then we should be good to go
+        # sure, some future programmer is going to loose their mind because
+        # I've forced an arbitrary id in as part of the identity, but what's a
+        # vanity here and there ;)
+
+        qualifier = 'https://uilx.org/q/{q}'
+        # remember: just because there is a merke tree
+        # doesn't mean that there we can't recombine individual
+        # qualifiers _AS IF_ they didn't have a history
+        # we still have their constituent ids which can be used
+        # for all sorts of stuff
+
+        def include(*include_parent_hashes):
+            for ihash in include_parent_hashes:
+                # TODO consider base64 encoding these ...
+                # "sha256 hash value"^^ilx:base64
+                yield qualifier, ilxtr.iq, rdflib.Literal(ihash)
+
+        def exclude(*exclude_parent_hashes):
+            for ehash in exclude_parent_hashes:
+                yield qualifier, ilxtr.eq, rdflib.Literal(ehash)  # TODO encoding
+
+        # NOTE when creating a new group there are a number of complexities
+        # that need to be considered, specifically that if they want to merge
+        # multiple other groups or other ontologies, then we will need them to
+        # reconcile conflicts in the cardinality 1 case and we should probably
+        # offer them a way to determine whether that particular merge of the graph
+        # will conconsistent or not, the easiest case is that they simply take the
+        # latest or curated and start from there since it is much easier to work
+        # from a merge commit than to compute a new history from scratch
+        # NOTE there is also the ilx:alwaysExclude qualifier relation which i think
+        # i have discussed before, though that could create some issues
+        include_hashes = self.get_parent_qualifiers_for_current_reference_name()
+        exclude_hashes = self.compute_exclude_and_create_qualifier()
+        triples = express(
+            (qualifier, rdf.type, ilxtr.q),
+            include(*include_hashes),  # allow octopus merge
+            exclude(*exclude_hashes),
+            (qualifier, ilxtr.dataHash, ),
+            (qualifier, ilxtr.sgHash, ),
+            (qualifier, ilxtr.dsgHash, ),
+        )
+
+        # the last step is to hash all the previous qualifiers and publish
+        # this unbound hash (bound hashes are impossible)
+        # the question is whether this triple id goes in the with a qualifier to itself
+        # I think probably yes, since we do want hashes to be pesudo bound
+        # (so that we can do the reverse lookups) it is also ok to have bound
+        # identities the reference other subsections of the document
+        # in fact we could add those on the way back out in many cases ...
+        # ilxto:my-ont a owl:Ontology; ilx:boundSectionHash "some hash"^^ilx:base64
+        (qualifier, ilxtr.unboundHash, qualifier_total_identity)
+
+        # we have the identities table which will be more efficient than a pure triple version
+        # but being able to articulate the pure triple version is criticl for securin the export
+
 
 
 class BasicDBFactory:
@@ -1140,97 +1323,6 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         return self._identity_triple_count[identity]  # this should never key error
         """
 
-    def parent_qualifier(self):
-        self.query
-
-    def qualifier(self):
-        # NOTE the disadvantage of this approach
-        # is _in theory_ tampering
-        # EXCEPT that if the original qualifier
-        # has been published _WITH THE IDENTS_ of its parts
-        # AS HAVE THE PRIOR QUALIFIERS
-        # the boom, merkelish tree, by accident
-        # it means that the prior history before zero will
-        # always be 'off chain' that that is actually a good thing
-
-        # iq include qualifier
-        # eq exclude qualifier
-        # pq prior qualifier
-        # h hash
-        # uh unbound hash
-
-        def express(*tuple_or_generator):
-            for tog in tuple_or_generator:
-                if isinstance(tog, tuple):
-                    yield tog
-                else:
-                    yield from tog
-
-        # FIXME TODO I think that the zeroth q should probably be the hash of a uuid
-        # that we use as a random seed, it could also be the hash of the reference host
-        # along with the user in question, which probably makes the most sense
-        # also super handy for finding the first commit ^_^
-
-        q = 0  # nice thing about this? if we want to reconstruct prior history there's plenty of space
-        # TODO q should probably be?? integer? hash of what? not sure
-        # NOTE nice sideeffect of this is that we should be able to run
-        # an internal integrity check on the history so that the data
-        # identities that we get 'add' up to the identities of the diff
-        # in _theory_ we could make the qualifier id the hash of the state
-        # of the subest of the graph that it encompases at the moment, but that
-        # means that large graphs could take a ... very long time to compute
-        # identities for .. on the other hand, we do imagine that the total
-        # number of names that we will ever need should be much less than 5 billion
-
-        # integers are easier to read ... annoying they require a single global
-        # index ... EXCEPT that as along as we prefix the qualifier with domain
-        # that was managing the index at the time, then we should be good to go
-        # sure, some future programmer is going to loose their mind because
-        # I've forced an arbitrary id in as part of the identity, but what's a
-        # vanity here and there ;)
-
-        qualifier = 'https://uilx.org/q/{q}'
-        # remember: just because there is a merke tree
-        # doesn't mean that there we can't recombine individual
-        # qualifiers _AS IF_ they didn't have a history
-        # we still have their constituent ids which can be used
-        # for all sorts of stuff
-
-        def include(*include_parent_hashes):
-            for ihash in include_parent_hashes:
-                # TODO consider base64 encoding these ...
-                # "sha256 hash value"^^ilx:base64
-                yield qualifier, ilx.iq, rdflib.Literal(ihash)
-
-        def exclude(*exclude_parent_hashes):
-            for ehash in exclude_parent_hashes:
-                yield qualifier, ilx.eq, rdflib.Literal(ehash)  # TODO encoding
-
-        # NOTE when creating a new group there are a number of complexities
-        # that need to be considered, specifically that if they want to merge
-        # multiple other groups or other ontologies, then we will need them to
-        # reconcile conflicts in the cardinality 1 case and we should probably
-        # offer them a way to determine whether that particular merge of the graph
-        # will conconsistent or not, the easiest case is that they simply take the
-        # latest or curated and start from there since it is much easier to work
-        # from a merge commit than to compute a new history from scratch
-        # NOTE there is also the ilx:alwaysExclude qualifier relation which i think
-        # i have discussed before, though that could create some issues
-        include_hashes = self.get_parent_qualifiers_for_current_reference_name()
-        exclude_hashes = self.compute_exclude_and_create_qualifier()
-        triples = express(
-            (qualifier, rdf.type, ilx.q),
-            include(*include_hashes),  # allow octopus merge
-            exclude(*exclude_hashes),
-            (qualifier, ilx.dataHash, ),
-            (qualifier, ilx.sgHash, ),
-            (qualifier, ilx.dsgHash, ),
-        )
-
-        # the last step is to hash all the previous qualifiers and publish
-        # the this unbound hash (bound hashes are impossible)
-        (qualifier, ilx.unboundHash, qualifier_total_identity)
-
     def load_event(self):
         # FIXME only insert on success...
         si = self.serialization_identity
@@ -1273,7 +1365,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                   for i in identities)
         vt, params_i = makeParamsValues(values, constants=(':rn',))
         params_i['rn'] = self.reference_name
-        sql_ident = sql_ident_base + vt + ' ON CONFLICT DO NOTHING'  # TODO FIXME
+        sql_ident = sql_ident_base + vt + ' ON CONFLICT DO NOTHING'  # TODO FIXME XXX THIS IS BAD
         #embed()  # TODO
         self.session.execute(sql_ident, params_i)
 
@@ -1711,7 +1803,7 @@ class InterLexLoad:
         rows = self.engine.execute('SELECT DISTINCT ilx FROM terms ORDER BY ilx ASC')
         values = [(row.ilx[4:],) for row in rows]
         vt, self.ilx_params = makeParamsValues(values)
-        self.ilx_sql = 'INSERT INTO interlex_ids VALUES ' + vt + ' ON CONFLICT DO NOTHING'
+        self.ilx_sql = 'INSERT INTO interlex_ids VALUES ' + vt + ' ON CONFLICT DO NOTHING'  # FIXME BAD
         self.current = int(values[-1][0].strip('0'))
         printD(self.current)
 
@@ -1815,7 +1907,7 @@ class InterLexLoad:
         sql_base = 'INSERT INTO existing_iris (group_id, ilx_id, iri) VALUES '
         values_template, params = makeParamsValues(values, constants=('idFromGroupname(:group)',))
         params['group'] = 'base'
-        sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'
+        sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # TODO return id? (on conflict ok here)
         self.eid_raw = eternal_screaming
         self.eid_starts = start_values
         self.eid_values = values
@@ -1867,7 +1959,7 @@ class InterLexLoad:
                   for ilx_id, g, uri_path in _values]
         sql_base = 'INSERT INTO uris (ilx_id, group_id, uri_path) VALUES '
         values_template, params = makeParamsValues(values)
-        sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'
+        sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # FIXME BAD
         self.uid_sql = sql
         self.uid_params = params
 

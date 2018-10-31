@@ -134,6 +134,7 @@ class MysqlExport:
 
 class TripleExporter:
     #def __init__(self, triples, subgraphs):  # TODO
+    # TODO implement a version of this that is an rdflib store
     def __init__(self):
         self._subgraph_counter = -1
         self.subgraph_identities = {}
