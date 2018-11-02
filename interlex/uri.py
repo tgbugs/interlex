@@ -29,6 +29,7 @@ def uriStructure():
         'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
         '<epoch_verstr_id>':   versioned_ids + version_compare,
         'ontologies':          [2, '<path:ont_path>'] + intermediate_filename,  # TODO /ontologies/external/<iri> ? how? where?
+        #'collections':         [2, '<path:ont_path>'] + intermediate_filename,  # TODO more general than files, ontologies, or resources
         # TODO distinguish between ontology _files_ and 'ontologies' which are the import closure?
         # ya, identified vs unidentified imports, owl only supports unidentified imports
         '<path:ont_path>':     intermediate_filename,  # FIXME this would seem to only allow a single extension?
