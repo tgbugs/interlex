@@ -168,3 +168,31 @@
    For each =/lexical/= entry we will attempt to suggest terms that fit. Red links WILL NOT BE SERIALIZED.
    Red links MUST be mapped to an ilx_id just like everything else, and they will not resolve until someone
    creates the page for them. Which is like the new term page but the workflow is a bit more strenuous.
+* Ideas
+** pure triple (quad)
+   quid should probably be sh256 of spo
+   1. triples + qid
+      quid, s, p, o
+   2. qualifiers
+      quid, qual-rel, other-qual
+   3. qualifiers to triples
+      IF qualifiers include information about the prior qualifieris
+      then we only need the NEW qualifiers
+
+** dmqp, tspq
+   1. data
+      the graph
+   2. metadata
+      a owl:Ontology
+   3. qualifier
+      a ilxtr:qualifier
+      this is the most complicated issue
+      the question is what the identifier should be
+      should it be the identity of everything or should be the identity of just the graph portion
+   4. prov
+      a ilxtr:prov
+
+   1. triple
+   2. subgraph
+   3. qualifier
+   4. prov

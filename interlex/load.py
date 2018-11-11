@@ -573,6 +573,7 @@ class GraphLoader(GraphIdentities):
         if to_insert:
             yield prefix, suffix, {k:v for k, v in to_insert.items()}
 
+
 class LoadProv:
     def __init__(self, user, group, graphqual):
         name
