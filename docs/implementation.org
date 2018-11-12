@@ -1,0 +1,36 @@
+* Overview
+  This document describes current implementation of InterLex.
+  InterLex is written in Python and uses PostgreSQL as a datastore.
+  A full RDBMS is not strictly necessary as the basic model for the InterLex
+  data structure can be managed by convention using a quad store. However,
+  managing contributor identity as a reference host means that there are
+  additional features that require a persistent and secure data store,
+  so the choice to unify the graph + provenance data structure along
+  with the groups (i.e. users and organizations) data structure reduces
+  the overall complexity of the system.
+* Database schema
+  The database schema written in the postgres sql dialect and the source
+  files live at [[file:../sql/]]. There are excessive details and notes in
+  the comments of those files, though they are not always helpful.
+
+** Inspecting the schema with SchemaSpy
+   [[https://github.com/schemaspy/schemaspy][SchemaSpy]] can be used to generate
+   a visual overview and report on the database schema. There in the [[file:../resources/]]
+   folder there is an [[file:../resources/schemaspy.ini.example][example ini file]]
+   for generating output.
+*** Installation
+**** Gentoo
+     1. =layman -a tgbugs-overlay=
+     2. update [[file:/etc/portage/repos.conf/layman.conf]]
+     3. =emerge schemaspy-bin=
+**** Other
+     See https://schemaspy.readthedocs.io/en/latest/installation.html for details.
+*** Generate report
+    #+BEGIN_SRC bash :results output silent
+      if [ ! -f "../resources/schemaspy.ini" ]; then
+          cp ../resources/schemaspy.ini.example ../resources/schemaspy.ini
+          vim ../resources/schemaspy.ini  # edit to match your config
+      fi
+      schemaspy -configFile ../resources/schemaspy.ini
+    #+END_SRC
+    After running the above the [[file:/tmp/interlex-schema/index.html][output]] should exist.
