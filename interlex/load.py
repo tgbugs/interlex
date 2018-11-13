@@ -637,6 +637,7 @@ class GraphQual:
         # for the triples table I think we can come up with a reasonable approach for
         # efficient diffing that will only cause issues if
         # select _all_ qualifiers for that name and select them into a temporary table
+        pass
 
     def parent_qualifier(self):
         self.query
