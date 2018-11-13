@@ -7,6 +7,7 @@
 : ${USER:=interlex}
 : ${LOG_LOC:="/var/log/interlex"}
 : ${PYTHONPATH:=""}
+: ${PYONTUTILS_DEVCONFIG:="~/devconfig.yaml"}  # sigh, still needed for now
 
 run_dir=${run_dir:-/run}
 LOG="${LOG_LOC}/uri.log"
@@ -103,6 +104,7 @@ start() {
 		--env INTERLEX_DATABASE=${DATABASE} \
 		--env BROKER_URL=${BROKER_URL} \
 		--env PYTHONPATH=${PYTHONPATH} \
+                --env PYONTUTILS_DEVCONFIG=${PYONTUTILS_DEVCONFIG} \
 		--exec ${command} -- ${command_args}
     eend $? "Failed to start interlex uri server"
 }
