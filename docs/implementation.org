@@ -8,11 +8,19 @@
   so the choice to unify the graph + provenance data structure along
   with the groups (i.e. users and organizations) data structure reduces
   the overall complexity of the system.
+* Architecture
+  | Lang         | Component  | The people we want to share information with |
+  |--------------+------------+----------------------------------------------|
+  | nginx config | nginx      | reverse proxy and routing                    |
+  | cli          | gunicorn   | production grade wsgi server                 |
+  | Python       | flask      |                                              |
+  | Python       | InterLex   | Loading and Rendering                        |
+  | Python       | sqlalchemy |                                              |
+  | plpgsql      | PostgreSQL | data integrity and indexing                  |
 * Database schema
   The database schema written in the postgres sql dialect and the source
   files live at [[file:../sql/]]. There are excessive details and notes in
   the comments of those files, though they are not always helpful.
-
 ** Inspecting the schema with SchemaSpy
    [[https://github.com/schemaspy/schemaspy][SchemaSpy]] can be used to generate
    a visual overview and report on the database schema. There in the [[file:../resources/]]
