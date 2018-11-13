@@ -1,0 +1,98 @@
+#!/sbin/openrc-run
+# Copyright 1999-2018 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${LOG_LEVEL:=info}
+: ${GROUP:=interlex}
+: ${USER:=interlex}
+: ${LOG_LOC:="/var/log/interlex"}
+: ${PYTHONPATH:=""}
+
+run_dir=${run_dir:-/run}
+LOG="${LOG_LOC}/uri.log"
+
+socket="unix:/run/interlex/socket"
+pidfile="${run_dir}/${SVCNAME}/pid"
+command="/usr/bin/gunicorn"
+command_args="--bind ${socket}
+--daemon
+--pid ${pidfile}
+--name interlex-uri
+--workers 8
+--worker-class gevent
+--timeout 30
+--group ${GROUP}
+--user ${USER}
+--log-level ${LOG_LEVEL}
+--log-file ${LOG}
+interlex.uri_server:app"
+retry='TERM/30/KILL/5'
+start_stop_daemon_args="--group ${GROUP} --user ${USER}"
+
+command_owner="${USER}:${GROUP}"
+
+depend() {
+    need net
+    if [[ "${BROKER_URL}" == *"@localhost"* ]]; then
+        # only run if not using a remote broker
+        use celery
+    fi
+}
+
+start_pre() {
+    OOPS=0
+    if [ -z "${DB_HOST}" ]; then
+        eend 1 "DB_HOST not set in /etc/conf.d/${SVCNAME}"
+        OOPS=1
+    fi
+    if [ -z "${DB_PORT}" ]; then
+        eend 1 "DB_PORT not set in /etc/conf.d/${SVCNAME}"
+        OOPS=1
+    fi
+    if [ -z "${DATABASE}" ]; then
+        eend 1 "DATABASE not set in /etc/conf.d/${SVCNAME}"
+        OOPS=1
+    fi
+
+    PGPASS=$(eval echo "~${USER}/.pgpass")
+    if [ ! -f ${PGPASS} ]; then
+        eend 1 "${PGPASS} does not exist!"
+        OOPS=1
+    fi
+    if [ $(stat -c %a ${PGPASS}) != 600 ]; then
+        eend 1 "${PGPASS} is readable by others! Please chmod 0600 ${PGPASS}"
+        OOPS=1
+    fi
+
+    if [ ${OOPS} -ne 0 ]; then
+        return 1
+    fi
+
+    ebegin "Testing database config"
+    start-stop-daemon --start \
+		--group ${GROUP} --user ${USER} \
+        --exec psql -- \
+        -U interlex-user \
+        -h ${DB_HOST} \
+        -p ${DB_PORT} \
+        -d ${DATABASE} \
+        -c "SELECT reference_host()"
+    eend $? "Failed to connect to database check /etc/conf.d/${SVCNAME}" || return 1
+
+    checkpath --directory --owner ${command_owner} --mode 0775 "${run_dir}/${SVCNAME}"
+    checkpath --directory --owner ${command_owner} --mode 0775 "${LOG_LOC}"
+}
+
+start() {
+    ebegin "Starting interlex uri server"
+	start-stop-daemon --start --pidfile ${pidfile} \
+		--group ${GROUP} --user ${USER} \
+		--env DB_HOST=${DB_HOST} \
+		--env DB_PORT=${DB_PORT} \
+		--env INTERLEX_DATABASE=${DATABASE} \
+		--env BROKER_URL=${BROKER_URL} \
+		--env PYTHONPATH=${PYTHONPATH} \
+        --wait 1500 \
+		--exec ${command} -- ${command_args}
+    eend $? "Failed to start interlex uri server"
+}

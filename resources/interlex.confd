@@ -1,0 +1,17 @@
+# configuration file for the interlex web server
+# permissions on this file should be set to 0600
+
+# gunicorn log level
+LOG_LEVEL=
+# database server host
+DB_HOST=localhost
+# database server port
+DB_PORT=5432
+# database name
+DATABASE=interlex
+# rabbitmq broker for celery (set the password and username)
+BROKER_URL="ampq://username:password@localhost:5672/interlex"
+# log location
+LOG_LOC=/var/log/interlex
+# development settings
+PYTHONPATH=
