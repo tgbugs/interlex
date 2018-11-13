@@ -457,14 +457,20 @@ class Queries:
 
         return base_to_existing
 
+    def getObjectsForPredicates(self, iris, *predicates):
+        args = dict(p=predicates, iris=tuple(iris))  # FIXME normalize here or there?
+        sql = 'SELECT s, o_lit FROM triples WHERE p in :p AND s in :iris'
+        for r in self.session.execute(sql, args):
+            yield r.s, r.o_lit  # with multiple iris we have to keep track of the mapping
+
+    def getLabels(self, user, iris):
+        yield from self.getObjectsForPredicates(iris, rdfs.label)  # FIXME alts?
+
     def getDefinitions(self, user, *iris):
         # TODO aggregate/failover to defs from alternate sources where the ilx_id has an existing id
         # requires a different yielding strat
         #value_templates, params = makeParamsValues(iris)
-        args = dict(p=(definition, skos.definition), iris=iris)  # FIXME normalize here or there?
-        sql = 'SELECT o_lit FROM triples WHERE p in :p AND s in :iris'
-        for r in self.session.execute(sql, args):
-            yield r.o_lit
+        yield from self.getObjectsForPredicates(iris, definition, skos.definition)
 
     def getByLabel(self, label, user):
         # TODO user mapping of lexical
@@ -480,7 +486,7 @@ class Queries:
             return True, results[0]  # redirect
         else:
             defs = self.getDefinitions(user, *results)
-            return False, [(s, _def) for s, _def in zip(results, defs)]  # disambiguate
+            return False, list(defs)  # disambiguate
 
     def getTriplesById(self, *triples_ids):
         # when using IN directly we don't have to convert to a list first

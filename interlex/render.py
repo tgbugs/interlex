@@ -6,7 +6,7 @@ from flask import abort  # FIXME decouple this??
 from pyontutils.core import OntId
 from pyontutils.ttlser import CustomTurtleSerializer
 from pyontutils.htmlfun import atag, htmldoc
-from pyontutils.htmlfun import table_style, render_table
+from pyontutils.htmlfun import table_style, render_table, ttl_html_style
 from pyontutils.qnamefix import cull_prefixes
 from pyontutils.namespaces import isAbout, ilxtr
 from pyontutils.closed_namespaces import rdf, rdfs, owl
@@ -14,7 +14,8 @@ from interlex import exc
 
 class TripleRender:
     def __init__(self):
-        self.mimetypes = {'text/html':self.html,
+        self.mimetypes = {None:self.html,
+                          'text/html':self.ttl_html,
                           'application/json':self.json,
                           'application/ld+json':self.jsonld,
                           'text/turtle':self.ttl,
@@ -47,6 +48,14 @@ class TripleRender:
                 mimetype = self.extensions[extension]
             except KeyError as e:
                 raise exc.UnsupportedType(f"don't know what to do with {extension}", 415) from e
+        elif (extension is None and
+              'text/html' in request.accept_mimetypes and
+              '*/*' in request.accept_mimetypes):
+            # if we get a browser request without an extension
+            # then return the usual crappy page as if it were
+            # a redirect or the page itself
+            # TODO actual browser detection
+            return extension, mimetype, self.mimetypes[None]
 
         try:
             func = self.mimetypes[mimetype]
@@ -55,7 +64,8 @@ class TripleRender:
 
         return extension, mimetype, func
 
-    def __call__(self, request, mgraph, user, id, object_to_existing, title=None):
+    def __call__(self, request, mgraph, user, id, object_to_existing,
+                 title=None, labels=None):
         extension, mimetype, func = self.check(request)
 
         if not mgraph.g:
@@ -65,7 +75,7 @@ class TripleRender:
                 return '', 404
 
         out = func(request, mgraph, user, id,
-                   object_to_existing, title, mimetype)
+                   object_to_existing, title, mimetype, labels)
         code = 303 if mimetype == 'text/html' and extension != 'html' else 200  # cool uris
         to_plain = 'ttl', 'nt', 'n3', 'nq'
         headers = {'Content-Type': ('text/plain; charset=utf-8'
@@ -88,7 +98,8 @@ class TripleRender:
     def curie_selection_logic(self):
         """ Same as iri selection but for curies """
 
-    def html(self, request, mgraph, user, id, object_to_existing, title, mimetype):
+    def html(self, request, mgraph, user, id, object_to_existing,
+             title, mimetype, labels):
         graph = mgraph.g
         cts = CustomTurtleSerializer(graph)
         gsortkey = cts._globalSortKey
@@ -153,7 +164,8 @@ class TripleRender:
             new_graph.add(t)
         return preferred_iri, new_graph
 
-    def graph(self, request, mgraph, user, id, object_to_existing, title, mimetype):
+    def graph(self, request, mgraph, user, id, object_to_existing,
+              title, mimetype):
         preferred_iri, graph = self.renderPreferences(user, mgraph.g, id)
         nowish = datetime.utcnow()  # request doesn't have this
         epoch = nowish.timestamp()
@@ -172,22 +184,35 @@ class TripleRender:
         ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
         return ng
 
-    def ttl(self, request, mgraph, user, id, object_to_existing, title, mimetype):
+    def ttl(self, request, mgraph, user, id, object_to_existing,
+            title, mimetype, labels):
         ng = self.graph(request, mgraph, user, id,
                         object_to_existing, title, mimetype)
         return ng.g.serialize(format='nifttl')
 
-    def rdf_ser(self, request, mgraph, user, id, object_to_existing, title, mimetype,
-                **kwargs):
+    def ttl_html(self, request, mgraph, user, id, object_to_existing,
+                 title, mimetype, labels):
+        ng = self.graph(request, mgraph, user, id,
+                        object_to_existing, title, mimetype)
+        body = ng.g.serialize(format='htmlttl', labels=labels).decode()
+        # TODO owl:Ontology -> <head><meta> prov see if there is a spec ...
+        return htmldoc(body,
+                       title=title,
+                       styles=(table_style, ttl_html_style))
+
+    def rdf_ser(self, request, mgraph, user, id, object_to_existing,
+                title, mimetype, labels, **kwargs):
         ng = self.graph(request, mgraph, user, id,
                         object_to_existing, title, mimetype)
         return ng.g.serialize(format=mimetype, **kwargs)
 
-    def jsonld(self, request, mgraph, user, id, object_to_existing, title, mimetype):
+    def jsonld(self, request, mgraph, user, id, object_to_existing,
+               title, mimetype, labels):
         return self.rdf_ser(request, mgraph, user, id,
                             object_to_existing, title, mimetype, auto_compact=True)
 
-    def json(self, request, mgraph, user, id, object_to_existing, title, mimetype):
+    def json(self, request, mgraph, user, id, object_to_existing,
+             title, mimetype):
         # lol
         graph = mgraph.g
         ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual

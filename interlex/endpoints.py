@@ -3,6 +3,7 @@ import json
 from functools import wraps
 import sqlalchemy as sa
 from flask import request, redirect, url_for, abort, Response
+from rdflib import URIRef  # FIXME grrrr
 from pyontutils.core import makeGraph
 from pyontutils.utils import TermColors as tc
 from pyontutils.htmlfun import atag, btag, h2tag, htmldoc
@@ -223,7 +224,7 @@ class Endpoints:
                 return abort(404)
 
         try:
-            tripleRender.check(request)
+            _, _, func = tripleRender.check(request)
         except UnsupportedType as e:
             return e.message, e.code
 
@@ -243,7 +244,16 @@ class Endpoints:
         else:
             title = f'ilx.{user}:ilx_{id}'
 
-        return tripleRender(request, g, user, id, object_to_existing, title)
+        if func == tripleRender.ttl_html:  # FIXME hackish?
+            # FIXME getting additional content from the db based on file type
+            # leads to breakdown of separation of concerns due to statefulness
+            # slow but probably worth it for enhancing readability
+            iris = set(e for t in g.g for e in t if isinstance(e, URIRef))
+            labels = {URIRef(s):label for s, label in self.queries.getLabels(user, iris)}
+        else:
+            labels = None
+
+        return tripleRender(request, g, user, id, object_to_existing, title, labels=labels)
 
     @basic
     def ilx_get(self, user, id, extension, db=None):
