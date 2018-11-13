@@ -39,7 +39,7 @@ depend() {
     fi
 }
 
-start_pre() {
+configcheck() {
     OOPS=0
     if [ -z "${DB_HOST}" ]; then
         eend 1 "DB_HOST not set in /etc/conf.d/${SVCNAME}"
@@ -69,30 +69,40 @@ start_pre() {
     fi
 
     ebegin "Testing database config"
-    start-stop-daemon --start \
-		--group ${GROUP} --user ${USER} \
-        --exec psql -- \
-        -U interlex-user \
-        -h ${DB_HOST} \
-        -p ${DB_PORT} \
-        -d ${DATABASE} \
-        -c "SELECT reference_host()"
+    su - ${USER} -c "
+    psql -U interlex-user \
+         -h ${DB_HOST} \
+         -p ${DB_PORT} \
+         -d ${DATABASE} \
+         -c 'SELECT reference_host()'"
     eend $? "Failed to connect to database check /etc/conf.d/${SVCNAME}" || return 1
 
     checkpath --directory --owner ${command_owner} --mode 0775 "${run_dir}/${SVCNAME}"
     checkpath --directory --owner ${command_owner} --mode 0775 "${LOG_LOC}"
 }
 
+start_pre() {
+	if [ "${RC_CMD}" != "restart" ]; then
+		configcheck || return 1
+	fi
+}
+
+stop_pre() {
+	if [ "${RC_CMD}" = "restart" ]; then
+		configcheck || return 1
+	fi
+}
+
 start() {
     ebegin "Starting interlex uri server"
 	start-stop-daemon --start --pidfile ${pidfile} \
 		--group ${GROUP} --user ${USER} \
+		--wait 1500 \
 		--env DB_HOST=${DB_HOST} \
 		--env DB_PORT=${DB_PORT} \
 		--env INTERLEX_DATABASE=${DATABASE} \
 		--env BROKER_URL=${BROKER_URL} \
 		--env PYTHONPATH=${PYTHONPATH} \
-        --wait 1500 \
 		--exec ${command} -- ${command_args}
     eend $? "Failed to start interlex uri server"
 }
