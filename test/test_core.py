@@ -61,19 +61,25 @@ class TestDiffCuries(unittest.TestCase):
 
 class TestMakeParamsValues(unittest.TestCase):
     def test_dict(self):
-        list(makeParamsValues(({'hello':'world'},)))
+        list(makeParamsValues(({'hello':'world'}, ('hello',))))  # FIXME seems ... not quite right
 
     def test_list(self):
         list(makeParamsValues((['hello', 'world'],)))
 
     def test_dl(self):
-        list(makeParamsValues(({'hello':['world']},)))
+        list(makeParamsValues(({'hello':['world']},)))  # FIXME only parameterizes hello ...
 
     def test_ld(self):
         list(makeParamsValues(([{'hello':'world'}],)))
 
     def test_dd(self):
-        list(makeParamsValues(({'hello':{'hello':'world'}},)))
+        list(makeParamsValues(({'hello':{'hello':'world'}},)))  # FIXME
 
     def test_ll(self):
-        list(makeParamsValues((['hello', ['world']],)))
+        list(makeParamsValues((['hello', ['world']],)))  # FIXME this only sort of works?
+
+    def test_True_1(self):
+        list(makeParamsValues(((1,), (True,))))
+
+    def test_False_0(self):
+        list(makeParamsValues(((0, False),)))
