@@ -78,39 +78,48 @@ def getScopedSession(dburi=dbUri()):
     ScopedSession = scoped_session(session_factory)
     return ScopedSession
 
+
+class getName:
+    class MyBool:
+        """ python is dumb """
+
+    def __init__(self):
+        self.counter = -1
+        self.value_to_name = {}
+
+    def valueCheck(self, value):
+        if isinstance(value, dict):
+            value = hash(frozenset((k, self.valueCheck(v)
+                                    if isinstance(v, list) or isinstance(v, dict)
+                                    else v)
+                                    for k, v in value.items()))
+        elif isinstance(value, list):
+            value = tuple(self.valueCheck(e) for e in value)
+        elif isinstance(value, bool):
+            value = self.MyBool, value
+        else:
+            pass
+
+        return value
+
+    def __call__(self, value):
+        value = self.valueCheck(value)
+        if value in self.value_to_name:
+            return self.value_to_name[value]
+        else:
+            self.counter += 1
+            name = 'v' + str(self.counter)
+
+            self.value_to_name[value] = name
+
+            return name
+
+
 def makeParamsValues(*value_sets, constants=tuple(), types=tuple()):
     # TODO variable sized records and
     # common value names
     if constants and not all(':' in c for c in constants):
         raise ValueError(f'All constants must pass variables in via params {constants}')
-
-    class getName:
-        def __init__(self):
-            self.counter = 0
-            self.value_to_name = {}
-
-        def valueCheck(self, value):
-            if isinstance(value, dict):
-                value = hash(frozenset((k, self.valueCheck(v)
-                                        if isinstance(v, list) or isinstance(v, dict)
-                                        else v)
-                                        for k, v in value.items()))
-            elif isinstance(value, list):
-                value = tuple(self.valueCheck(e) for e in value)
-            else:
-                pass
-
-            return value
-
-        def __call__(self, value):
-            value = self.valueCheck(value)
-            if value in self.value_to_name:
-                return self.value_to_name[value]
-            else:
-                name = 'v' + str(self.counter)
-                self.counter += 1
-                self.value_to_name[value] = name
-                return name
 
     getname = getName()
 
