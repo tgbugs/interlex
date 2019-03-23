@@ -1,4 +1,5 @@
 import unittest
+import requests
 from pyontutils.ontutils import url_blaster
 from interlex.uri import uriStructure
 from interlex.core import make_paths
@@ -74,3 +75,8 @@ class TestRoutes(unittest.TestCase):
                 pass
         except ValueError as e:
             raise AssertionError from e
+
+    def test_lexical_no_external_redirect(self):
+        url = f'{self.scheme}://{self.host}:{self.port}/base/lexical/liver'
+        resp = requests.get(url)
+        assert self.host in resp.url

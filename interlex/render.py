@@ -50,7 +50,8 @@ class TripleRender:
                 raise exc.UnsupportedType(f"don't know what to do with {extension}", 415) from e
         elif (extension is None and
               'text/html' in request.accept_mimetypes and
-              '*/*' in request.accept_mimetypes):
+              '*/*' in [mimetype for mimetype, number in request.accept_mimetypes]):
+            # */* is 'in' but not really for text/html requests ...
             # if we get a browser request without an extension
             # then return the usual crappy page as if it were
             # a redirect or the page itself
@@ -59,6 +60,7 @@ class TripleRender:
 
         try:
             func = self.mimetypes[mimetype]
+            print(func)
         except KeyError as e:
             raise exc.UnsupportedType(f"don't know what to do with {mimetype}", 415) from e
 
@@ -166,6 +168,7 @@ class TripleRender:
 
     def graph(self, request, mgraph, user, id, object_to_existing,
               title, mimetype):
+        # FIXME abstract to replace id with ontology name ... local ids are hard ...
         preferred_iri, graph = self.renderPreferences(user, mgraph.g, id)
         nowish = datetime.utcnow()  # request doesn't have this
         epoch = nowish.timestamp()

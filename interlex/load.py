@@ -832,7 +832,7 @@ class BasicDBFactory:
                 self._cache_groups[group] = res.id, res.own_role
                 return res.id, res.own_role
             except StopIteration:
-                raise NotGroup(f'{group} is not a group')
+                raise exc.NotGroup(f'{group} is not a group')
         else:
             return self._cache_groups[group]
 

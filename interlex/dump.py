@@ -351,7 +351,29 @@ class Queries:
         resp = list(self.session.execute(sql, args))
         return resp
 
+    def getBySubject(self, subject, user):
+        # FIXME ah uri normalization ... what to do about you
+        args = dict(uri=subject)
+        sql = '''
+        WITH graph AS (
+            SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity
+            FROM triples
+            WHERE s = :uri
+        ), subgraphs AS (
+            SELECT sg.s, sg.s_blank, sg.p, sg.o,
+                    sg.o_lit, sg.datatype, sg.language,
+                    sg.o_blank, sg.subgraph_identity
+            FROM triples as sg, graph as g
+            WHERE sg.subgraph_identity = g.subgraph_identity AND sg.s is NULL
+        )
+        SELECT * FROM graph UNION SELECT * from subgraphs
+        '''
+
+        resp = list(self.session.execute(sql, args))
+        return resp
+
     def getById(self, id, user):
+        """ return all triples associated with an interlex id (curie suffix) """
         uri = f'http://uri.interlex.org/base/ilx_{id}'  # FIXME reference_host from db ...
         args = dict(uri=uri, id=id, p=str(ilxtr.hasExistingId))
         #sql = ('SELECT e.iri, c.p, c.o, c.qualifier_id, c.transform_rule_id '

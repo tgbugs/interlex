@@ -61,6 +61,10 @@ def basic(function):
         try:
             group = kwargs['user']  # FIXME really group
         except KeyError as e:
+            # note for those who encounter this error when trying to call one
+            # view function from inside another: flask passes **req.view_args
+            # to self.view_functions[rule.endpoint] so you need to construct
+            # the kwarg dictionary accordingly
             raise KeyError('remember that basic needs kwargs not args!') from e
         if 'db' not in kwargs:  # being called via super() probably
             maybe_db, _ = getBasicDB(self, group, request)
@@ -268,9 +272,17 @@ class Endpoints:
         # like with my request to n2t, check for exact, then normalize
         do_redirect, identifier_or_defs = self.queries.getByLabel(label, user)
         if do_redirect:
-            # FIXME devel hack
-            identifier = identifier_or_defs.replace(self.reference_host, request.host)
-            return redirect(identifier, code=302)
+            if self.reference_host not in identifier_or_defs:
+                # FIXME temporary workaround for finding a uri that goes elsewhere
+                curie = self.curies(prefix_iri_curie=identifier_or_defs, user=request.view_args['user'])
+                to_curie = url_for('Endpoints.curies /<user>/curies/<prefix_iri_curie>',
+                                   user=user, prefix_iri_curie=curie)
+                to_curie +=  '?local=true'
+                return redirect(to_curie, code=302)
+            else:
+                # FIXME devel hack
+                identifier = identifier_or_defs.replace(self.reference_host, request.host)
+                return redirect(identifier, code=302)
         elif not identifier_or_defs:
             # FIXME this does not route to uri.interlex.org (probably)?
             title = f'{label} (ambiguation)'
@@ -373,6 +385,7 @@ class Endpoints:
     # TODO POST PATCH PUT
     @basic
     def curies(self, user, prefix_iri_curie, db=None):
+        # FIXME confusion between user (aka group) and logged in user :/
         #printD(prefix_iri_curie)
         PREFIXES, g = self.getGroupCuries(user)
         qname, expand = g.qname, g.expand
@@ -416,6 +429,36 @@ class Endpoints:
                         embed()
                         raise e
                     except StopIteration:
+                        # FIXME this breaks the semantics, but it seems to be the only
+                        # current way to get the local interlex content view of unmapped
+                        # terms, which we do need a solution for, even if the plan is to
+                        # force all terms to be mapped
+                        try:
+                            _, _, func = tripleRender.check(request)
+                        except UnsupportedType as e:
+                            return e.message, e.code
+
+                        resp = self.queries.getBySubject(iri, user)
+                        te = TripleExporter()
+                        _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
+                        object_to_existing = self.queries.getResponseExisting(resp, type='o')
+                        # FIXME we need to abstract TripleRender to work with any ontology name
+                        # FIXME we probably need a uri.interlex.org/base/iri/purl.obolibrary.org/obo/ trick ...
+                        # as a way to resolve to local content ...
+                        # this is the much better solution here
+
+                        if func == tripleRender.ttl_html:  # FIXME hackish?
+                            # FIXME getting additional content from the db based on file type
+                            # leads to breakdown of separation of concerns due to statefulness
+                            # slow but probably worth it for enhancing readability
+                            iris = set(e for t in g.g for e in t if isinstance(e, URIRef))
+                            labels = {URIRef(s):label for s, label in self.queries.getLabels(user, iris)}
+                        else:
+                            labels = None
+
+                        id = 'None-FIXMETODO'
+                        title = 'InterLex local' + curie
+                        return tripleRender(request, g, user, id, object_to_existing, title, labels=labels)
                         return abort(404)
                         pass
 
