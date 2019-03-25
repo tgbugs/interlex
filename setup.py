@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(name='InterLex',
       version='0.0.1',
-      description='A lexical quadstore.',
+      description='A terminology management system.',
       long_description=' ',
       url='https://github.com/tgbugs/interlex',
       author='Tom Gillespie',

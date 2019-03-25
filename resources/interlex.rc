@@ -3,9 +3,9 @@
 # Distributed under the terms of the GNU General Public License v2
 
 : ${LOG_LEVEL:=info}
-: ${GROUP:=interlex}
-: ${USER:=interlex}
-: ${LOG_LOC:="/var/log/interlex"}
+: ${SVC_SVC_GROUP:=interlex}
+: ${SVC_SVC_USER:=interlex}
+: ${LOG_LOC:="/var/log/${SVCNAME}"}
 : ${PYTHONPATH:=""}
 : ${PYONTUTILS_DEVCONFIG:="~/devconfig.yaml"}  # sigh, still needed for now
 
@@ -22,15 +22,15 @@ command_args="--bind ${socket}
 --workers 8
 --worker-class gevent
 --timeout 30
---group ${GROUP}
---user ${USER}
+--group ${SVC_GROUP}
+--user ${SVC_USER}
 --log-level ${LOG_LEVEL}
 --log-file ${LOG}
 interlex.uri_server:app"
 retry='TERM/30/KILL/5'
-start_stop_daemon_args="--group ${GROUP} --user ${USER}"
+start_stop_daemon_args="--group ${SVC_GROUP} --user ${SVC_USER}"
 
-command_owner="${USER}:${GROUP}"
+command_owner="${SVC_USER}:${SVC_GROUP}"
 
 depend() {
     need net
@@ -55,7 +55,7 @@ configcheck() {
         OOPS=1
     fi
 
-    PGPASS=$(eval echo "~${USER}/.pgpass")
+    PGPASS=$(eval echo "~${SVC_USER}/.pgpass")
     if [ ! -f ${PGPASS} ]; then
         eend 1 "${PGPASS} does not exist!"
         OOPS=1
@@ -70,7 +70,7 @@ configcheck() {
     fi
 
     ebegin "Testing database config"
-    su - ${USER} -c "
+    su - ${SVC_USER} -c "
     psql -U interlex-user \
          -h ${DB_HOST} \
          -p ${DB_PORT} \
@@ -97,7 +97,7 @@ stop_pre() {
 start() {
     ebegin "Starting interlex uri server"
 	start-stop-daemon --start --pidfile ${pidfile} \
-		--group ${GROUP} --user ${USER} \
+		--group ${SVC_GROUP} --user ${SVC_USER} \
 		--wait 1500 \
 		--env DB_HOST=${DB_HOST} \
 		--env DB_PORT=${DB_PORT} \

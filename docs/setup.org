@@ -64,8 +64,8 @@
   1. From the working directory run
      =python -m unittest test/test_constraints.py=
      (this is also run by =interlex-dbsetup=)
-  2. From the working directory run =nosetests=
-     (you may need to install it first e.g. via =pipenv install nose=)
+  2. From the working directory run =pytest=
+     (you may need to install it first e.g. via =pipenv install pytest=)
      NOTE: this will run stress tests.
 * Load content
 ** Sync with mysql
