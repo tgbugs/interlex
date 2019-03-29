@@ -3,10 +3,10 @@ from datetime import datetime
 from itertools import chain
 import rdflib
 from flask import abort  # FIXME decouple this??
+from htmlfn import atag, htmldoc
+from htmlfn import table_style, render_table, ttl_html_style
+from ttlser import CustomTurtleSerializer
 from pyontutils.core import OntId
-from pyontutils.ttlser import CustomTurtleSerializer
-from pyontutils.htmlfun import atag, htmldoc
-from pyontutils.htmlfun import table_style, render_table, ttl_html_style
 from pyontutils.qnamefix import cull_prefixes
 from pyontutils.namespaces import isAbout, ilxtr
 from pyontutils.closed_namespaces import rdf, rdfs, owl

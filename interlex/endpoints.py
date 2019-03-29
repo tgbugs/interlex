@@ -4,10 +4,10 @@ from functools import wraps
 import sqlalchemy as sa
 from flask import request, redirect, url_for, abort, Response
 from rdflib import URIRef  # FIXME grrrr
+from htmlfn import atag, btag, h2tag, htmldoc
+from htmlfn import table_style, render_table, redlink_style
 from pyontutils.core import makeGraph
 from pyontutils.utils import TermColors as tc
-from pyontutils.htmlfun import atag, btag, h2tag, htmldoc
-from pyontutils.htmlfun import table_style, render_table, redlink_style
 from pyontutils.namespaces import makePrefixes, definition
 from interlex import tasks
 from interlex import config

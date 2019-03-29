@@ -19,10 +19,10 @@ from flask import Flask, url_for, redirect, request, render_template, render_tem
 from flask import make_response, abort
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.routing import BaseConverter
+from ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
 from pyontutils.core import makeGraph, OntId
 from pyontutils.utils import TermColors as tc, injective_dict
 from pyontutils.config import devconfig
-from pyontutils.ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
 from pyontutils.namespaces import PREFIXES as uPREFIXES, ilxtr
 from pyontutils.combinators import annotation
 from pyontutils.closed_namespaces import rdf, rdfs, owl, oboInOwl
