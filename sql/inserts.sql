@@ -39,6 +39,13 @@ INSERT INTO groups (groupname) VALUES
        ('biccn'),
        ('dknet'),
        ('sparc'),
+       ('cocomac'),
+       ('aibs'),
+       ('HCP'),
+       ('mindboggle'),
+       ('paxinos'),
+       ('waxholm'),
+       ('berman'),
        ('neuinfo'),
        ('NeuroLex'),
        ('InterLex');
