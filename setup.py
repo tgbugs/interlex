@@ -1,18 +1,41 @@
-import os
+import re
 from pathlib import Path
 from setuptools import setup
 
+
+def find_version(filename):
+    _version_re = re.compile(r"__version__ = '(.*)'")
+    for line in open(filename):
+        version_match = _version_re.match(line)
+        if version_match:
+            return version_match.group(1)
+
+
+__version__ = find_version('interlex/__init__.py')
+
+with open('README.md', 'rt') as f:
+    long_description = f.read()
+
+tests_require = ['pytest', 'pytest-runner']
 setup(name='InterLex',
-      version='0.0.1',
+      version=__version__,
       description='A terminology management system.',
-      long_description=' ',
+      long_description=long_description,
+      long_description_content_type='text/markdown',
       url='https://github.com/tgbugs/interlex',
       author='Tom Gillespie',
       author_email='tgbugs@gmail.com',
       license='MIT',
-      classifiers=[],
+      classifiers=[
+        'Development Status :: 3 - Alpha',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+      ],
       keywords='interlex neurolex lexicon quadstore rdf owl linked-data',
       packages=['interlex'],
+      python_requires='>=3.6',
+      tests_require=tests_require,
       install_requires=[
           'celery',
           'elasticsearch',
@@ -23,12 +46,14 @@ setup(name='InterLex',
           'neurdflib-jsonld',
           'pyontutils',
       ],
-      extras_require={'dev':[]},
+      extras_require={'dev': [],
+                      'test': tests_require,
+                     },
       scripts=['bin/interlex-uri', 'bin/interlex-curies', 'bin/interlex-dbsetup'],
       entry_points={
           'console_scripts': [
               'interlex=interlex.cli:main',
           ],
       },
-      data_files=[('sql', [f.as_posix() for f in Path('sql').iterdir()])]
+      data_files=[('sql', [f.as_posix() for f in Path('sql').iterdir()])]  # FIXME package_data
      )

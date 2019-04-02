@@ -1,0 +1,14 @@
+recursive-include test *
+exclude .coveragerc
+exclude .gitignore
+exclude .travis.yml
+exclude MANIFEST.in
+exclude *.rkt
+exclude *.csv
+exclude *.json
+exclude *.yaml
+recursive-exclude alt *
+recursive-exclude resources *
+recursive-exclude * *.pyc
+recursive-exclude * *.swp
+recursive-exclude * *.swo

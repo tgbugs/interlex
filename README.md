@@ -1,2 +1,2 @@
-# interlex
-a quadstore
+# InterLex
+A terminology management system.
