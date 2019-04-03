@@ -60,7 +60,6 @@ class TripleRender:
 
         try:
             func = self.mimetypes[mimetype]
-            print(func)
         except KeyError as e:
             raise exc.UnsupportedType(f"don't know what to do with {mimetype}", 415) from e
 
