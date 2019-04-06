@@ -54,7 +54,9 @@
     su interlex
     cd
     # point interlex to dev packages
-    export PYTHONPATH=/home/${DEV_USER}/git/pyontutils:/home/${DEV_USER}/git/ontquery
+    export PYTHONPATH=~DEV_USER/git/pyontutils:~DEV_USER/git/ontquery:~DEV_USER/git/interlex:~DEV_USER/git/pyontutils/ttlser:~DEV_USER/git/pyontutils/htmlfn:
+    # note that ~${DEV_USER} will not expand
+
     # set the location of devconfig.yaml
     export PYONTUTILS_DEVCONFIG=~/devconfig.yaml
     # create a new devconfig for the interlex user

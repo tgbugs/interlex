@@ -46,25 +46,36 @@ def makeTestRoutes(limit=1):
     routes = make_paths(parent_child, options=options, limit=limit)
     return routes
 
-class TestRoutes(unittest.TestCase):
+
+class RouteTester:
     host = test_host
     port = test_port
     scheme = 'http'
+
+    @property
+    def prefix(self):
+        port = f':{self.port}' if self.port else ''
+        return f'{self.scheme}://{self.host}{port}'
+
+
+class TestRoutes(RouteTester, unittest.TestCase):
     def test_routes(self):
         routes = makeTestRoutes()  # up limite here for more tests, 2 is about max reasonable
         # TODO a way to mark expected failures
         urls = [
-            f'{self.scheme}://{self.host}:{self.port}/tgbugs/curies/BIRNLEX:796?local=true',
-            f'{self.scheme}://{self.host}:{self.port}/tgbugs/curies/BIRNLEX:796',
+            # NOTE: have to use lists here because url_blaster needs to call shuffle
+            # which doesn't work on tuples
+            f'{self.prefix}/tgbugs/curies/BIRNLEX:796?local=true',
+            f'{self.prefix}/tgbugs/curies/BIRNLEX:796',
             ]
-        urls = [f'http://{self.host}:{self.port}{r}' for r in routes] + urls
+        urls = [f'{self.prefix}{r}' for r in routes] + urls
         [print(u) for u in urls]
         url_blaster(urls, 0, fail=True)
 
     def test_negative(self):
         urls = [
-            f'{self.scheme}://{self.host}:{self.port}/tgbugs/curies/BIRNLEEX:796?local=true',
-            f'{self.scheme}://{self.host}:{self.port}/tgbugs/curies/BIRNLEEX:796',
+            f'{self.prefix}/tgbugs/curies/BIRNLEEX:796?local=true',
+            f'{self.prefix}/tgbugs/curies/BIRNLEEX:796',
         ]
         [print(u) for u in urls]
         try:
@@ -77,6 +88,31 @@ class TestRoutes(unittest.TestCase):
             raise AssertionError from e
 
     def test_lexical_no_external_redirect(self):
-        url = f'{self.scheme}://{self.host}:{self.port}/base/lexical/liver'
+        url = f'{self.prefix}/base/lexical/liver'
         resp = requests.get(url)
         assert self.host in resp.url
+
+
+class TestApiDocs(RouteTester, unittest.TestCase):
+    def test_docs(self):
+        urls = [f'{self.prefix}/docs']  # NOTE /docs/ should fail?
+        url_blaster(urls, 0, fail=True)
+
+    def test_swagger_json(self):
+        urls = [f'{self.prefix}/docs/swagger.json']
+        url_blaster(urls, 0, fail=True)
+
+    def test_swaggerui_content(self):
+        urls = [f'{self.prefix}/docs/swaggerui/favicon-16x16.png']
+        url_blaster(urls, 0, fail=True)
+
+    def test_swagger_not_at_root(self):
+        urls = [f'{self.prefix}/swagger.json', f'{self.prefix}/swaggerui/favicon-16x16.png']
+        try:
+            try:
+                url_blaster(urls, 0, fail=True, negative=True)
+                raise ValueError('All urls should have failed.')
+            except AssertionError:
+                pass
+        except ValueError as e:
+            raise AssertionError from e

@@ -2,6 +2,7 @@ from pathlib import Path
 from collections import OrderedDict as od
 from flask import Flask, url_for
 from flask_restplus import Api, Resource, apidoc
+from flask_restplus.api import SwaggerView
 from flask_sqlalchemy import SQLAlchemy
 from interlex import config
 from interlex.core import dbUri, mqUri, diffCuries
@@ -11,6 +12,38 @@ from interlex.tasks import cel
 from interlex.config import ilx_pattern
 
 log = makeSimpleLogger('setup')
+
+
+class DocsApi(Api):
+    """ Customized restplus Api to serve all swagger content from /docs/ """
+
+    def _register_apidoc(self, app: Flask) -> None:
+        conf = app.extensions.setdefault('restplus', {})
+        custom_apidoc = apidoc.Apidoc('restplus_doc', 'flask_restplus.apidoc',
+                                        template_folder='templates',
+                                        static_folder=(Path(apidoc.__file__).parent / 'static').as_posix(),
+                                        static_url_path='/docs/swaggerui')
+
+        @custom_apidoc.add_app_template_global
+        def swagger_static(filename: str) -> str:
+            return url_for('restplus_doc.static', filename=filename)
+
+        if not conf.get('apidoc_registered', False):
+            app.register_blueprint(custom_apidoc)
+        conf['apidoc_registered'] = True
+
+    def _register_specs(self, app: Flask) -> None:
+        if self._add_specs:
+            endpoint = str('specs')
+            self._register_view(
+                app,
+                SwaggerView,
+                self.default_namespace,
+                '/docs/swagger.json',
+                endpoint=endpoint,
+                resource_class_args=(self, )
+            )
+            self.endpoints.add(endpoint)
 
 
 def uriStructure():
@@ -119,29 +152,13 @@ def route_methods(nodes, node_methods):
 
 def build_api(app):
     # swagger dosc setup
-    class FixApi(Api):
-        def _register_apidoc(self, app: Flask) -> None:
-            conf = app.extensions.setdefault('restplus', {})
-            custom_apidoc = apidoc.Apidoc('restplus_doc', 'flask_restplus.apidoc',
-                                          template_folder='templates',
-                                          static_folder=(Path(apidoc.__file__).parent / 'static').as_posix(),
-                                          static_url_path='/docs/swaggerui')
-
-            @custom_apidoc.add_app_template_global
-            def swagger_static(filename: str) -> str:
-                return url_for('restplus_doc.static', filename=filename)
-
-            if not conf.get('apidoc_registered', False):
-                app.register_blueprint(custom_apidoc)
-            conf['apidoc_registered'] = True
-
-    api = FixApi(app,  # NOTE if the docs fail to load, make sure X-Forwarded-Proto is set in nginx
-                 version='0.0.1',
-                 title='InterLex URI structure API',
-                 description='Resolution, update, and compare for ontologies and ontology identifiers.',
-                 default='URIs',
-                 default_label='User URIs',
-                 doc='/docs',)
+    api = DocsApi(app,  # NOTE if the docs fail to load, make sure X-Forwarded-Proto is set in nginx
+                  version='0.0.1',
+                  title='InterLex URI structure API',
+                  description='Resolution, update, and compare for ontologies and ontology identifiers.',
+                  default='URIs',
+                  default_label='User URIs',
+                  doc='/docs',)
 
     doc_namespaces = {
         # NOTE creation order here translates to the swagger docs, it also affects sorts first
