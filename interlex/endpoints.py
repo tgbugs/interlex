@@ -297,9 +297,24 @@ class Endpoints:
             title = f'{label} (disambiguation)'  # mirror wiki
             # TODO resolve existing_iri mappings so they don't show up here
             # also always resolve to the interlex page for a term not external
+
             content = render_table(defs, 'Identifier', atag(definition, 'definition:'))
             return htmldoc(h2tag(f'{label} (disambiguation)'),
                            content, title=title, styles=(table_style,))
+
+            # TODO rdf version of the disambiguation page
+            try:
+                _, _, func = tripleRender.check(request)
+            except UnsupportedType as e:
+                return e.message, e.code
+
+            object_to_existing = []
+            te = TripleExporter()
+            for iri in iri, _ in identifiers_or_defs:
+                resp = self.queries.getBySubject(iri, user)
+                _ = [g.g.add(te.triple(*r)) for r in resp]
+                object_to_existing += self.queries.getResponseExisting(resp, type='o')
+
 
     # TODO PATCH only admin can change the community readable mappings just like community curies
     @basic
@@ -440,7 +455,7 @@ class Endpoints:
 
                         resp = self.queries.getBySubject(iri, user)
                         te = TripleExporter()
-                        _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
+                        _ = [g.g.add(te.triple(*r)) for r in resp]
                         object_to_existing = self.queries.getResponseExisting(resp, type='o')
                         # FIXME we need to abstract TripleRender to work with any ontology name
                         # FIXME we probably need a uri.interlex.org/base/iri/purl.obolibrary.org/obo/ trick ...
