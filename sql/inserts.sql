@@ -46,6 +46,7 @@ INSERT INTO groups (groupname) VALUES
        ('paxinos'),
        ('waxholm'),
        ('berman'),
+       ('neurons'),
        ('neuinfo'),
        ('NeuroLex'),
        ('InterLex');

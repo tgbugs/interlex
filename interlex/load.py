@@ -1742,7 +1742,7 @@ class InterLexLoad:
         import socket
         from sqlalchemy import create_engine, inspect
         from interlex import config
-        self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex', 'uri.interlex.org')
+        self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex')
 
         self.queries = Queries(self.loader.session)
         self.do_cdes = do_cdes

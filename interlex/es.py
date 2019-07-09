@@ -75,6 +75,7 @@ def makeRecord(graph, user, id=None):
                   definition = trynext(o for _, o in graph[:definition]),
                   comment = trynext(o for _, o in graph[:rdfs.comment]),)
     return record
+
 def simple_query(string):
     return {'query':{'multi_match':{'query':string,
                                     #'type':'best_fields',
