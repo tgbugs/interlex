@@ -31,6 +31,7 @@ INSERT INTO groups (groupname) VALUES
        ('uberon'),
        ('obo'),
        ('NDA'),
+       ('NINDSCDE'),
        ('MESH'),
        ('FSL'),
        ('FreeSurfer'),
