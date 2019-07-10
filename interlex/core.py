@@ -31,7 +31,12 @@ from interlex.utils import printD, makeSimpleLogger
 from IPython import embed
 
 logger = makeSimpleLogger('ilx_core')
-synonym_types = {'abbrev':ilxtr['synonyms/abbreviation']}
+synonym_types = {'abbrev':ilxtr['synonyms/abbreviation'],
+                 'oboInOwl:hasBroadSynonym': ilxtr['synonyms/broad'],
+                 'oboInOwl:hasExactSynonym': ilxtr['synonyms/exact'],
+                 'oboInOwl:hasNarrowSynonym': ilxtr['synonyms/narrow'],
+                 'oboInOwl:hasRelatedSynonym': ilxtr['synonyms/related'],
+}
 default_prefixes = {'rdf':str(rdf),
                     'rdfs':str(rdfs),
                     'owl':str(owl)}
