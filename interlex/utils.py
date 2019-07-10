@@ -1,3 +1,8 @@
+from pyontutils.utils import makeSimpleLogger
+
+log = makeSimpleLogger('interlex')
+
+
 import logging
 
 

@@ -18,9 +18,11 @@ from interlex import exc
 from interlex.exc import hasErrors, bigError
 from interlex.auth import Auth
 from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode, synonym_types, dbUri
+from interlex.utils import log
 from interlex.dump import Queries
 from IPython import embed
 
+log = log.getChild('load')
 ilxr, *_ = makeNamespaces('ilxr')
 
 
@@ -1935,6 +1937,7 @@ class InterLexLoad:
             # have to look inside uris to enforce mapping rules per user
 
             _, user_uris_path = iri.split('interlex.org/', 1)
+            log.debug(user_uris_path)
             user, uris_path = user_uris_path.split('/', 1)
             if not uris_path.startswith('uris'):
                 msg = f'not a user uris path {iri}'

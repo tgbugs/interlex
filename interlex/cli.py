@@ -236,7 +236,7 @@ def main():
         TripleLoader = TripleLoaderFactory(db.session)
         il = InterLexLoad(TripleLoader, do_cdes=args['--do-cdes'])
         il.setup()
-        # il.load()  # do this one yourself
+        # il.load()  # do this one yourself  WARNING high memory usage ~ 17 gigs
         self = il
         embed()
 
