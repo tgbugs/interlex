@@ -22,10 +22,12 @@ class TripleRender:
                           'application/rdf+xml':self.rdf_ser,
                           'application/n-triples':self.rdf_ser,
                           'text/n3':self.rdf_ser,
+                          'application/vnd.scicrunch.interlex+json': self.jsonilx,
                           #'application/n-quads':self.rdf_ser  # TODO need qualifier context store
         }
         self.extensions = {'html': 'text/html',
                            'json': 'application/json',
+                           'jsonilx': 'application/vnd.scicrunch.interlex+json',
                            'jsonld': 'application/ld+json',
                            'ttl': 'text/turtle',  # InterLex rdf?
                            'xml': 'application/rdf+xml',
@@ -225,3 +227,9 @@ class TripleRender:
                             for e in t ]
                            for t in graph]}
         return json.dumps(out)
+
+    def jsonilx(self, request, mgraph, user, id, object_to_existing,
+                title, mimetype):
+        graph = mgraph.g
+        # TODO
+        return {}
