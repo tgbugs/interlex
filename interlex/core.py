@@ -381,16 +381,18 @@ class IdentityBNode(rdflib.BNode):
                         elif lt == 2:
                             yield self.ordered_identity(*self.recurse(thing))
                         else:
-                            raise NotImplemented('shouldn\'t ever get here ...')
+                            raise NotImplementedError('shouldn\'t ever get here ...')
                     else:
-                        if self.debug:
-                            self.add_to_subgraphs(thing, self.subgraphs, self.subgraph_mappings)
-
                         if lt == 3:
                             s, p, o = thing
+
                         elif lt == 2:
                             s = None  # safe, only isinstance(o, rdflib.BNode) will trigger below
                             p, o = thing
+                            thing = s, p, o
+
+                        if self.debug:
+                            self.add_to_subgraphs(thing, self.subgraphs, self.subgraph_mappings)
 
                         if isinstance(p, rdflib.BNode):
                             raise TypeError(f'predicates cannot be blank {thing}')
@@ -443,6 +445,12 @@ class IdentityBNode(rdflib.BNode):
         # resolve lifts and skips
         for t in self.to_lift:
             s, p, o = t
+            if s is None:
+                # upstream is not relevant because
+                # we are idenitfying it implicitly
+                # when processing pairs
+                continue
+
             assert isinstance(s, rdflib.BNode)
             upstream = s
             while upstream in self.find_heads:
