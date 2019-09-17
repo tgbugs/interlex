@@ -2,7 +2,6 @@
 the python routines compute the same identities """
 
 import unittest
-from interlex.core import bnodes, IdentityBNode
 from interlex.dump import Queries, TripleExporter
 from test.test_stress import nottest  # FIXME put nottest in test utils
 from test.setup_testing_db import getSession

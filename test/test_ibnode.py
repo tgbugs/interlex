@@ -3,18 +3,17 @@ from pathlib import Path
 import rdflib
 from pyontutils.core import yield_recursive
 from pyontutils.config import devconfig
-from interlex.core import bnodes, IdentityBNode
-from IPython import embed
+from pyontutils.identity_bnode import bnodes, IdentityBNode
 
 
 class TestIBNode(unittest.TestCase):
     def setUp(self):
         self.graph1 = rdflib.Graph()
         #file = Path(devconfig.ontology_local_repo) / 'ttl/BIRNLex_annotation_properties.ttl'
-        file = Path(devconfig.git_local_base, 'pyontutils/test/nasty.ttl')
+        file = Path(devconfig.git_local_base, 'pyontutils/ttlser/test/nasty.ttl')
         with open(file.as_posix(), 'rb') as f:
             self.ser1 = f.read()
-        #embed()
+
         self.graph1.parse(data=self.ser1, format='turtle')
 
         g2format = 'nt'

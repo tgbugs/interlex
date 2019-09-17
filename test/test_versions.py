@@ -31,7 +31,7 @@ class TestVersions(unittest.TestCase):
         pass
 
 
-def TestQualifierComposition(unittest.TestCase):
+class TestQualifierComposition(unittest.TestCase):
     """ the functionality needed for versioning is a subset of the full qualifier relations """
     def test_include(self): pass
     def test_exclude(self): pass  # needed for cases where we need to mask upstream

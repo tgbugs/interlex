@@ -17,7 +17,7 @@ from pyontutils.closed_namespaces import rdf, rdfs, owl, oboInOwl
 from interlex import exc
 from interlex.exc import hasErrors, bigError
 from interlex.auth import Auth
-from interlex.core import printD, bnodes, makeParamsValues, IdentityBNode, synonym_types, dbUri
+from interlex.core import printD, makeParamsValues, IdentityBNode, synonym_types, dbUri
 from interlex.utils import log
 from interlex.dump import Queries
 from IPython import embed

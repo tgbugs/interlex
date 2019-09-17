@@ -5,7 +5,6 @@ import socket
 from pathlib import Path, PurePath
 from tempfile import gettempdir
 from functools import partialmethod
-from collections import Counter, defaultdict
 import rdflib
 import requests
 import sqlalchemy as sa
