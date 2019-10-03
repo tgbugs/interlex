@@ -7,13 +7,25 @@
 : ${SVCUSER:=interlex}
 : ${LOG_LOC:="/var/log/${SVCNAME}"}
 : ${PYTHONPATH:=""}
-: ${PYONTUTILS_DEVCONFIG:="~/devconfig.yaml"}  # sigh, still needed for now
+: ${PYONTUTILS_DEVCONFIG:="~/.config/pyontutils/devconfig.yaml"}  # sigh, still needed for now
 
 run_dir=${run_dir:-/run}
 LOG="${LOG_LOC}/uri.log"
 
 socket="unix:/run/interlex/socket"
+
 pidfile="${run_dir}/${SVCNAME}/pid"
+start_stop_daemon_args="
+--group ${SVCGROUP}
+--user ${SVCUSER}
+--wait 1500
+--env DB_HOST=${DB_HOST}
+--env DB_PORT=${DB_PORT}
+--env INTERLEX_DATABASE=${DATABASE}
+--env BROKER_URL=${BROKER_URL}
+--env PYTHONPATH=${PYTHONPATH}
+--env PYONTUTILS_DEVCONFIG=${PYONTUTILS_DEVCONFIG}
+"
 command="/usr/bin/gunicorn"
 command_args="--bind ${socket}
 --daemon
@@ -29,7 +41,6 @@ command_args="--bind ${socket}
 --capture-output
 interlex.uri_server:app"
 retry='TERM/30/KILL/5'
-start_stop_daemon_args="--group ${SVCGROUP} --user ${SVCUSER}"
 
 command_owner="${SVCUSER}:${SVCGROUP}"
 
@@ -95,17 +106,4 @@ stop_pre() {
 	fi
 }
 
-start() {
-    ebegin "Starting interlex uri server"
-	start-stop-daemon --start --pidfile ${pidfile} \
-		--group ${SVCGROUP} --user ${SVCUSER} \
-		--wait 1500 \
-		--env DB_HOST=${DB_HOST} \
-		--env DB_PORT=${DB_PORT} \
-		--env INTERLEX_DATABASE=${DATABASE} \
-		--env BROKER_URL=${BROKER_URL} \
-		--env PYTHONPATH=${PYTHONPATH} \
-                --env PYONTUTILS_DEVCONFIG=${PYONTUTILS_DEVCONFIG} \
-		--exec ${command} -- ${command_args}
-    eend $? "Failed to start interlex uri server"
-}
+
