@@ -168,6 +168,11 @@
    For each =/lexical/= entry we will attempt to suggest terms that fit. Red links WILL NOT BE SERIALIZED.
    Red links MUST be mapped to an ilx_id just like everything else, and they will not resolve until someone
    creates the page for them. Which is like the new term page but the workflow is a bit more strenuous.
+* Temporary ids
+The =http://uri.interlex.org/temp/uris/= namespace sandboxes identifiers
+that are local to files and that will collide. All uris at this endpoint
+shall 404, even if they return data and even if that data has a context
+that could be used to disambiguate it.
 * Ideas
 ** pure triple (quad)
    quid should probably be sh256 of spo
