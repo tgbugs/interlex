@@ -25,10 +25,9 @@ from pyontutils.namespaces import PREFIXES as uPREFIXES, ilxtr, rdf, rdfs, owl, 
 from pyontutils.combinators import annotation
 from pyontutils.identity_bnode import IdentityBNode, IdLocalBNode
 from interlex import config
-from interlex.utils import printD, makeSimpleLogger
+from interlex.utils import printD, log
 from IPython import embed
 
-logger = makeSimpleLogger('ilx_core')
 synonym_types = {'abbrev':ilxtr['synonyms/abbreviation'],
                  'oboInOwl:hasBroadSynonym': ilxtr['synonyms/broad'],
                  'oboInOwl:hasExactSynonym': ilxtr['synonyms/exact'],

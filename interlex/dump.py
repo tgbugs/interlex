@@ -5,7 +5,7 @@ from pyontutils.namespaces import NIFRID, ilxtr, definition
 from pyontutils.combinators import annotation
 from pyontutils.closed_namespaces import rdf, rdfs, owl, skos
 from interlex.exc import ShouldNotHappenError
-from interlex.core import logger, makeParamsValues, synonym_types
+from interlex.core import log, makeParamsValues, synonym_types
 from interlex.namespaces import ilxr, ilxrtype
 
 
@@ -107,7 +107,7 @@ class MysqlExport:
             if isinstance(oo, rdflib.URIRef) and ' ' in oo:
                 # there are a few wiki urls that have spaces in them >_< sigh
                 oo = str(oo)
-                logger.warning(tc.red('bad iri {oo!r}'))
+                log.warning(tc.red('bad iri {oo!r}'))
 
 
             if p == '':  # we are in synonym space also FIXME because this is dumb

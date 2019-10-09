@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
-from interlex.utils import makeSimpleLogger
+from interlex.utils import log
 from IPython import embed
 
 
 class Auth:
 
-    logger = makeSimpleLogger('auth_logger')
+    log = log.getChild('auth')
 
     class AuthError(Exception):
         def __init__(self, request, extra_info, *args, **kwargs):
@@ -14,7 +14,7 @@ class Auth:
             # TODO make sure access route has the actual source not nginx
             # FIXME use extra
             embed()
-            ll = getattr(Auth.logger, self.log_level)
+            ll = getattr(Auth.log, self.log_level)
             ll(f'{self.__class__.__name__} - {extra_info} - {request.remote_address} - {request.url} - \n{request.headers}')
             super().__init__(*args, **kwargs)
 
