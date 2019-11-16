@@ -25,8 +25,9 @@ class MysqlExport:
     def group_terms(self, group):
         name = self._group_community[group]
 
-        sql = ('SELECT * from terms WHERE cid = '
-               '(SELECT id FROM communities WHERE name = :name)')
+        sql = ('SELECT * from terms WHERE '
+               'status != -2 AND '  # FIXME deleted terms :/
+               'cid = (SELECT id FROM communities WHERE name = :name)')
         args = dict(name=name)
         yield from self.session.execute(sql, args)
 
@@ -86,7 +87,7 @@ class MysqlExport:
 
     def _call_fragment(self, ilx_fragment):
         term = self.term(ilx_fragment)  # FIXME handle value error or no?
-        return self._term_triples(self, term):
+        return self._term_triples(self, term)
 
     def _call_fragments(self, ilx_fragments):
         for term in self.terms(ilx_fragments):
@@ -106,6 +107,7 @@ class MysqlExport:
         preferred_iri = None
         existing = []
         for maybe_pref, iri in self.existing_ids(id):
+            iri = iri.rstrip()  # you have GOT to be kidding me
             iri = rdflib.URIRef(iri)
             if maybe_pref == '1':  # lol mysql
                 preferred_iri = iri
@@ -115,7 +117,7 @@ class MysqlExport:
                 existing.append(iri)
         else:
             if preferred_iri is None:
-                raise ShouldNotHappenError(f'There is no preferred_iri iri for {base_iri}')
+                raise ShouldNotHappenError(f'There is no preferred_iri iri for {baseiri}')
 
         yield preferred_iri, rdf.type, type
         yield preferred_iri, ilxr.type, ilxtype
