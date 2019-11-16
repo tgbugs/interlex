@@ -58,6 +58,30 @@ def server_alt(db=None, dburi=dbUri()):
     def ilx_get(id, extension):
         return ilx(id)
 
+    @app.route('{group}/ontologies/terms')
+    def group_ontologies_terms(group):
+        if group not in ilxexp._group_community:
+            return abort(404)
+
+        if group == 'base':
+            return abort(404)  # too many terms
+        else:
+            title = f'Terms for {group}'
+
+        try:
+            tripleRender.check(request)
+        except exc.UnsupportedType as e:
+            return e.message, e.code
+
+        mgraph = makeGraph(group + '_export_helper', prefixes=uPREFIXES)
+        [mgraph.g.add(t) for t in ilxexp._call_group(group)]
+        try:
+            return tripleRender(request, mgraph, user, id, object_to_existing, title)
+        except BaseException as e:
+            print(tc.red('ERROR'), e)
+            raise e
+            return abort(404)
+
     return app
 
 

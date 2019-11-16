@@ -16,8 +16,19 @@ class MysqlExport:
              'cde': owl.Class,
              'fde': owl.Class,}
 
+    _group_community = {
+        'sparc': 'Stimulating Peripheral Activity to Relieve Conditions (SPARC)',
+    }
     def __init__(self, session):
         self.session = session
+
+    def group_terms(self, group):
+        name = self._group_community[group]
+
+        sql = ('SELECT * from terms WHERE cid = '
+               '(SELECT id FROM communities WHERE name = :name)')
+        args = dict(name=name)
+        yield from self.session.execute(sql, args)
 
     def existing_ids(self, id):
         sql = 'SELECT preferred, iri FROM term_existing_ids WHERE tid = :id'
@@ -38,6 +49,11 @@ class MysqlExport:
             pass
 
         return term
+
+    def terms(self, ilx_fragments):
+        args = dict(fragments=ilx_fragments)
+        sql = 'SELECT * FROM terms where ilx in :fragments'
+        yield from self.session.execut(sql, args)
 
     def predicate_objects(self, id):
         args = dict(id=id)
@@ -66,11 +82,24 @@ class MysqlExport:
 
     def __call__(self, ilx_id):
         ilx_fragment = 'ilx_' + ilx_id
-        baseiri = rdflib.URIRef('http://uri.interlex.org/base/' + ilx_fragment)
+        return self._call_fragment(ilx_fragment)
 
+    def _call_fragment(self, ilx_fragment):
         term = self.term(ilx_fragment)  # FIXME handle value error or no?
+        return self._term_triples(self, term):
 
+    def _call_fragments(self, ilx_fragments):
+        for term in self.terms(ilx_fragments):
+            yield from self._term_triples(term)
+
+    def _call_group(self, group):
+        for term in self.group_terms(group):
+            yield from self._term_triples(term)
+
+    def _term_triples(self, term):
         id = term.id
+        ilx_fragment = term.ilx
+        baseiri = rdflib.URIRef('http://uri.interlex.org/base/' + ilx_fragment)
         type = self.types[term.type]
         ilxtype = ilxrtype[term.type]
 
