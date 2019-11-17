@@ -58,7 +58,15 @@ def server_alt(db=None, dburi=dbUri()):
     def ilx_get(id, extension):
         return ilx(id)
 
-    @app.route('/<group>/ontologies/terms')
+    @app.route('/base/ontologies/ilx_<id>')
+    def ontologies_ilx(id):
+        return ilx(id)
+
+    @app.route('/base/ontologies/ilx_<id>.<extension>')
+    def ontologies_ilx_get(id, extension):
+        return ilx(id)
+
+    @app.route('/<group>/ontologies/auto/community-terms')
     def group_ontologies_terms(group):
         if group not in ilxexp._group_community:
             return 'no such group', 404
