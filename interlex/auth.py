@@ -75,7 +75,7 @@ class Auth:
         plain_text = self.decrypt(token)
 
         try:
-            group, user, issued_utc_epoch_str, scope, maybe_secret_at_epoch = plain_text.split(' ')  # FIXME this is a dangerous field sep
+            group, auth_user, issued_utc_epoch_str, scope, maybe_secret_at_epoch = plain_text.split(' ')  # FIXME this is a dangerous field sep
         except ValueError as e:
             # there is a vanishingly small chance that the current secret could show it in a mangled token
             raise self.MangledTokenError(request, plain_text)
@@ -94,26 +94,26 @@ class Auth:
             else:
                 raise self.WeMayHaveAProblemError(request, plain_text.rsplit(' ', 1)[0], 'Looks like a key leaked...')
 
-        return group, user, scope, issued_utc_epoch
+        return group, auth_user, scope, issued_utc_epoch
 
     def decodeTokenSimple(self, token):
         irequest = self.InternalRequest()
         try:
-            group, user, scope, issued_utc_epoch = self.decodeToken(irequest, token)
+            group, auth_user, scope, issued_utc_epoch = self.decodeToken(irequest, token)
             # FIXME for long running requests what happens if we start authed
             # and finish after we cross the line?
-            return group, user
+            return group, auth_user
         except self.AuthError:
             # downstream logger will deal with this
             return None, None
 
     def authenticate_request(self, request):  # TODO there's got to be a module for this
-        request_user = request.view_args['user']  # TODO do this here?
+        request_user = request.view_args['group']  # TODO do this here?
         now = datetime.utcnow()
         auth_value = request.headers.get('Authorization', '')
         if auth_value.startswith('Bearer '):
             maybe_token = auth_value.split(' ', 1)[-1]
-            maybe_group, maybe_user, scope, issued_utc_epoch = self.decodeToken(request, maybe_token)  # errors spawn here, do not catch
+            maybe_group, maybe_auth_user, scope, issued_utc_epoch = self.decodeToken(request, maybe_token)  # errors spawn here, do not catch
             issued_utc_datetime = datetime.fromtimestamp(issued_utc_epoch)  # NOTE our timestamps are issued in utc so we dont convert
             five_years = timedelta(days=365 * 5)  # FIXME set this via config?
             expiration = issued_utc_datetime + five_years
@@ -123,14 +123,14 @@ class Auth:
                 expired = f'expired {now - expriation} ago'
                 raise self.ExpiredTokenError(request, expired)  # observe that we cant even accidentally log plain_text here
             else:
-                user = maybe_user
+                auth_user = maybe_auth_user
                 group = maybe_group
                 token = maybe_token
         else:
             group = None
-            user = None
+            auth_user = None
             scope = None
             token = None
 
-        return group, user, scope, token
+        return group, auth_user, scope, token
 

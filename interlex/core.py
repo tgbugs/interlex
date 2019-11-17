@@ -59,14 +59,14 @@ class uri(types.UserDefinedType):
         return process
 
 
-def dbUri(user=config.user, host='localhost', port=5432, database=config.database):
+def dbUri(dbuser=config.user, host='localhost', port=5432, database=config.database):
     if socket.gethostname() in config.dev_remote_hosts:
         port = 54321
     if hasattr(sys, 'pypy_version_info'):
         dialect = 'psycopg2cffi'
     else:
         dialect = 'psycopg2'
-    return f'postgresql+{dialect}://{user}@{host}:{port}/{database}'
+    return f'postgresql+{dialect}://{dbuser}@{host}:{port}/{database}'
     # engine = create_engine
     # return engine, inspect(engine)
 
@@ -250,12 +250,12 @@ def server_api(db=None, dburi=dbUri()):
             return 'missing required url argument\n', 400
 
         url = request.args['url']
-        user = 'tgbugs'
+        group = 'tgbugs'
         # TODO process for staging changes for review and comparison to see
         #  where triples are already present so that they can be removed
         # TODO core_uris, core_lits for lifted interlex representation
         src_qual = next(session.execute(('SELECT id FROM qualifiers WHERE group_id = idFromGroupname(:group) '
-                                         'AND source_qualifier_id = 0'), dict(group=user))).id
+                                         'AND source_qualifier_id = 0'), dict(group=group))).id
 
         sql, params = make_load_triples(graph, src_qual)
 
@@ -272,12 +272,12 @@ def server_api(db=None, dburi=dbUri()):
         #graph.parse(file.as_posix(), format='ttl')
         #graph.parse('http://purl.obolibrary.org/obo/uberon.owl')
         file = Path(devconfig.git_local_base) / devconfig.ontology_repo / 'ttl' / 'external' / 'uberon.owl'
-        user = 'uberon'
+        group = 'uberon'
         graph.parse(file.as_posix())
 
         # FIXME getIdFromGroupname ... sigh naming
         src_qual = next(session.execute(('SELECT id FROM qualifiers WHERE group_id = idFromGroupname(:group) '
-                                         'AND source_qualifier_id = 0'), dict(group=user))).id
+                                         'AND source_qualifier_id = 0'), dict(group=group))).id
         qual_id = 0
         # 206112
         # URIRef vs str(URIRef) wtf!
@@ -366,7 +366,7 @@ def server_api(db=None, dburi=dbUri()):
 
     return app
 
-def make_paths(parent_child, parent='<user>', options=tuple(), limit=9999, depth=0):
+def make_paths(parent_child, parent='<group>', options=tuple(), limit=9999, depth=0):
     def inner(child, parent, idepth):
         for path in make_paths(parent_child, child, options=options, limit=limit, depth=idepth):
             #printD('PATH:', path)

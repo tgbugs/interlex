@@ -55,9 +55,9 @@ def uriStructure():
     versioned_ids = basic + ['curies', 'uris']
     intermediate_filename = ['<filename>.<extension>', '<filename>']
     parent_child = {
-        '<user>':              basic + [ilx_get, 'lexical'] + branches + compare + ['contributions', 'upload', 'prov'],
-        '<other_user>':        branches,  # no reason to access /user/own/otheruser/ilx_ since identical to /user/ilx_
-        '<other_user_diff>':   basic + ['lexical'] + branches,
+        '<group>':              basic + [ilx_get, 'lexical'] + branches + compare + ['contributions', 'upload', 'prov'],
+        '<other_group>':        branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
+        '<other_group_diff>':   basic + ['lexical'] + branches,
         'lexical':             ['<label>'],
         'readable':            ['<word>'],
         'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
@@ -73,8 +73,8 @@ def uriStructure():
         '<epoch_verstr_ont>':  ['<filename_terminal>', '<filename_terminal>.<extension>'],
         'curies':              [None, '<prefix_iri_curie>'],  # external onts can be referenced from here...
         'uris':                ['<path:uri_path>'],  # TODO no ilx_ check here as well as in database
-        'own':                 ['<other_user>'],
-        'diff':                ['<other_user_diff>'],
+        'own':                 ['<other_group>'],
+        'diff':                ['<other_group_diff>'],
 
         # TODO considerations here
         # TODO get ontologies by qualifier and by data subgraph? also allow direct access via and identities endpoint since we have those?
@@ -103,7 +103,7 @@ def add_leafbranches(nodes):
         prefix = tuple(nodes[:-2])
         if 'curies' in nodes:
             nodes = prefix + ('curies_',)
-        if nodes == ['', '<user>', 'ontologies', '']:  # only at depth 2
+        if nodes == ['', '<group>', 'ontologies', '']:  # only at depth 2
             nodes = prefix + ('ontologies_',)
         if 'contributions' in nodes:
             nodes = prefix + ('contributions_',)
@@ -158,17 +158,17 @@ def build_api(app):
                   title='InterLex URI structure API',
                   description='Resolution, update, and compare for ontologies and ontology identifiers.',
                   default='URIs',
-                  default_label='User URIs',
+                  default_label='Group URIs',
                   doc='/docs',)
 
     doc_namespaces = {
         # NOTE creation order here translates to the swagger docs, it also affects sorts first
-        'curies':api.namespace('Curies', 'User curies', '/'),
+        'curies':api.namespace('Curies', 'Group curies', '/'),
         'ontologies':api.namespace('Ontologies', 'URIs for serializations of subsets of InterLex, virtualized files', '/'),
         'contributions':api.namespace('Contributions', 'User contributions', '/'),
         'versions':api.namespace('Versions', 'View data associated with any ilx: URI at a given timepoint or version', '/'),
-        'diff':api.namespace('Diff', 'Compare users', '/'),
-        'own':api.namespace('Own', 'See one user\'s view of another user\'s personalized IRIs', '/'),
+        'diff':api.namespace('Diff', 'Compare groups', '/'),
+        'own':api.namespace('Own', 'See one group\'s view of another group\'s personalized IRIs', '/'),
     }
     extra = {name + '_':ns for name, ns in doc_namespaces.items() if name in ('curies', 'contributions', 'ontologies')}
     doc_namespaces = {**extra, **doc_namespaces}  # make sure the extras come first for priority ordering

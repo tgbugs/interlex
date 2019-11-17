@@ -8,8 +8,8 @@ from interlex.config import test_host, test_port
 
 def makeTestRoutes(limit=1):
     parent_child, node_methods = uriStructure()
-    users = 'base', 'origin', 'tgbugs'  # base redirects to default/curated ...
-    other_users = 'latest', 'curated', 'bob'
+    groups = 'base', 'origin', 'tgbugs'  # base redirects to default/curated ...
+    other_groups = 'latest', 'curated', 'bob'
     ilx_patterns = 'ilx_0123456', 'ilx_0090000'
     words = 'isReadablePredicate', 'cookies'
     labels = 'brain', 'mus musculus'
@@ -26,9 +26,9 @@ def makeTestRoutes(limit=1):
                  'mouse/versions/1/labels')
     options = {
         ilx_pattern:ilx_patterns,
-        '<user>':users,
-        '<other_user>':other_users,
-        '<other_user_diff>':other_users,
+        '<group>':groups,
+        '<other_group>':other_groups,
+        '<other_group_diff>':other_groups,
         '<word>':words,
         '<label>':labels,
         '<epoch_verstr_id>':versions,
