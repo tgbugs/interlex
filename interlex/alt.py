@@ -91,7 +91,7 @@ def server_alt(db=None, dburi=dbUri()):
             raise e
             return abort(404)
 
-    @app.route('/<group>/ontologies/terms.<extension>')
+    @app.route('/<group>/ontologies/auto/community-terms.<extension>')
     def group_ontologies_terms_get(group, extension):
         return group_ontologies_terms(group)
 
