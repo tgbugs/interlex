@@ -83,9 +83,10 @@ def server_alt(db=None, dburi=dbUri()):
 
         mgraph = makeGraph(group + '_export_helper', prefixes=uPREFIXES)
         [mgraph.g.add(t) for t in ilxexp._call_group(group)]
+        ontid = f'http://uri.interlex.org/{group}/ontologies/auto/community-terms'  # FIXME
         try:
             # FIXME TODO
-            return tripleRender(request, mgraph, group, 'multi', object_to_existing, title)
+            return tripleRender(request, mgraph, group, None, object_to_existing, title, ontid=ontid)
         except BaseException as e:
             print(tc.red('ERROR'), e)
             raise e

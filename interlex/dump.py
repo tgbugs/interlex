@@ -1,9 +1,10 @@
 import rdflib
-from pyontutils.core import check_value
+from pyontutils.core import OntId
 from pyontutils.utils import TermColors as tc
+from pyontutils.utils_extra import check_value
 from pyontutils.namespaces import NIFRID, ilxtr, definition
+from pyontutils.namespaces import rdf, rdfs, owl, skos
 from pyontutils.combinators import annotation
-from pyontutils.closed_namespaces import rdf, rdfs, owl, skos
 from interlex.exc import ShouldNotHappenError
 from interlex.core import log, makeParamsValues, synonym_types
 from interlex.namespaces import ilxr, ilxrtype
@@ -148,6 +149,8 @@ class MysqlExport:
                 p = NIFRID.synonym
                 triple = preferred_iri, p, oo
                 yield from annotation(triple, (ilxtr.synonymType, stype))()
+            elif p.startswith('oboInOwl:'):
+                p = OntId(p).u
             else:
                 p = rdflib.URIRef(p)
 
