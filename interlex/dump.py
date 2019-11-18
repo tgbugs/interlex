@@ -37,6 +37,15 @@ class MysqlExport:
         args = dict(id=id)
         yield from self.session.execute(sql, args)
 
+    def existing_ids_triples(self, ids):
+        sql = ('SELECT te_s.iri, te.preferred, te.iri FROM term_existing_ids as te'
+               '  JOIN term_existing_ids as te_s '
+               '    ON te.tid = te_s.tid '
+               ' WHERE te.tid in :ids'
+               "   AND te_s.curie like 'ILX:%'")
+        args = dict(ids=tuple(ids))
+        yield from self.session.execute(sql, args)
+
     def term(self, ilx_fragment):
         #args = dict(ilx=request.url.rsplit('/', 1)[-1])
         args = dict(ilx=ilx_fragment)
@@ -55,29 +64,86 @@ class MysqlExport:
     def terms(self, ilx_fragments):
         args = dict(fragments=ilx_fragments)
         sql = 'SELECT * FROM terms where ilx in :fragments'
-        yield from self.session.execut(sql, args)
+        yield from self.session.execute(sql, args)
+
+    def id_triples(self, ids):
+        args = dict(ids=tuple(ids))
+        # FIXME urg the ILX:%
+        sql = f'''
+        SELECT te.iri, ts.type, ts.literal FROM term_synonyms as ts
+          JOIN term_existing_ids AS te
+            ON te.tid = ts.tid
+         WHERE ts.tid in :ids
+           AND ts.literal != ''
+           AND te.curie like 'ILX:%'
+        UNION
+        SELECT te1.iri, te2.iri, value FROM term_annotations AS ta
+          JOIN term_existing_ids AS te1
+            ON ta.tid = te1.tid
+          JOIN term_existing_ids AS te2
+            ON ta.annotation_tid = te2.tid
+         WHERE ta.tid in :ids
+           AND te1.curie like 'ILX:%'
+           AND te2.curie like 'ILX:%'
+        UNION
+        SELECT te.iri, te1.iri, te2.iri FROM term_relationships AS tr
+          JOIN term_existing_ids AS te
+            ON te.tid = tr.term1_id
+          JOIN term_existing_ids AS te1
+            ON te1.tid = tr.relationship_tid
+          JOIN term_existing_ids AS te2
+            ON te2.tid = tr.term2_id
+         WHERE tr.term1_id in :ids
+           AND tr.withdrawn != '1'
+           AND te.curie like 'ILX:%'
+           AND te1.curie like 'ILX:%'
+           AND te2.curie like 'ILX:%'
+        UNION
+        SELECT te1.iri, {str(ilxtr.subThingOf)!r}, te2.iri FROM term_superclasses AS tsc
+          JOIN term_existing_ids AS te1
+            ON te1.tid = tsc.tid
+          JOIN term_existing_ids AS te2
+            ON te2.tid = tsc.superclass_tid
+         WHERE tsc.tid in :ids
+           AND te1.curie like 'ILX:%'
+           AND te2.curie like 'ILX:%'
+        '''
+
+        yield from self.session.execute(sql, args)
 
     def predicate_objects(self, id):
         args = dict(id=id)
+        # FIXME urg the ILX:%
         sql = f'''
-        SELECT type, literal FROM term_synonyms WHERE literal != '' AND tid = :id
+        SELECT type, literal FROM term_synonyms
+         WHERE literal != ''
+           AND tid = :id
         UNION
         SELECT te.iri, value FROM term_annotations AS ta
-            JOIN term_existing_ids AS te
+          JOIN term_existing_ids AS te
             ON ta.annotation_tid = te.tid
-            WHERE ta.tid = :id AND te.preferred = '1'
+         WHERE ta.tid = :id
+           AND te.curie like 'ILX:%'
+           -- AND te.preferred = '1'
         UNION
         SELECT te1.iri, te2.iri FROM term_relationships AS tr
-            JOIN term_existing_ids AS te1
+          JOIN term_existing_ids AS te1
             ON te1.tid = tr.relationship_tid
-            JOIN term_existing_ids AS te2
+          JOIN term_existing_ids AS te2
             ON te2.tid = tr.term2_id
-            WHERE tr.term1_id = :id AND te1.preferred = '1' AND te2.preferred = '1'
+         WHERE tr.term1_id = :id
+           AND tr.withdrawn != '1'
+           AND te1.curie like 'ILX:%'
+           -- AND te1.preferred = '1'
+           AND te2.curie like 'ILX:%'
+           -- AND te2.preferred = '1'
         UNION
         SELECT {str(ilxtr.subThingOf)!r}, te.iri FROM term_superclasses AS tsc
-            JOIN term_existing_ids AS te
+          JOIN term_existing_ids AS te
             ON te.tid = tsc.superclass_tid
-            WHERE tsc.tid = :id AND te.preferred = '1'
+         WHERE tsc.tid = :id
+           AND te.curie like 'ILX:%'
+           -- AND te.preferred = '1'
         '''
 
         yield from self.session.execute(sql, args)
@@ -88,59 +154,60 @@ class MysqlExport:
 
     def _call_fragment(self, ilx_fragment):
         term = self.term(ilx_fragment)  # FIXME handle value error or no?
-        return self._term_triples(self, term)
+        return self._terms_triples((term,))
 
     def _call_fragments(self, ilx_fragments):
-        for term in self.terms(ilx_fragments):
-            yield from self._term_triples(term)
+        yield from self._terms_triples(self.terms(ilx_fragments))
 
     def _call_group(self, group):
-        for term in self.group_terms(group):
-            yield from self._term_triples(term)
+        yield from self._terms_triples(self.group_terms(group))
 
-    def _term_triples(self, term):
-        id = term.id
-        ilx_fragment = term.ilx
-        baseiri = rdflib.URIRef('http://uri.interlex.org/base/' + ilx_fragment)
-        type = self.types[term.type]
-        ilxtype = ilxrtype[term.type]
+    def _terms_triples(self, terms):
+        def basics(term):
+            id = term.id
+            ilx_fragment = term.ilx
+            baseiri = rdflib.URIRef('http://uri.interlex.org/base/' + ilx_fragment)
+            done.add(baseiri)
+            type = self.types[term.type]
+            ilxtype = ilxrtype[term.type]
+            preferred_iri = baseiri
+            return id, baseiri, preferred_iri, type, ilxtype
 
-        preferred_iri = None
-        existing = []
-        for maybe_pref, iri in self.existing_ids(id):
-            iri = iri.rstrip()  # you have GOT to be kidding me
-            iri = rdflib.URIRef(iri)
-            if maybe_pref == '1':  # lol mysql
-                preferred_iri = iri
-            if iri == baseiri:
-                continue
-            else:
-                existing.append(iri)
-        else:
-            if preferred_iri is None:
-                raise ShouldNotHappenError(f'There is no preferred_iri iri for {baseiri}')
+        done = set()
+        predobjs = set()
+        ids = set()
+        for term in terms:
+            id, baseiri, preferred_iri, type, ilxtype = basics(term)
+            ids.add(id)
+            done.add(baseiri)
+            preferred_iri = baseiri  # XXX dealt with by render prefs instead
+            yield preferred_iri, rdf.type, type
+            yield preferred_iri, ilxr.type, ilxtype
+            yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
+            if term.definition:
+                yield preferred_iri, definition, rdflib.Literal(term.definition)
 
-        yield preferred_iri, rdf.type, type
-        yield preferred_iri, ilxr.type, ilxtype
-        yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
-        if term.definition:
-            yield preferred_iri, definition, rdflib.Literal(term.definition)
-
-        if preferred_iri != baseiri:
+            #if preferred_iri != baseiri:
             yield preferred_iri, ilxtr.hasIlxId, baseiri  # TODO hasIlxId sco hasRefId, hasMutualId for non ref ids
 
-        for oo in existing:
-            yield preferred_iri, ilxtr.hasExistingId, oo
-            if oo == baseiri:
-                raise ShouldNotHappenError('woah there')
+        for preferred_iri, pref, o in self.existing_ids_triples(ids):  # FIXME not actually preferred
+            preferred_iri = rdflib.URIRef(preferred_iri)
+            o = rdflib.URIRef(o.rstrip())  # FIXME ARGH rstrip
+            predobjs.add(o)
+            if preferred_iri != o:
+                yield preferred_iri, ilxtr.hasExistingId, o
+                if pref == '1':
+                    yield preferred_iri, ilxtr.hasIlxPreferredId, o
 
-        for p, o in self.predicate_objects(id):
+        for preferred_iri, p, o in self.id_triples(ids):  # FIXME not actually preferred
+            preferred_iri = rdflib.URIRef(preferred_iri)
             oo = check_value(o)
-            if isinstance(oo, rdflib.URIRef) and ' ' in oo:
-                # there are a few wiki urls that have spaces in them >_< sigh
-                oo = str(oo)
-                log.warning(tc.red('bad iri {oo!r}'))
-
+            if isinstance(oo, rdflib.URIRef):
+                predobjs.add(oo)
+                if ' ' in oo:
+                    # there are a few wiki urls that have spaces in them >_< sigh
+                    oo = str(oo)
+                    log.warning(tc.red('bad iri {oo!r}'))
 
             if p == '':  # we are in synonym space also FIXME because this is dumb
                 p = NIFRID.synonym
@@ -154,6 +221,7 @@ class MysqlExport:
             else:
                 p = rdflib.URIRef(p)
 
+            predobjs.add(p)
             #print(p, oo)
             if p == rdf.type:
                 type = p
@@ -164,6 +232,30 @@ class MysqlExport:
                     p = rdfs.subPropertyOf
 
             yield preferred_iri, p, oo
+
+        while 1:
+            todo = ['ilx_' + i.suffix for i in [OntId(i) for i in predobjs - done] if i.prefix == 'ILX']
+            if not todo:  # oh hey, a walrus use case!
+                break
+
+            predobjs = set()
+            ids = set()
+            for term in self.terms(todo):
+                id, baseiri, preferred_iri, type, ilxtype = basics(term)
+                ids.add(id)
+                done.add(baseiri)
+                preferred_iri = baseiri  # XXX dealt with by render prefs instead
+                yield preferred_iri, rdf.type, type
+                yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
+
+            for preferred_iri, pref, o in self.existing_ids_triples(ids):  # FIXME not actually preferred
+                preferred_iri = rdflib.URIRef(preferred_iri)
+                o = rdflib.URIRef(o.rstrip())  # FIXME ARGH rstrip
+                predobjs.add(o)
+                if preferred_iri != o:
+                    yield preferred_iri, ilxtr.hasExistingId, o
+                    if pref == '1':
+                        yield preferred_iri, ilxtr.hasIlxPreferredId, o
 
 
 class TripleExporter:

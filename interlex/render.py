@@ -14,6 +14,20 @@ from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex import exc
 
 class TripleRender:
+
+    default_prefix_ranking = ('UBERON',
+                              'CHEBI',
+                              'GO',
+                              'PR',
+                              'NCBITaxon',
+                              'IAO',
+                              'FMA',
+                              'EMAPA',
+                              'BIRNLEX',
+                              'NLX',
+                              # FIXME TODO much more complex than this and source group rankings from db ...
+                              'NDA.CDE',
+                              'ILX')
     def __init__(self):
         self.mimetypes = {None:self.html,
                           'text/html':self.ttl_html,
@@ -69,7 +83,7 @@ class TripleRender:
         return extension, mimetype, func
 
     def __call__(self, request, mgraph, group, id, object_to_existing,
-                 title=None, labels=None, ontid=None):
+                 title=None, labels=None, ontid=None, ranking=default_prefix_ranking):
         extension, mimetype, func = self.check(request)
 
         if not mgraph.g:
@@ -81,8 +95,8 @@ class TripleRender:
         if labels is None:
             labels = {}
 
-        out = func(request, mgraph, group, id,
-                   object_to_existing, title, mimetype, labels, ontid)
+        out = func(request, mgraph, group, id, object_to_existing,
+                   title, mimetype, labels, ontid, ranking)
         code = 303 if mimetype == 'text/html' and extension != 'html' else 200  # cool uris
         to_plain = 'ttl', 'nt', 'n3', 'nq'
         headers = {'Content-Type': ('text/plain; charset=utf-8'
@@ -125,13 +139,10 @@ class TripleRender:
                        title=title,
                        styles=(table_style,))
 
-    def renderPreferences(self, group, graph, id):
-        uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/ilx_{id}')  # FIXME reference_host from db ...
+    def renderPreferences(self, group, graph, id, ranking=default_prefix_ranking):
         new_graph = rdflib.Graph()
         [new_graph.bind(p, n) for p, n in graph.namespaces()]
-        ranking = ('UBERON', 'CHEBI', 'GO', 'PR', 'NCBITaxon', 'IAO', 'FMA', 'EMAPA', 'BIRNLEX', 'NLX',
-                   # FIXME TODO much more complex than this and source group rankings from db ...
-                   'NDA.CDE', 'ILX')
+
         not_in_rank = len(ranking) + 1
         def by_rank(oid):
             # FIXME preferring lower sorting identifiers seems
@@ -143,14 +154,61 @@ class TripleRender:
                 # fail over to ilx, but alpha in even of weirdness
                 return not_in_rank, oid.prefix, oid.suffix
 
-        existing = sorted((OntId(o)
-                           for _, o in chain(graph[:ilxtr.hasExistingId:],
-                                             ((None, uri),))),  # uri backstops unmapped prefixes
-                          key=by_rank)  # can use [uri::] for now because of the mysql logic
-        preferred_iri = existing[0].u
-        if preferred_iri != uri:
-            new_graph.add((preferred_iri, ilxtr.hasIlxId, uri))
-        #print(repr(uri), repr(preferred_iri))
+        def getPreferred(graph):
+            out = {}
+            for s, o in sorted(graph[:ilxtr.hasExistingId:], key=lambda so: by_rank(OntId(so[1]))):
+                if s not in out:
+                    out[s] = o
+
+            return out
+
+        preferred_all = getPreferred(graph)
+
+        for s, p, o in graph:
+            if s in preferred_all:
+                ns = preferred_all[s]
+            else:
+                ns = s
+
+            if p == ilxtr.hasIlxId:
+                new_graph.add((ns, p, o))
+                continue
+
+            if p in preferred_all:
+                np = preferred_all[p]
+            else:
+                np = p
+
+            if o in preferred_all:
+                no = preferred_all[o]
+            else:
+                no = o
+
+            t = (ns, np, no)
+            new_graph.add(t)
+
+        if id is not None:
+            uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/ilx_{id}')  # FIXME reference_host from db ...
+            preferred_iri = preferred_all[uri]
+        else:
+            preferred_iri = None
+
+        return preferred_iri, new_graph
+
+        if id is not None:
+            uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/ilx_{id}')  # FIXME reference_host from db ...
+            existing = sorted((OntId(o)
+                               for _, o in chain(graph[:ilxtr.hasExistingId:],
+                                                 ((None, uri),))),  # uri backstops unmapped prefixes
+                              key=by_rank)  # can use [uri::] for now because of the mysql logic
+            preferred_iri = existing[0].u
+            if preferred_iri != uri:
+                new_graph.add((preferred_iri, ilxtr.hasIlxId, uri))
+            #print(repr(uri), repr(preferred_iri))
+        else:
+            preferred_iri = None
+
+
         for s, p, o in graph:
             if o == preferred_iri and p == ilxtr.hasExistingId and preferred_iri != uri:
                 # prevent the preferred iri from being listed as an existing iri of itself
@@ -164,17 +222,19 @@ class TripleRender:
                 ns = preferred_iri
             else:
                 ns = s
+
             np = p  # TODO
             no = o  # TODO
             t = (ns, np, no)
             #print(repr(s), repr(uri), repr(ns))  # TODO group iri vs base iri issues
             new_graph.add(t)
+
         return preferred_iri, new_graph
 
     def graph(self, request, mgraph, group, id, object_to_existing,
-              title, mimetype, ontid):
+              title, mimetype, ontid, ranking=default_prefix_ranking):
         # FIXME abstract to replace id with ontology name ... local ids are hard ...
-        preferred_iri, graph = self.renderPreferences(group, mgraph.g, id)
+        preferred_iri, graph = self.renderPreferences(group, mgraph.g, id, ranking)
         nowish = datetime.utcnow()  # request doesn't have this
         epoch = nowish.timestamp()
         iso = nowish.isoformat()
@@ -192,23 +252,25 @@ class TripleRender:
         graph.add((ontid, rdf.type, owl.Ontology))
         graph.add((ontid, owl.versionIRI, ver_ontid))
         graph.add((ontid, owl.versionInfo, rdflib.Literal(iso)))
-        graph.add((ontid, isAbout, preferred_iri))
-        graph.add((ontid, rdfs.comment, rdflib.Literal('InterLex single term result for '
-                                                       f'{group}/ilx_{id} at {iso}')))
+        if preferred_iri is not None:
+            graph.add((ontid, isAbout, preferred_iri))
+            graph.add((ontid, rdfs.comment, rdflib.Literal('InterLex single term result for '
+                                                           f'{group}/ilx_{id} at {iso}')))
+
         # TODO consider data identity?
         ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
         return ng
 
     def ttl(self, request, mgraph, group, id, object_to_existing,
-            title, mimetype, labels, ontid):
+            title, mimetype, labels, ontid, ranking):
         ng = self.graph(request, mgraph, group, id,
-                        object_to_existing, title, mimetype, ontid)
+                        object_to_existing, title, mimetype, ontid, ranking)
         return ng.g.serialize(format='nifttl')
 
     def ttl_html(self, request, mgraph, group, id, object_to_existing,
-                 title, mimetype, labels, ontid):
+                 title, mimetype, labels, ontid, ranking):
         ng = self.graph(request, mgraph, group, id,
-                        object_to_existing, title, mimetype, ontid)
+                        object_to_existing, title, mimetype, ontid, ranking)
         body = ng.g.serialize(format='htmlttl', labels=labels).decode()
         # TODO owl:Ontology -> <head><meta> prov see if there is a spec ...
         return htmldoc(body,
@@ -216,18 +278,19 @@ class TripleRender:
                        styles=(table_style, ttl_html_style))
 
     def rdf_ser(self, request, mgraph, group, id, object_to_existing,
-                title, mimetype, labels, ontid, **kwargs):
+                title, mimetype, labels, ontid, ranking, **kwargs):
         ng = self.graph(request, mgraph, group, id,
-                        object_to_existing, title, mimetype, ontid)
+                        object_to_existing, title, mimetype, ontid, ranking)
         return ng.g.serialize(format=mimetype, **kwargs)
 
     def jsonld(self, request, mgraph, group, id, object_to_existing,
-               title, mimetype, labels, ontid):
+               title, mimetype, labels, ontid, ranking):
         return self.rdf_ser(request, mgraph, group, id,
-                            object_to_existing, title, mimetype, auto_compact=True)
+                            object_to_existing, title, mimetype, ontid, ranking,
+                            auto_compact=True)
 
     def json(self, request, mgraph, group, id, object_to_existing,
-             title, mimetype, labels, ontid):
+             title, mimetype, labels, ontid, ranking):
         # lol
         graph = mgraph.g
         ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
@@ -240,7 +303,7 @@ class TripleRender:
         return json.dumps(out)
 
     def jsonilx(self, request, mgraph, group, id, object_to_existing,
-                title, mimetype, labels, ontid):
+                title, mimetype, labels, ontid, ranking):
         graph = mgraph.g
         # TODO
         return {}
