@@ -77,6 +77,9 @@ class TripleRender:
             else:
                 return '', 404
 
+        if labels is None:
+            labels = {}
+
         out = func(request, mgraph, user, id,
                    object_to_existing, title, mimetype, labels)
         code = 303 if mimetype == 'text/html' and extension != 'html' else 200  # cool uris
@@ -125,7 +128,7 @@ class TripleRender:
         uri = rdflib.URIRef(f'http://uri.interlex.org/{user}/ilx_{id}')  # FIXME reference_host from db ...
         new_graph = rdflib.Graph()
         [new_graph.bind(p, n) for p, n in graph.namespaces()]
-        ranking = ('UBERON', 'CHEBI', 'GO', 'PR', 'NCBITaxon', 'IAO', 'BIRNLEX', 'NLX',
+        ranking = ('UBERON', 'CHEBI', 'GO', 'PR', 'NCBITaxon', 'IAO', 'FMA', 'EMAPA', 'BIRNLEX', 'NLX',
                    # FIXME TODO much more complex than this and source user rankings from db ...
                    'NDA.CDE', 'ILX')
         not_in_rank = len(ranking) + 1
