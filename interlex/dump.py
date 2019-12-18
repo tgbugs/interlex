@@ -20,6 +20,11 @@ class MysqlExport:
     _group_community = {
         'sparc': 'Stimulating Peripheral Activity to Relieve Conditions (SPARC)',
     }
+    _group_include_full_objects = {
+        'sparc': (OntId('ILX:0738400').u,  # ilx.includeForSPARC
+                  OntId('ilx.includeForSPARC:').u,
+        ),
+    }
     def __init__(self, session):
         self.session = session
 
@@ -160,9 +165,12 @@ class MysqlExport:
         yield from self._terms_triples(self.terms(ilx_fragments))
 
     def _call_group(self, group):
-        yield from self._terms_triples(self.group_terms(group))
+        # FIXME horrible implementation
+        include_full_object_predicates = self._group_include_full_objects[group]
+        yield from self._terms_triples(self.group_terms(group),
+                                       include_full_object_predicates=include_full_object_predicates)
 
-    def _terms_triples(self, terms):
+    def _terms_triples(self, terms, include_full_object_predicates=tuple(), done=tuple()):
         def basics(term):
             id = term.id
             ilx_fragment = term.ilx
@@ -171,13 +179,14 @@ class MysqlExport:
             type = self.types[term.type]
             ilxtype = ilxrtype[term.type]
             preferred_iri = baseiri
-            return id, baseiri, preferred_iri, type, ilxtype
+            return id, baseiri, preferred_iri, type, ilxtype, ilx_fragment
 
-        done = set()
+        done = set() if not done else done
         predobjs = set()
         ids = set()
+        prids = {}
         for term in terms:
-            id, baseiri, preferred_iri, type, ilxtype = basics(term)
+            id, baseiri, preferred_iri, type, ilxtype, ilx_fragment = basics(term)
             ids.add(id)
             done.add(baseiri)
             preferred_iri = baseiri  # XXX dealt with by render prefs instead
@@ -189,6 +198,7 @@ class MysqlExport:
 
             #if preferred_iri != baseiri:
             yield preferred_iri, ilxtr.hasIlxId, baseiri  # TODO hasIlxId sco hasRefId, hasMutualId for non ref ids
+            prids[preferred_iri] = ilx_fragment
 
         for preferred_iri, pref, o in self.existing_ids_triples(ids):  # FIXME not actually preferred
             preferred_iri = rdflib.URIRef(preferred_iri)
@@ -199,6 +209,7 @@ class MysqlExport:
                 if pref == '1':
                     yield preferred_iri, ilxtr.hasIlxPreferredId, o
 
+        more_terms_ilx_fragments = set()
         for preferred_iri, p, o in self.id_triples(ids):  # FIXME not actually preferred
             preferred_iri = rdflib.URIRef(preferred_iri)
             oo = check_value(o)
@@ -233,6 +244,13 @@ class MysqlExport:
 
             yield preferred_iri, p, oo
 
+            if p in include_full_object_predicates:
+                # this can be vastly more efficient in 
+                more_terms_ilx_fragments.add(oo.rsplit('/', 1)[-1])  # get the fragment from the iri
+
+        if more_terms_ilx_fragments:
+            yield from self._terms_triples(self.terms(tuple(more_terms_ilx_fragments)), done=done)  # NOTE done MUTATES
+
         while 1:
             todo = ['ilx_' + i.suffix for i in [OntId(i) for i in predobjs - done] if i.prefix == 'ILX']
             if not todo:  # oh hey, a walrus use case!
@@ -241,7 +259,7 @@ class MysqlExport:
             predobjs = set()
             ids = set()
             for term in self.terms(todo):
-                id, baseiri, preferred_iri, type, ilxtype = basics(term)
+                id, baseiri, preferred_iri, type, ilxtype, ilx_fragment = basics(term)
                 ids.add(id)
                 done.add(baseiri)
                 preferred_iri = baseiri  # XXX dealt with by render prefs instead

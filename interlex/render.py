@@ -120,7 +120,7 @@ class TripleRender:
         """ Same as iri selection but for curies """
 
     def html(self, request, mgraph, group, id, object_to_existing,
-             title, mimetype, labels):
+             title, mimetype, labels, ontid, ranking):
         graph = mgraph.g
         cts = CustomTurtleSerializer(graph)
         gsortkey = cts._globalSortKey
@@ -164,14 +164,19 @@ class TripleRender:
 
         preferred_all = getPreferred(graph)
 
+        hasIlxId = {}
         for s, p, o in graph:
             if s in preferred_all:
                 ns = preferred_all[s]
             else:
                 ns = s
 
+            if ns not in hasIlxId:
+                hasIlxId[ns] = False
+
             if p == ilxtr.hasIlxId:
                 new_graph.add((ns, p, o))
+                hasIlxId[ns] = True
                 continue
 
             if p in preferred_all:
@@ -186,6 +191,10 @@ class TripleRender:
 
             t = (ns, np, no)
             new_graph.add(t)
+
+        for k, v in hasIlxId.items():
+            if not v:
+                new_graph.add((k, ilxtr.MISSING_ILX_ID, rdflib.Literal(True)))
 
         if id is not None:
             uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/ilx_{id}')  # FIXME reference_host from db ...
