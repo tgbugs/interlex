@@ -7,27 +7,20 @@ This is a reduced set of the InterLex codebase for serving directly from
 the mysql database. The necessary subset of the code that is needed is
 copied into this directory and installed from the main interlex source.
 
-* Instructions
-:PROPERTIES:
-:CUSTOM_ID: instructions
-:END:
-
-NOTE: This has mostly been replaced by the scripts in alt/bin.
-
-** Setup
+* Setup
 :PROPERTIES:
 :CUSTOM_ID: setup
 :END:
 
-*** Install python
+** Install python
 Install =python3.6=, =pip= and =pipenv= on the server that will run InterLex Alt.
 
-*** Set environment variables
+** Set environment variables
 Set =INTERLEX_USER= and =INTERLEX_SERVER= environment variables.
 The =INTERLEX_USER= should have =sudo= access. NOTE: this is probably
 bad security practice since =INTERLEX_USER= also runs the server.
 
-*** Build and deploy the code.
+** Build and deploy code and config
 
 Get the absolute path to the script and use it to find the alt folder.
 #+name: alt-path
@@ -94,7 +87,7 @@ Subsequently run [[file:./bin/build.sh]].
 <<scp-zip>>
 #+end_src
 
-*** Remote commands
+** Remote commands
 After deploying the files to the server run the following remote
 commands on =INTERLEX_SERVER=. NOTE: Make sure you create a
 =~/.mypass= file that conforms to the syntax of =~/.pgpass= i.e.
