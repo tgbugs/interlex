@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+# [[file:~/git/interlex/alt/README.org::remote.sh][remote.sh]]
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "mv -f run/*.whl . ;
     rm run/Pipenv.lock;
     unzip -o alt.zip &&
@@ -17,3 +17,4 @@ SSH_EXIT=$?
 if [ $SSH_EXIT -ne 0 ]; then
     exit $SSH_EXIT
 fi
+# remote.sh ends here

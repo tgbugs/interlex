@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+# [[file:~/git/interlex/alt/README.org::config-remote.sh][config-remote.sh]]
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "rm -rf run/;
     rm -rf deploy_files/;
     unzip -o alt.zip &&
@@ -33,3 +33,4 @@ if [ $SSH_EXIT -eq 2 ]; then
 elif [ $SSH_EXIT -ne 0 ]; then
     exit $SSH_EXIT
 fi
+# config-remote.sh ends here

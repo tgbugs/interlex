@@ -38,6 +38,64 @@ zip -r alt.zip deploy_files/  # first time only
 scp alt.zip ${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
 #+END_SRC
 
+#+name: config-build.sh
+#+header: :shebang "#!/usr/bin/env bash"
+#+begin_src bash :tangle ./bin/config-build.sh :comments noweb
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do # resolve all symlinks
+  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # resolve relative symlinks
+done
+ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+
+ALT_PATH="${ABS_PATH}/../"
+echo ${ALT_PATH}
+
+cd ${ALT_PATH} &&
+git clean -fxd &&  # cleans only the alt subdir
+grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
+python setup.py bdist_wheel --universal &&
+python setup.py clean --all &&
+rm -rf *.egg-info &&
+mv dist/* run/ &&
+rmdir dist &&
+#pipenv install  # leave this out for now due to gunicorn detection issues
+rm alt.zip;
+zip -r alt.zip README.md &&
+zip -r alt.zip run/ &&
+zip -r alt.zip deploy_files/
+scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
+#+end_src
+
+#+name: build.sh
+#+header: :shebang "#!/usr/bin/env bash"
+#+begin_src bash :tangle ./bin/build.sh :comments noweb
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do # resolve all symlinks
+  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # resolve relative symlinks
+done
+ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+
+ALT_PATH="${ABS_PATH}/../"
+echo ${ALT_PATH}
+
+cd ${ALT_PATH} &&
+git clean -fxd &&  # cleans only the alt subdir
+python setup.py bdist_wheel --universal &&
+python setup.py clean --all &&
+rm -rf *.egg-info &&
+mv dist/* run/ &&
+rmdir dist &&
+#pipenv install  # leave this out for now due to gunicorn detection issues
+rm alt.zip;
+zip -r alt.zip README.md &&
+zip -r alt.zip run/ &&
+scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
+#+end_src
+
 4. ssh to the server and run the following or run the following via ssh.
 
 - First time.
@@ -62,6 +120,44 @@ vi .mypass && # add an entry according to the pattern described below
 sudo systemctl start ilxalt
 #+END_SRC
 
+#+name: config-remote.sh
+#+header: :shebang "#!/usr/bin/env bash"
+#+begin_src bash :tangle ./bin/config-remote.sh :comments noweb
+ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "rm -rf run/;
+    rm -rf deploy_files/;
+    unzip -o alt.zip &&
+    sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/ &&
+    sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.socket /etc/systemd/system/ &&
+    sudo /bin/cp -f deploy_files/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ &&
+    sudo /bin/cp -f deploy_files/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ && # carful here
+    sudo unlink /etc/nginx/sites-enabled/uri.interlex.org.conf;
+    sudo ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf &&
+    sudo systemd-tmpfiles --create &&
+    sudo systemctl enable ilxalt &&
+    pip3.6 install --user --ignore-installed pipenv &&
+    cd run &&
+    ~/.local/bin/pipenv --rm;  # the very first time this can fail
+    ~/.local/bin/pipenv install &&
+    cd ~/ &&
+    touch .mypass &&
+    chmod 0600 .mypass
+    if [ -s .mypass ]; then
+        sudo systemctl restart ilxalt &&
+        sudo systemctl restart nginx;
+    else
+        echo ~/.mypass has no records;
+        exit 2;
+    fi"
+SSH_EXIT=$?
+if [ $SSH_EXIT -eq 2 ]; then
+    echo you need to edit ~/.mypass on ${INTERLEX_SERVER} as ${INTERLEX_USER} to complete setup
+    echo the pattern used to set the password is deocumented in step five of README.md on the server
+    exit $SSH_EXIT
+elif [ $SSH_EXIT -ne 0 ]; then
+    exit $SSH_EXIT
+fi
+#+end_src
+
 - Other times.
 
 #+BEGIN_SRC sh
@@ -73,6 +169,28 @@ pipenv --rm &&  # can skip this if only the interlex code has changed
 pipenv install *.whl &&
 sudo systemctl start ilxalt
 #+END_SRC
+
+#+name: remote.sh
+#+header: :shebang "#!/usr/bin/env bash"
+#+begin_src bash :tangle ./bin/remote.sh :comments noweb
+ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "mv -f run/*.whl . ;
+    rm run/Pipenv.lock;
+    unzip -o alt.zip &&
+    cd run &&
+    ~/.local/bin/pipenv --rm;
+    ~/.local/bin/pipenv install *.whl &&
+    sudo systemctl restart ilxalt &&
+    sleep 5
+    sudo systemctl is-active --quiet ilxalt
+    if [ $? -ne 0 ]; then
+        sudo journalctl -u ilxalt.service | tail -n 50;
+        exit 1;
+    fi"
+SSH_EXIT=$?
+if [ $SSH_EXIT -ne 0 ]; then
+    exit $SSH_EXIT
+fi
+#+end_src
 
 5. Make sure you create a =~/.mypass= file that conforms to the syntax
    of =~/.pgpass= i.e. each line should look like

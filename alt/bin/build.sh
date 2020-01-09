@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+# [[file:~/git/interlex/alt/README.org::build.sh][build.sh]]
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do # resolve all symlinks
   DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
@@ -23,3 +23,4 @@ rm alt.zip;
 zip -r alt.zip README.md &&
 zip -r alt.zip run/ &&
 scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
+# build.sh ends here
