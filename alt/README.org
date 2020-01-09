@@ -20,27 +20,12 @@ NOTE: This has mostly been replaced by the scripts in alt/bin.
 :END:
 
 1. Install =python3.6=, =pip= and =pipenv=.
-2. Build the package +and install to create Pipfile.lock for sanity+ and
-   compress this folder for deployment.
 
-#+BEGIN_SRC sh
-grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
-python setup.py bdist_wheel --universal &&
-python setup.py clean --all &&
-rm -rf *.egg-info &&
-mv dist/* run/ &&
-rmdir dist &&
-#pipenv install  # leave this out for now due to gunicorn detection issues
-rm alt.zip;
-zip -r alt.zip README.md &&
-zip -r alt.zip run/ &&
-zip -r alt.zip deploy_files/  # first time only
-scp alt.zip ${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
-#+END_SRC
+2. Set =INTERLEX_USER= and =INTERLEX_SERVER= environment variables.
 
-#+name: config-build.sh
-#+header: :shebang "#!/usr/bin/env bash"
-#+begin_src bash :tangle ./bin/config-build.sh :comments noweb
+Get the absolute path to the script and use it to find the alt folder.
+#+name: alt-path
+#+begin_src bash
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do # resolve all symlinks
   DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
@@ -51,39 +36,18 @@ ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
 
 ALT_PATH="${ABS_PATH}/../"
 echo ${ALT_PATH}
-
-cd ${ALT_PATH} &&
-git clean -fxd &&  # cleans only the alt subdir
-grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
-python setup.py bdist_wheel --universal &&
-python setup.py clean --all &&
-rm -rf *.egg-info &&
-mv dist/* run/ &&
-rmdir dist &&
-#pipenv install  # leave this out for now due to gunicorn detection issues
-rm alt.zip;
-zip -r alt.zip README.md &&
-zip -r alt.zip run/ &&
-zip -r alt.zip deploy_files/
-scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
 #+end_src
 
-#+name: build.sh
-#+header: :shebang "#!/usr/bin/env bash"
-#+begin_src bash :tangle ./bin/build.sh :comments noweb
-SOURCE="${BASH_SOURCE[0]}"
-while [ -h "$SOURCE" ]; do # resolve all symlinks
-  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
-  SOURCE="$(readlink "$SOURCE")"
-  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # resolve relative symlinks
-done
-ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+Go to the alt folder and clean out any existing build files.
+#+name: pushd-clean
+#+begin_src bash
+pushd ${ALT_PATH} &&
+git clean -dfx &&  # cleans only the alt subdir
+#+end_src
 
-ALT_PATH="${ABS_PATH}/../"
-echo ${ALT_PATH}
-
-cd ${ALT_PATH} &&
-git clean -fxd &&  # cleans only the alt subdir
+Build python wheels and package them for deployment.
+#+name: build-alt-zip
+#+begin_src bash
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&
 rm -rf *.egg-info &&
@@ -93,7 +57,35 @@ rmdir dist &&
 rm alt.zip;
 zip -r alt.zip README.md &&
 zip -r alt.zip run/ &&
+#+end_src
+
+Deploy the build artifact to the server.
+#+name: scp-zip
+#+begin_src bash
 scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
+popd
+#+end_src
+
+The first time InterLex Alt is set up on a server run [[file:./bin/config-build.sh]].
+#+name: config-build.sh
+#+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
+#+begin_src bash :tangle ./bin/config-build.sh :comments noweb
+<<alt-path>>
+<<pushd-clean>>
+grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
+<<build-alt-zip>>
+zip -r alt.zip deploy_files/  # first time only add deploy files
+<<scp-zip>>
+#+end_src
+
+Subsequently you can just run [[file:./bin/build.sh]].
+#+name: build.sh
+#+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
+#+begin_src bash :tangle ./bin/build.sh :comments noweb
+<<alt-path>>
+<<pushd-clean>>
+<<build-alt-zip>>
+<<scp-zip>>
 #+end_src
 
 4. ssh to the server and run the following or run the following via ssh.
@@ -121,7 +113,7 @@ sudo systemctl start ilxalt
 #+END_SRC
 
 #+name: config-remote.sh
-#+header: :shebang "#!/usr/bin/env bash"
+#+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/config-remote.sh :comments noweb
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "rm -rf run/;
     rm -rf deploy_files/;
@@ -171,7 +163,7 @@ sudo systemctl start ilxalt
 #+END_SRC
 
 #+name: remote.sh
-#+header: :shebang "#!/usr/bin/env bash"
+#+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/remote.sh :comments noweb
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "mv -f run/*.whl . ;
     rm run/Pipenv.lock;
