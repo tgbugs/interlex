@@ -19,9 +19,15 @@ NOTE: This has mostly been replaced by the scripts in alt/bin.
 :CUSTOM_ID: setup
 :END:
 
-1. Install =python3.6=, =pip= and =pipenv=.
+*** Install python
+Install =python3.6=, =pip= and =pipenv= on the server that will run InterLex Alt.
 
-2. Set =INTERLEX_USER= and =INTERLEX_SERVER= environment variables.
+*** Set environment variables
+Set =INTERLEX_USER= and =INTERLEX_SERVER= environment variables.
+The =INTERLEX_USER= should have =sudo= access. NOTE: this is probably
+bad security practice since =INTERLEX_USER= also runs the server.
+
+*** Build and deploy the code.
 
 Get the absolute path to the script and use it to find the alt folder.
 #+name: alt-path
@@ -78,7 +84,7 @@ zip -r alt.zip deploy_files/  # first time only add deploy files
 <<scp-zip>>
 #+end_src
 
-Subsequently you can just run [[file:./bin/build.sh]].
+Subsequently run [[file:./bin/build.sh]].
 #+name: build.sh
 #+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/build.sh :comments noweb
@@ -88,58 +94,50 @@ Subsequently you can just run [[file:./bin/build.sh]].
 <<scp-zip>>
 #+end_src
 
-4. ssh to the server and run the following or run the following via ssh.
+*** Remote commands
+After deploying the files to the server run the following remote
+commands on =INTERLEX_SERVER=. NOTE: Make sure you create a
+=~/.mypass= file that conforms to the syntax of =~/.pgpass= i.e.
+each line should look like =server.url.org:port:dbname:user:password=
+and should have read write permission only for your user (=chmod 0600=).
+If you do not a warning will appear and the server will not start.
 
-- First time.
-
-#+BEGIN_SRC sh
-unzip alt.zip
-sudo su root  # or similar
-cp deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/
-cp deploy_files/etc/systemd/system/ilxalt.socket /etc/systemd/system/
-cp deploy_files/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/
-cp deploy_files/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ # carful here
-ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf
-systemd-tmpfiles --create
-systemctl enable ilxalt
-exit
-cd run &&
-pipenv install &&
-cd ~/ &&
-touch .mypass &&
-chmod 0600 .mypass &&
-vi .mypass && # add an entry according to the pattern described below
-sudo systemctl start ilxalt
-#+END_SRC
-
-#+name: config-remote.sh
-#+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
-#+begin_src bash :tangle ./bin/config-remote.sh :comments noweb
-ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "rm -rf run/;
-    rm -rf deploy_files/;
-    unzip -o alt.zip &&
+The first time run [[file:./bin/config-remote.sh]].
+#+name: config-remote-command
+#+begin_src bash
+rm -rf run/;
+rm -rf deploy_files/;
+unzip -o alt.zip &&
     sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/ &&
     sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.socket /etc/systemd/system/ &&
     sudo /bin/cp -f deploy_files/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ &&
     sudo /bin/cp -f deploy_files/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ && # carful here
     sudo unlink /etc/nginx/sites-enabled/uri.interlex.org.conf;
-    sudo ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf &&
+sudo ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf &&
     sudo systemd-tmpfiles --create &&
     sudo systemctl enable ilxalt &&
     pip3.6 install --user --ignore-installed pipenv &&
     cd run &&
     ~/.local/bin/pipenv --rm;  # the very first time this can fail
-    ~/.local/bin/pipenv install &&
+~/.local/bin/pipenv install &&
     cd ~/ &&
     touch .mypass &&
     chmod 0600 .mypass
-    if [ -s .mypass ]; then
-        sudo systemctl restart ilxalt &&
+if [ -s .mypass ]; then
+    sudo systemctl restart ilxalt &&
         sudo systemctl restart nginx;
-    else
-        echo ~/.mypass has no records;
-        exit 2;
-    fi"
+else
+    echo ~/.mypass has no records;
+    exit 2;
+fi
+#+end_src
+
+#+name: config-remote.sh
+#+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
+#+begin_src bash :tangle ./bin/config-remote.sh :comments noweb
+ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "
+<<config-remote-command>>
+"
 SSH_EXIT=$?
 if [ $SSH_EXIT -eq 2 ]; then
     echo you need to edit ~/.mypass on ${INTERLEX_SERVER} as ${INTERLEX_USER} to complete setup
@@ -150,44 +148,35 @@ elif [ $SSH_EXIT -ne 0 ]; then
 fi
 #+end_src
 
-- Other times.
-
-#+BEGIN_SRC sh
-sudo systemctl stop ilxalt
-mv run/*.whl .
-unzip -o alt.zip
-cd run &&
-pipenv --rm &&  # can skip this if only the interlex code has changed
-pipenv install *.whl &&
-sudo systemctl start ilxalt
-#+END_SRC
+Subsequently run [[file:./bin/remote.sh]].
+#+name: remote-command
+#+begin_src bash
+mv -f run/*.whl . ;
+rm run/Pipenv.lock;
+unzip -o alt.zip &&
+    cd run &&
+    ~/.local/bin/pipenv --rm;
+~/.local/bin/pipenv install *.whl &&
+    sudo systemctl restart ilxalt &&
+    sleep 5
+sudo systemctl is-active --quiet ilxalt
+if [ $? -ne 0 ]; then
+    sudo journalctl -u ilxalt.service -n 50;
+    exit 1;
+fi
+#+end_src
 
 #+name: remote.sh
 #+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/remote.sh :comments noweb
-ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "mv -f run/*.whl . ;
-    rm run/Pipenv.lock;
-    unzip -o alt.zip &&
-    cd run &&
-    ~/.local/bin/pipenv --rm;
-    ~/.local/bin/pipenv install *.whl &&
-    sudo systemctl restart ilxalt &&
-    sleep 5
-    sudo systemctl is-active --quiet ilxalt
-    if [ $? -ne 0 ]; then
-        sudo journalctl -u ilxalt.service | tail -n 50;
-        exit 1;
-    fi"
+ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "
+<<remote-command>>
+"
 SSH_EXIT=$?
 if [ $SSH_EXIT -ne 0 ]; then
     exit $SSH_EXIT
 fi
 #+end_src
-
-5. Make sure you create a =~/.mypass= file that conforms to the syntax
-   of =~/.pgpass= i.e. each line should look like
-   =server.url.org:port:dbname:user:password= and should have read write
-   permission only for your user (=chmod 0600=).
 
 * Testing
 :PROPERTIES:
