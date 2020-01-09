@@ -12,12 +12,17 @@ copied into this directory and installed from the main interlex source.
 :CUSTOM_ID: setup
 :END:
 
-** Install python
-Install =python3.6= (or greater), =pip=, =pipenv=, and =wheel= on the
-server that will run InterLex Alt. For example on CentOS
+** Install wheel on build machine
+The build machine will work with any version of python, however it that
+version does need to have =wheel= installed e.g. via =pip install wheel=.
+
+** Install python on server
+Install =python3.6= (or greater), =pip=, and =pipenv= on the server that
+will run InterLex Alt. For example on CentOS
+
 #+begin_src bash
 sudo yum install python36 python36-pip
-sudo pip install pipenv wheel
+sudo pip install pipenv
 #+end_src
 
 ** Set environment variables
