@@ -1,15 +1,29 @@
-# InterLex Alt
-This is a reduced set of the InterLex codebase for serving directly
-from the mysql database. The necessary subset of the code that is needed
-is copied into this directory and installed from the main interlex source.
+* InterLex Alt
+:PROPERTIES:
+:CUSTOM_ID: interlex-alt
+:END:
 
-# Instructions
+This is a reduced set of the InterLex codebase for serving directly from
+the mysql database. The necessary subset of the code that is needed is
+copied into this directory and installed from the main interlex source.
+
+* Instructions
+:PROPERTIES:
+:CUSTOM_ID: instructions
+:END:
+
 NOTE: This has mostly been replaced by the scripts in alt/bin.
-## Setup
-1. Install `python3.6`, `pip` and `pipenv`.
-2. Build the package ~~and install to create Pipfile.lock for sanity~~
-and compress this folder for deployment.
-```bash
+
+** Setup
+:PROPERTIES:
+:CUSTOM_ID: setup
+:END:
+
+1. Install =python3.6=, =pip= and =pipenv=.
+2. Build the package +and install to create Pipfile.lock for sanity+ and
+   compress this folder for deployment.
+
+#+BEGIN_SRC sh
 grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&
@@ -22,10 +36,13 @@ zip -r alt.zip README.md &&
 zip -r alt.zip run/ &&
 zip -r alt.zip deploy_files/  # first time only
 scp alt.zip ${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
-```
+#+END_SRC
+
 4. ssh to the server and run the following or run the following via ssh.
-* First time.
-```bash
+
+- First time.
+
+#+BEGIN_SRC sh
 unzip alt.zip
 sudo su root  # or similar
 cp deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/
@@ -43,9 +60,11 @@ touch .mypass &&
 chmod 0600 .mypass &&
 vi .mypass && # add an entry according to the pattern described below
 sudo systemctl start ilxalt
-```
-* Other times.
-```bash
+#+END_SRC
+
+- Other times.
+
+#+BEGIN_SRC sh
 sudo systemctl stop ilxalt
 mv run/*.whl .
 unzip -o alt.zip
@@ -53,13 +72,20 @@ cd run &&
 pipenv --rm &&  # can skip this if only the interlex code has changed
 pipenv install *.whl &&
 sudo systemctl start ilxalt
-```
-5. Make sure you create a `~/.mypass` file that conforms to the syntax of `~/.pgpass`
-i.e. each line should look like `server.url.org:port:dbname:user:password` and should
-have read write permission only for your user (`chmod 0600`).
+#+END_SRC
 
-# Testing
-On a redeploy, the easiest way to test whether everything is working is to change
-TestRoutes.host in `test/test_alt.py` to match the test server and then run
-`python -m unittest test/test_alt.py`. TODO add this to the deploy scripts for the test server?
-Simple testing `curl --header 'Host: uri.interlex.org' http://${TEST_HOST}/base/ilx_0109470.ttl`
+5. Make sure you create a =~/.mypass= file that conforms to the syntax
+   of =~/.pgpass= i.e. each line should look like
+   =server.url.org:port:dbname:user:password= and should have read write
+   permission only for your user (=chmod 0600=).
+
+* Testing
+:PROPERTIES:
+:CUSTOM_ID: testing
+:END:
+
+On a redeploy, the easiest way to test whether everything is working is
+to change TestRoutes.host in =test/test_alt.py= to match the test server
+and then run =python -m unittest test/test_alt.py=. TODO add this to the
+deploy scripts for the test server? Simple testing
+=curl --header 'Host: uri.interlex.org' http://${TEST_HOST}/base/ilx_0109470.ttl=
