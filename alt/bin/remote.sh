@@ -6,8 +6,8 @@ mv -f run/*.whl . ;
 rm run/Pipenv.lock;
 unzip -o alt.zip &&
     cd run &&
-    ~/.local/bin/pipenv --rm;
-~/.local/bin/pipenv install *.whl &&
+    pipenv --rm;
+pipenv install *.whl &&
     sudo systemctl restart ilxalt &&
     sleep 5
 sudo systemctl is-active --quiet ilxalt

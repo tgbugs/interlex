@@ -15,8 +15,8 @@ sudo ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-ena
     sudo systemctl enable ilxalt &&
     pip3.6 install --user --ignore-installed pipenv &&
     cd run &&
-    ~/.local/bin/pipenv --rm;  # the very first time this can fail
-~/.local/bin/pipenv install &&
+    pipenv --rm;  # the very first time this can fail
+pipenv install &&
     cd ~/ &&
     touch .mypass &&
     chmod 0600 .mypass

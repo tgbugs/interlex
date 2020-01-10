@@ -17,11 +17,11 @@ The build machine will work with any version of python, however it that
 version does need to have =wheel= installed e.g. via =pip install wheel=.
 
 ** Install python on server
-Install =python3.6= (or greater), =pip=, and =pipenv= on the server that
+Install =python3.6-devel= (or greater), =pip=, and =pipenv= on the server that
 will run InterLex Alt. For example on CentOS
 
 #+begin_src bash
-sudo yum install python36 python36-pip
+sudo yum install python36-devel python36-pip
 sudo pip install pipenv
 #+end_src
 
@@ -121,8 +121,8 @@ sudo ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-ena
     sudo systemctl enable ilxalt &&
     pip3.6 install --user --ignore-installed pipenv &&
     cd run &&
-    ~/.local/bin/pipenv --rm;  # the very first time this can fail
-~/.local/bin/pipenv install &&
+    pipenv --rm;  # the very first time this can fail
+pipenv install &&
     cd ~/ &&
     touch .mypass &&
     chmod 0600 .mypass
@@ -158,8 +158,8 @@ mv -f run/*.whl . ;
 rm run/Pipenv.lock;
 unzip -o alt.zip &&
     cd run &&
-    ~/.local/bin/pipenv --rm;
-~/.local/bin/pipenv install *.whl &&
+    pipenv --rm;
+pipenv install *.whl &&
     sudo systemctl restart ilxalt &&
     sleep 5
 sudo systemctl is-active --quiet ilxalt
