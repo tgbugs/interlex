@@ -36,6 +36,7 @@ try:
           keywords='probably dont use this',
           packages=['interlex'],
           install_requires=[
+              'augpathlib>=0.0.5',  # until the pyontutils version dep is needed
               'flask',
               'flask_sqlalchemy',
               'gevent',
