@@ -119,7 +119,6 @@ unzip -o alt.zip &&
 sudo ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf &&
     sudo systemd-tmpfiles --create &&
     sudo systemctl enable ilxalt &&
-    pip3.6 install --user --ignore-installed pipenv &&
     cd run &&
     pipenv --rm;  # the very first time this can fail
 pipenv install || exit 3;
