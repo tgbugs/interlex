@@ -25,7 +25,7 @@ mv dist/* run/ &&
 rmdir dist &&
 #pipenv install  # leave this out for now due to gunicorn detection issues
 rm alt.zip;
-zip -r alt.zip README.md &&
+zip -r alt.zip README.org &&
 zip -r alt.zip run/ &&
 # build-alt-zip ends here
 zip -r alt.zip deploy_files/  # first time only add deploy files

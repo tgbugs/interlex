@@ -24,7 +24,7 @@ mv dist/* run/ &&
 rmdir dist &&
 #pipenv install  # leave this out for now due to gunicorn detection issues
 rm alt.zip;
-zip -r alt.zip README.md &&
+zip -r alt.zip README.org &&
 zip -r alt.zip run/ &&
 # build-alt-zip ends here
 # [[[[file:~/git/interlex/alt/README.org::scp-zip][scp-zip]]][scp-zip]]
