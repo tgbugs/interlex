@@ -41,6 +41,7 @@ try:
               'flask_sqlalchemy',
               'gevent',
               'gunicorn',
+              'mysql-connector',
               'neurdflib-jsonld',
               'pyontutils',
           ],
