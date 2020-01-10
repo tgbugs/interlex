@@ -15,6 +15,7 @@ echo ${ALT_PATH}
 # [[[[file:~/git/interlex/alt/README.org::pushd-clean][pushd-clean]]][pushd-clean]]
 pushd ${ALT_PATH} &&
 git clean -dfx &&  # cleans only the alt subdir
+git checkout HEAD -- deploy_files/  # prevent stale user
 # pushd-clean ends here
 grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
 # [[[[file:~/git/interlex/alt/README.org::build-alt-zip][build-alt-zip]]][build-alt-zip]]

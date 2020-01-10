@@ -2,19 +2,13 @@
 # [[file:~/git/interlex/alt/README.org::remote.sh][remote.sh]]
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "
 # [[[[file:~/git/interlex/alt/README.org::remote-command][remote-command]]][remote-command]]
-mv -f run/*.whl . ;
-rm run/Pipenv.lock;
-unzip -o alt.zip &&
-    cd run &&
-    pipenv --rm;
-pipenv install *.whl || exit 4;
-sudo systemctl restart ilxalt &&
-    sleep 5
-sudo systemctl is-active --quiet ilxalt
-if [ $? -ne 0 ]; then
-    sudo journalctl -u ilxalt.service -n 50;
-    exit 1;
-fi
+mv -f run/*.whl .
+rm run/Pipenv.lock
+unzip -o alt.zip || exit 1
+cd run || exit 2
+pipenv --rm
+pipenv install *.whl || exit 3
+
 # remote-command ends here
 "
 SSH_EXIT=$?

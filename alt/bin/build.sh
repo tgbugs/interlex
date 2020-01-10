@@ -15,6 +15,7 @@ echo ${ALT_PATH}
 # [[[[file:~/git/interlex/alt/README.org::pushd-clean][pushd-clean]]][pushd-clean]]
 pushd ${ALT_PATH} &&
 git clean -dfx &&  # cleans only the alt subdir
+git checkout HEAD -- deploy_files/  # prevent stale user
 # pushd-clean ends here
 # [[[[file:~/git/interlex/alt/README.org::build-alt-zip][build-alt-zip]]][build-alt-zip]]
 python setup.py bdist_wheel --universal &&
