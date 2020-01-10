@@ -16,8 +16,8 @@ sudo ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-ena
     pip3.6 install --user --ignore-installed pipenv &&
     cd run &&
     pipenv --rm;  # the very first time this can fail
-pipenv install &&
-    cd ~/ &&
+pipenv install || exit 3;
+cd ~/ &&
     touch .mypass &&
     chmod 0600 .mypass
 if [ -s .mypass ]; then
@@ -32,7 +32,7 @@ fi
 SSH_EXIT=$?
 if [ $SSH_EXIT -eq 2 ]; then
     echo you need to edit ~/.mypass on ${INTERLEX_SERVER} as ${INTERLEX_USER} to complete setup
-    echo the pattern used to set the password is deocumented in step five of README.md on the server
+    echo the pattern used to set the password is deocumented in step five of README.org on the server
     exit $SSH_EXIT
 elif [ $SSH_EXIT -ne 0 ]; then
     exit $SSH_EXIT
