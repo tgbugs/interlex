@@ -78,7 +78,9 @@ popd
 
 The first time InterLex Alt is set up on a server run [[file:./bin/config-build.sh]].
 #+name: config-build.sh
-#+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
+#+header: :shebang "#!/usr/bin/env bash"
+#+header: :noweb no-export
+#+header: :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/config-build.sh :comments noweb
 <<alt-path>>
 <<pushd-clean>>
@@ -90,7 +92,9 @@ zip -r alt.zip deploy_files/  # first time only add deploy files
 
 Subsequently run [[file:./bin/build.sh]].
 #+name: build.sh
-#+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
+#+header: :shebang "#!/usr/bin/env bash"
+#+header: :noweb no-export
+#+header: :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/build.sh :comments noweb
 <<alt-path>>
 <<pushd-clean>>
@@ -147,7 +151,7 @@ fi
 #+end_src
 
 #+name: config-remote.sh
-#+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
+#+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/config-remote.sh :comments noweb
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "
 <<config-remote-command>>
@@ -176,7 +180,7 @@ pipenv install *.whl || exit 3
 #+end_src
 
 #+name: remote.sh
-#+header: :shebang "#!/usr/bin/env bash" :noweb yes :tangle-mode (identity #o755)
+#+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/remote.sh :comments noweb
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "
 <<remote-command>>
