@@ -55,5 +55,5 @@ setup(name='InterLex',
               'interlex=interlex.cli:main',
           ],
       },
-      data_files=[('sql', [f.as_posix() for f in Path('sql').iterdir()])]  # FIXME package_data
+      data_files=[('share/interlex/sql', [f.as_posix() for f in Path('sql').iterdir()])]  # FIXME package_data
      )
