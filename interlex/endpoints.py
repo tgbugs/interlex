@@ -669,7 +669,7 @@ class Endpoints:
                         # FIXME this needs to just go as a race
                         # either await sleep(limit) or await load(thing)
                         try:
-                            loader = self.FileFromIRI(group, dbuser, reference_name, self.reference_host)
+                            loader = self.FileFromIRI(group, dbuser, reference_name)
                             #task = tasks.multiple(loader, name, expected_bound_name)
                             # task.jobid
                             # then wait for our max time and return the jobid/tracker or the result

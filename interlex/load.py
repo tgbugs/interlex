@@ -20,7 +20,6 @@ from interlex.auth import Auth
 from interlex.core import printD, makeParamsValues, IdentityBNode, synonym_types, dbUri
 from interlex.utils import log
 from interlex.dump import Queries
-from IPython import embed
 
 log = log.getChild('load')
 ilxr, *_ = makeNamespaces('ilxr')
@@ -429,7 +428,7 @@ class GraphIdentities:
             if self._blank_identities:
                 #printD(self._blank_identities)
                 if self.debug:
-                    embed()
+                    breakpoint()
 
 
 class GraphLoader(GraphIdentities):
@@ -994,7 +993,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
         if self.name is None:
             printD(tc.red('self.name is none'))
-            embed()
+            breakpoint()
 
         stop = bde_switch(self.Loader.bound_name, self.expected_bound_name, expected_bound_name)
         self.times['init_end'] = time.time()
@@ -1079,7 +1078,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             if type(e) == exc.LoadError:
                 raise e
 
-            embed()
+            breakpoint()
             if hasattr(e, 'orig'):
                 raise e.orig
             else:
@@ -1173,8 +1172,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             self.execute(sql, dict(r=self.reference_name, e=value, group_id=self.group_id))
             self._expected_bound_name = value
             self.reference_name_in_db = True  # ok to set again
-            #printD('embedding')
-            #embed()
+            #breakpoint()
 
     # serialization type
     @property
@@ -1230,7 +1228,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                 else:
                     self._graph.parse(data=self.serialization, format=self.format)
             except TypeError as e:
-                embed()
+                breakpoint()
                 raise e
             finally:
                 self.times['graph_end'] = time.time()
@@ -1370,7 +1368,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         vt, params_i = makeParamsValues(values, constants=(':rn',))
         params_i['rn'] = self.reference_name
         sql_ident = sql_ident_base + vt + ' ON CONFLICT DO NOTHING'  # TODO FIXME XXX THIS IS BAD
-        #embed()  # TODO
+        #breakpoint()  # TODO
         self.session.execute(sql_ident, params_i)
 
         sql_ident_rel_base = 'INSERT INTO identity_relations (p, s, o) VALUES '
@@ -1749,7 +1747,7 @@ class InterLexLoad:
         self.queries = Queries(self.loader.session)
         self.do_cdes = do_cdes
         self.debug = debug
-        self.admin_engine = create_engine(dbUri(user='interlex-admin'), echo=True)
+        self.admin_engine = create_engine(dbUri(dbuser='interlex-admin'), echo=True)
         self.admin_exec = self.admin_engine.execute
         from pyontutils.utils import mysql_conn_helper
         DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'
@@ -1868,7 +1866,7 @@ class InterLexLoad:
         assert len(ins_values) + len(user_iris) + len(base_iris) == len(_ins_values)
         #ins_values += [(v[0], k) for k, v in mult_curies.items()]  # add curies back now fixed
         if self.debug:
-            embed()
+            breakpoint()
         return ins_values, bads, skips, user_iris
 
     def existing_ids(self):
@@ -2093,13 +2091,13 @@ class InterLexLoad:
             triples.append(t)
 
         #engine.execute()
-        #embed()
+        #breakpoint()
         self.triples = triples
         self.wat = bads, WTF, WTF2
         if self.debug and (bads or WTF or WTF2):
             printD(bads[:10])
             printD(WTF[:10])
             printD(WTF2[:10])
-            embed()
+            breakpoint()
             raise ValueError('BADS HAVE ENTERED THE DATABASE AAAAAAAAAAAA')
         return triples

@@ -1,34 +1,31 @@
-#!/usr/bin/env python3.6
+#!/usr/bin/env python3.7
 #!/usr/bin/env pypy3
 """ InterLex python implementaiton
 
 Usage:
-    interlex api [options]
-    interlex uri [options]     [<database>]
-    interlex curies [options]
-    interlex alt [options]
+    interlex server [uri curies alt api] [options] [<database>]
     interlex dbsetup [options] [<database>]
-    interlex debug [options]   [<database>]
-    interlex sync [options]    [<database>]
+    interlex shell   [options] [<database>]
+    interlex sync    [options] [<database>]
     interlex get           [options]
     interlex post ontology [options] <ontology-filename> ...
     interlex post triples  [options] (<reference-name> <triples-filename>) ...
     interlex post curies   [options] [<curies-filename>]
     interlex post curies   [options] (<curie-prefix> <iri-prefix>) ...
     interlex post resource [options] <rdf-iri>
-    interlex post class  [options] <rdfs:subClassOf> <rdfs:label> [<definition:>] [<synonym:> ...]
-    interlex post entity [options] <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>] [<synonym:> ...]
-    interlex post triple [options] <subject> <predicate> <object>
+    interlex post class    [options] <rdfs:subClassOf> <rdfs:label> [<definition:>] [<synonym:> ...]
+    interlex post entity   [options] <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>] [<synonym:> ...]
+    interlex post triple   [options] <subject> <predicate> <object>
     interlex id     [options] <match-curie-or-iri> ...
     interlex label  [options] <match-label> ...
     interlex term   [options] <match-label-or-synonym> ...
     interlex search [options] <match-full-text> ...
 
 Commands:
-    api             start a server running the api endpoint (WARNING: OLD)
-    uri             start a server for uri.interlex.org connected to <database>
-    curies          start a server for curies.interlex.org
-    alt             start a server for alternate interlex webservices
+    server api      start a server running the api endpoint (WARNING: OLD)
+    server uri      start a server for uri.interlex.org connected to <database>
+    server curies   start a server for curies.interlex.org
+    server alt      start a server for alternate interlex webservices
 
     dbsetup         step through creation of a user (currently tgbugs)
     sync            drop into a debug repl with a database connection
@@ -78,122 +75,22 @@ import os
 from pathlib import Path
 from urllib.parse import urlparse
 import requests
+from pyontutils import clifun as clif
 from pyontutils.utils import setPS1
 from pyontutils.namespaces import PREFIXES as uPREFIXES
 from interlex.utils import printD
 from IPython import embed
 
-def main():
-    from docopt import docopt, parse_defaults
-    defaults = {o.name:o.value if o.argcount else None for o in parse_defaults(__doc__)}
-    args = docopt(__doc__, version='interlex 0.0.0')
-    print(args)
-    # run all database settings through the environment
-    # just have to make sure to set it before config is imported
-    if args['<database>']:
-        os.environ.update({'INTERLEX_DATABASE':args['<database>']})
-        os.environ['INTERLEX_DATABASE'] = args['<database>']#.update({'INTERLEX_DATABASE':args['<database>']})
 
-    if args['get']:
-        raise NotImplemented
-    elif args['post']:
-        if args['--group'] == defaults['--group']:
-            # NOTE: there is a security consideration here
-            # if someone obtains a random api key then they
-            # can use it to retrieve the user who it belongs to
-            # of course they would be able to do this anyway by
-            # just trying multiple users, other groups don't seem
-            # to worry about this, since if you lost an api key
-            # you are in trouble anyway
-            if args['--user']:
-                group = args['--user']
-            else:
-                raise NotImplemented('right now we still need a user')
-        elif args['--user']:
-            raise AssertionError('Only one of --user or --group may be provided.')
-        else:
-            group = args['--group']
+class Options(clif.Options):
+    pass
 
-        # FIXME obviously allowing the group name as the default password is unspeakably dump
-        api_key = os.environ.get('INTERLEX_API_KEY', group)  # FIXME
-        headers = {'Authorization': 'Bearer ' + api_key}
-        if args['--local']:
-            from interlex.config import port_uri
-            host = f'localhost:{port_uri}'
-            scheme = 'http'
-        elif args['--gunicorn']:
-            from interlex.config import port_guni_uri
-            host = f'localhost:{port_guni_uri}'
-            scheme = 'http'
-        elif args['--port']:
-            host = 'localhost:' + args['--port']
-            scheme = 'http'
-        else:
-            host = 'uri.olympiangods.org'
-            scheme = 'https'
 
-        if args['curies']:  # FIXME post should smart update? or switch to patch?
-            filename = args['<curies-filename>']
-            url = f'{scheme}://{host}/{group}/curies/'  # https duh
-            #printD(url, args)
-            # FIXME /curies redirects to get...
-            if filename:
-                path = Path(filename).resolve().actual()
-                ext = path.suffix[1:]
-                with open(path.as_posix(), 'rt') as f:
-                    if ext == 'json':
-                        data = json.load(f)
-                    elif ext == 'ttl':
-                        graph = rdflib.Graph().parse(f, format='ttl')
-                        # TODO allow <url> a ilxr:Curies typed record
-                        data = {k:str(v) for k, v in graph.namespaces()}
-                    elif ext == 'yml' or ext == 'yaml':
-                        data = yaml.load(f)
-                    else:
-                        raise TypeError(f'Don\'t know how to handle {ext} files')
+class Main(clif.Dispatcher):
+    def get(self):
+        raise NotImplementedError
 
-                resp = requests.post(url, json=data, headers=headers)
-            elif args['<curie-prefix>']:
-                # FIXME curie syntax validation? in the db?
-                data = {cp:ip for cp, ip in zip(args['<curie-prefix>'], args['<iri-prefix>'])}
-                resp = requests.post(url, json=data, headers=headers)
-
-            else:
-                resp = requests.post(url, json=uPREFIXES, headers=headers)
-
-            printD(resp.status_code, resp.text)
-
-        elif args['ontology']:
-            for filename in args['<ontology-filename>']:
-                if filename:
-                    url = f'{scheme}://{host}/{group}/upload'  # use smart endpoint
-                    mimetypes = {'ttl':'text/turtle'}  # TODO put this somewhere more practical
-                    path = Path(filename).resolve().absolute()
-                    mimetype = mimetypes.get(path.suffix[1:], None)
-                    form_key = 'ontology-file'  # TODO this could be used to suggest endpoints or something?
-                    # though, that could also be a security vuln?
-                    with open(path.as_posix(), 'rb') as f:
-                        files = {form_key:(path.name, f, mimetype)}
-                        data = {'create':True}
-                        resp = requests.post(url,
-                                             data=data,
-                                             files=files,
-                                             headers=headers)
-                printD(resp.text)
-
-        elif args['triples']:
-            for reference_name, filename in zip(args['<reference-name>'], args['<triples-filename>']):
-                raise NotImplemented
-
-        elif args['resource']:
-            ontology_iri = args['<rdf-iri>']
-            u = urlparse(ontology_iri)
-            j = {'name':ontology_iri}
-            url = f'{scheme}://{host}/{group}/ontologies/' + u.path[1:]
-            resp = requests.post(url, json=j, headers=headers)
-            printD(resp.text)
-
-    elif args['debug']:
+    def shell(self):
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
         from interlex.core import IdentityBNode
@@ -207,7 +104,7 @@ def main():
         app = run_uri()
         # not sure why this is needed here but not
         # runonce is called ...
-        app.config['SQLALCHEMY_ECHO'] = args['--debug']
+        app.config['SQLALCHEMY_ECHO'] = self.options.debug
         db = SQLAlchemy(app)
         endpoints = Endpoints(db)
         session = db.session
@@ -227,20 +124,20 @@ def main():
 
         embed()
 
-    elif args['sync']:
+    def sync(self):
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
         from interlex.load import TripleLoaderFactory, InterLexLoad
         app = run_uri()
         db = SQLAlchemy(app)
         TripleLoader = TripleLoaderFactory(db.session)
-        il = InterLexLoad(TripleLoader, do_cdes=args['--do-cdes'])
+        il = InterLexLoad(TripleLoader, do_cdes=self.options.do_cdes)
         il.setup()
         # il.load()  # do this one yourself  WARNING high memory usage ~ 17 gigs
         self = il
         embed()
 
-    elif args['dbsetup']:
+    def dbsetup(self):
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
         app = run_uri()
@@ -257,32 +154,188 @@ def main():
         session.commit()
         embed()
 
-    else:
-        if args['api']:
-            from interlex.config import port_api
-            from interlex.core import run_api, __file__
-            app = run_api()
-            port = port_api
-        elif args['uri']:
-            from interlex.config import port_uri
-            from interlex.uri import run_uri, __file__
-            app = run_uri(echo=args['--debug'])
-            port = port_uri
-        elif args['curies']:
-            from interlex.config import port_curies
-            from interlex.core import run_curies, __file__
-            app = run_curies()
-            port = port_curies
-        elif args['alt']:
-            from interlex.config import port_alt
-            from interlex.alt import run_alt, __file__
-            app = run_alt()
-            port = port_alt
+    def post(self):
+        post = Post(self)
+        post('post')
 
-        port = args['--port'] if args['--port'] else port
+    def server(self):
+        server = Server(self)
+        server('server')
+
+
+class Server(clif.Dispatcher):
+    def api(self):
+        from interlex.config import port_api
+        from interlex.core import run_api, __file__
+        app = run_api()
+        port = port_api
+        self._server(app, port, __file__)
+
+    def uri(self):
+        from interlex.config import port_uri
+        from interlex.uri import run_uri, __file__
+        app = run_uri(echo=self.options.debug)
+        port = port_uri
+        self._server(app, port, __file__)
+
+    def curies(self):
+        from interlex.config import port_curies
+        from interlex.core import run_curies, __file__
+        app = run_curies()
+        port = port_curies
+        self._server(app, port, __file__)
+
+    def alt(self):
+        from interlex.config import port_alt
+        from interlex.alt import run_alt, __file__
+        app = run_alt()
+        port = port_alt
+        self._server(app, port, __file__)
+
+    def _server(self, app, port, __file__):
+        port = self.options.port if self.options.port else port
         setPS1(__file__)
-        app.debug = args['--debug']
+        app.debug = self.options.debug
         app.run(host='localhost', port=port, threaded=True)  # FIXME gunicorn
+
+
+class Post(clif.Dispatcher):
+
+    def _post(self):
+        if self.options.group == self.options.defaults['--group']:
+            # NOTE: there is a security consideration here
+            # if someone obtains a random api key then they
+            # can use it to retrieve the user who it belongs to
+            # of course they would be able to do this anyway by
+            # just trying multiple users, other groups don't seem
+            # to worry about this, since if you lost an api key
+            # you are in trouble anyway
+            if self.options.user:
+                group = self.options.user
+            else:
+                raise NotImplementedError('right now we still need a user')
+        elif self.options.user:
+            raise AssertionError('Only one of --user or --group may be provided.')
+        else:
+            group = self.options.group
+
+        # FIXME obviously allowing the group name as the default password is unspeakably dump
+        api_key = os.environ.get('INTERLEX_API_KEY', group)  # FIXME
+        headers = {'Authorization': 'Bearer ' + api_key}
+        if self.options.local:
+            from interlex.config import port_uri
+            host = f'localhost:{port_uri}'
+            scheme = 'http'
+        elif self.options.gunicorn:
+            from interlex.config import port_guni_uri
+            host = f'localhost:{port_guni_uri}'
+            scheme = 'http'
+        elif self.options.port:
+            host = 'localhost:' + self.options.port
+            scheme = 'http'
+        else:
+            host = 'uri.olympiangods.org'
+            scheme = 'https'
+
+        out = scheme, host, group, headers
+        if self.options.debug:
+            printD(out[:-1])
+
+        return out
+
+    def curies(self):  # FIXME post should smart update? or switch to patch?
+        scheme, host, group, headers = self._post()
+        filename = self.options.curies_filename
+        url = f'{scheme}://{host}/{group}/curies/'  # https duh
+        #printD(url, args)
+        # FIXME /curies redirects to get...
+        if filename:
+            path = Path(filename).resolve()
+            ext = path.suffix[1:]
+            with open(path.as_posix(), 'rt') as f:
+                if ext == 'json':
+                    data = json.load(f)
+                elif ext == 'ttl':
+                    graph = rdflib.Graph().parse(f, format='ttl')
+                    # TODO allow <url> a ilxr:Curies typed record
+                    data = {k:str(v) for k, v in graph.namespaces()}
+                elif ext == 'yml' or ext == 'yaml':
+                    data = yaml.load(f)
+                else:
+                    raise TypeError(f'Don\'t know how to handle {ext} files')
+
+            resp = requests.post(url, json=data, headers=headers)
+        elif self.options.curie_prefix:
+            # FIXME curie syntax validation? in the db?
+            data = {cp:ip for cp, ip in zip(self.options.curie_prefix,
+                                            self.options.iri_prefix)}
+            resp = requests.post(url, json=data, headers=headers)
+
+        else:
+            resp = requests.post(url, json=uPREFIXES, headers=headers)
+
+        printD(resp.status_code, resp.text)
+
+    def ontology(self):
+        scheme, host, group, headers = self._post()
+        for filename in self.options.ontology_filename:
+            if filename:
+                url = f'{scheme}://{host}/{group}/upload'  # use smart endpoint
+                mimetypes = {'ttl':'text/turtle'}  # TODO put this somewhere more practical
+                path = Path(filename).resolve().absolute()
+                mimetype = mimetypes.get(path.suffix[1:], None)
+                form_key = 'ontology-file'  # TODO this could be used to suggest endpoints or something?
+                # though, that could also be a security vuln?
+                with open(path.as_posix(), 'rb') as f:
+                    files = {form_key:(path.name, f, mimetype)}
+                    data = {'create':True}
+                    resp = requests.post(url,
+                                            data=data,
+                                            files=files,
+                                            headers=headers)
+            printD(resp.text)
+
+    def triples(self):
+        scheme, host, group, headers = self._post()
+        for reference_name, filename in zip(self.options.reference_name,
+                                            self.options.triples_filename):
+            raise NotImplementedError
+
+    def resource(self):
+        scheme, host, group, headers = self._post()
+        ontology_iri = self.options.rdf_iri
+        u = urlparse(ontology_iri)
+        j = {'name':ontology_iri}
+        url = f'{scheme}://{host}/{group}/ontologies/' + u.path[1:]
+        resp = requests.post(url, json=j, headers=headers)
+        printD(resp.text)
+
+    def class_(self):
+        raise NotImplementedError
+
+    def triple(self):
+        raise NotImplementedError
+
+    def entity(self):
+        raise NotImplementedError
+
+
+def main():
+    from docopt import docopt, parse_defaults
+    defaults = {o.name:o.value if o.argcount else None for o in parse_defaults(__doc__)}
+    args = docopt(__doc__, version='interlex 0.0.0')
+    options = Options(args, defaults)
+    # run all database settings through the environment
+    # just have to make sure to set it before config is imported
+    if options.database:
+        os.environ.update({'INTERLEX_DATABASE':args['<database>']})
+        os.environ['INTERLEX_DATABASE'] = args['<database>']#.update({'INTERLEX_DATABASE':args['<database>']})
+
+    main = Main(options)
+    if main.options.debug:
+        print(main.options)
+
+    main()
 
 if __name__ == '__main__':
     main()
