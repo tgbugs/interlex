@@ -1,8 +1,8 @@
 from pathlib import Path
 from collections import OrderedDict as od
 from flask import Flask, url_for
-from flask_restplus import Api, Resource, apidoc
-from flask_restplus.api import SwaggerView
+from flask_restx import Api, Resource, apidoc
+from flask_restx.api import SwaggerView
 from flask_sqlalchemy import SQLAlchemy
 from interlex import config
 from interlex.core import dbUri, mqUri, diffCuries
@@ -15,18 +15,18 @@ log = makeSimpleLogger('setup')
 
 
 class DocsApi(Api):
-    """ Customized restplus Api to serve all swagger content from /docs/ """
+    """ Customized restx Api to serve all swagger content from /docs/ """
 
     def _register_apidoc(self, app: Flask) -> None:
-        conf = app.extensions.setdefault('restplus', {})
-        custom_apidoc = apidoc.Apidoc('restplus_doc', 'flask_restplus.apidoc',
+        conf = app.extensions.setdefault('restx', {})
+        custom_apidoc = apidoc.Apidoc('restx_doc', 'flask_restx.apidoc',
                                         template_folder='templates',
                                         static_folder=(Path(apidoc.__file__).parent / 'static').as_posix(),
                                         static_url_path='/docs/swaggerui')
 
         @custom_apidoc.add_app_template_global
         def swagger_static(filename: str) -> str:
-            return url_for('restplus_doc.static', filename=filename)
+            return url_for('restx_doc.static', filename=filename)
 
         if not conf.get('apidoc_registered', False):
             app.register_blueprint(custom_apidoc)
