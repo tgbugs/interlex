@@ -36,6 +36,12 @@ class TestRoutes(unittest.TestCase):
         ]
         for url in urls:
             for ct in tr.mimetypes:
+                if ct is None:
+                    # can't deal with testing */* in here
+                    # and there is a legitimate use case for the None mimetype
+                    # though type nullability does indeed suck
+                    continue
+
                 out = requests.get(url, headers={'host': self.hostname, 'Accept': ct})
                 assert out.ok
                 oct = out.headers['Content-Type']
