@@ -30,7 +30,7 @@ class TestLoader(unittest.TestCase):
     FileFromFile = FileFromFileFactory(session)
     def setUp(self):  # NOTE this runs multiple times
         self.FileFromFile.refresh()  # clear cached anything
-        self.nasty = Path(devconfig.git_local_base, 'pyontutils/test/nasty.ttl')
+        self.nasty = Path(devconfig.git_local_base, 'pyontutils/ttlser/test/nasty.ttl')
         self.nastyebn = 'http://testurl.org/filename.ttl'
         self.results = (FakeResultProxy for _ in range(999))
         self.session.execute = MagicMock(return_value=self.results)

@@ -295,7 +295,7 @@ class TripleRender:
     def jsonld(self, request, mgraph, group, id, object_to_existing,
                title, mimetype, labels, ontid, ranking):
         return self.rdf_ser(request, mgraph, group, id,
-                            object_to_existing, title, mimetype, ontid, ranking,
+                            object_to_existing, title, mimetype, labels, ontid, ranking,
                             auto_compact=True)
 
     def json(self, request, mgraph, group, id, object_to_existing,

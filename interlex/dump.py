@@ -18,7 +18,7 @@ class MysqlExport:
              'fde': owl.Class,}
 
     _group_community = {
-        'sparc': 'Stimulating Peripheral Activity to Relieve Conditions (SPARC)',
+        'sparc': 'SPARC Anatomical Working Group',
     }
     _group_include_full_objects = {
         'sparc': (OntId('ILX:0738400').u,  # ilx.includeForSPARC
@@ -204,10 +204,13 @@ class MysqlExport:
             preferred_iri = rdflib.URIRef(preferred_iri)
             o = rdflib.URIRef(o.rstrip())  # FIXME ARGH rstrip
             predobjs.add(o)
-            if preferred_iri != o:
-                yield preferred_iri, ilxtr.hasExistingId, o
-                if pref == '1':
-                    yield preferred_iri, ilxtr.hasIlxPreferredId, o
+
+            yield preferred_iri, ilxtr.hasExistingId, o
+            if preferred_iri != o and 'uri.interlex.org' not in o:
+                yield preferred_iri, ilxtr.hasExternalId, o
+
+            if pref == '1':
+                yield preferred_iri, ilxtr.hasIlxPreferredId, o
 
         more_terms_ilx_fragments = set()
         for preferred_iri, p, o in self.id_triples(ids):  # FIXME not actually preferred
@@ -270,10 +273,12 @@ class MysqlExport:
                 preferred_iri = rdflib.URIRef(preferred_iri)
                 o = rdflib.URIRef(o.rstrip())  # FIXME ARGH rstrip
                 predobjs.add(o)
-                if preferred_iri != o:
-                    yield preferred_iri, ilxtr.hasExistingId, o
-                    if pref == '1':
-                        yield preferred_iri, ilxtr.hasIlxPreferredId, o
+                yield preferred_iri, ilxtr.hasExistingId, o
+                if preferred_iri != o and 'uri.interlex.org' not in o:
+                    yield preferred_iri, ilxtr.hasExternalId, o
+
+                if pref == '1':
+                    yield preferred_iri, ilxtr.hasIlxPreferredId, o
 
 
 class TripleExporter:
