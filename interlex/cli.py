@@ -127,7 +127,8 @@ class Main(clif.Dispatcher):
     def sync(self):
         from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
-        from interlex.load import TripleLoaderFactory, InterLexLoad
+        from interlex.load import TripleLoaderFactory
+        from interlex.sync import InterLexLoad
         app = run_uri()
         db = SQLAlchemy(app)
         TripleLoader = TripleLoaderFactory(db.session)
