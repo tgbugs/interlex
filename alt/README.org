@@ -33,7 +33,7 @@ bad security practice since =INTERLEX_USER= also runs the server.
 ** Build and deploy code and config
 
 Get the absolute path to the script and use it to find the alt folder.
-#+name: alt-path
+#+name: *alt-path
 #+begin_src bash
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do # resolve all symlinks
@@ -48,7 +48,7 @@ echo ${ALT_PATH}
 #+end_src
 
 Go to the alt folder and clean out any existing build files.
-#+name: pushd-clean
+#+name: *pushd-clean
 #+begin_src bash
 pushd ${ALT_PATH} &&
 git clean -dfx &&  # cleans only the alt subdir
@@ -56,7 +56,7 @@ git checkout HEAD -- deploy_files/  # prevent stale user
 #+end_src
 
 Build python wheels and package them for deployment.
-#+name: build-alt-zip
+#+name: *build-alt-zip
 #+begin_src bash
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&
@@ -70,7 +70,7 @@ zip -r alt.zip run/ &&
 #+end_src
 
 Deploy the build artifact to the server.
-#+name: scp-zip
+#+name: *scp-zip
 #+begin_src bash
 scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
 popd
@@ -82,12 +82,12 @@ The first time InterLex Alt is set up on a server run [[file:./bin/config-build.
 #+header: :noweb no-export
 #+header: :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/config-build.sh :comments noweb
-<<alt-path>>
-<<pushd-clean>>
+<<*alt-path>>
+<<*pushd-clean>>
 grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
-<<build-alt-zip>>
+<<*build-alt-zip>>
 zip -r alt.zip deploy_files/  # first time only add deploy files
-<<scp-zip>>
+<<*scp-zip>>
 #+end_src
 
 Subsequently run [[file:./bin/build.sh]].
@@ -96,10 +96,10 @@ Subsequently run [[file:./bin/build.sh]].
 #+header: :noweb no-export
 #+header: :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/build.sh :comments noweb
-<<alt-path>>
-<<pushd-clean>>
-<<build-alt-zip>>
-<<scp-zip>>
+<<*alt-path>>
+<<*pushd-clean>>
+<<*build-alt-zip>>
+<<*scp-zip>>
 #+end_src
 
 ** Remote commands
@@ -111,7 +111,7 @@ and should have read write permission only for your user (=chmod 0600=).
 If you do not a warning will appear and the server will not start.
 
 The first time run [[file:./bin/config-remote.sh]].
-#+name: config-remote-command
+#+name: *config-remote-command
 #+begin_src bash :noweb yes
 rm -rf run/
 rm -rf deploy_files/
@@ -135,11 +135,11 @@ if [ ! -s .mypass ]; then
     echo ~/.mypass has no records
     exit 15
 fi
-<<restart-ilxalt>>
+<<*restart-ilxalt>>
 sudo systemctl restart nginx
 #+end_src
 
-#+name: restart-ilxalt
+#+name: *restart-ilxalt
 #+begin_src bash
 sudo systemctl restart ilxalt &&
     sleep 5
@@ -154,7 +154,7 @@ fi
 #+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/config-remote.sh :comments noweb
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "
-<<config-remote-command>>
+<<*config-remote-command>>
 "
 SSH_EXIT=$?
 if [ $SSH_EXIT -eq 15 ]; then
@@ -168,7 +168,7 @@ fi
 #+end_src
 
 Subsequently run [[file:./bin/remote.sh]].
-#+name: remote-command
+#+name: *remote-command
 #+begin_src bash :noweb yes
 mv -f run/*.whl .
 rm run/Pipenv.lock
@@ -176,14 +176,14 @@ unzip -o alt.zip || exit 1
 cd run || exit 2
 pipenv --rm
 pipenv install *.whl || exit 3
-<<restart-ilx>>
+<<*restart-ilx>>
 #+end_src
 
 #+name: remote.sh
 #+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/remote.sh :comments noweb
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "
-<<remote-command>>
+<<*remote-command>>
 "
 SSH_EXIT=$?
 if [ $SSH_EXIT -ne 0 ]; then
