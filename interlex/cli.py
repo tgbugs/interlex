@@ -131,8 +131,7 @@ class Main(clif.Dispatcher):
         from interlex.sync import InterLexLoad
         app = run_uri()
         db = SQLAlchemy(app)
-        TripleLoader = TripleLoaderFactory(db.session)
-        il = InterLexLoad(TripleLoader, do_cdes=self.options.do_cdes)
+        il = InterLexLoad(db, do_cdes=self.options.do_cdes)
         il.setup()
         # il.load()  # do this one yourself  WARNING high memory usage ~ 17 gigs
         self = il

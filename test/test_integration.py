@@ -2,10 +2,9 @@
 the python routines compute the same identities """
 
 import unittest
+import pytest
 from interlex.dump import Queries, TripleExporter
-from test.test_stress import nottest  # FIXME put nottest in test utils
-from test.setup_testing_db import getSession
-from IPython import embed
+from .setup_testing_db import getSession
 
 
 class endpoints:
@@ -13,7 +12,7 @@ class endpoints:
 
 
 class TestHash(unittest.TestCase):
-    @nottest
+    @pytest.mark.skip('manual test')
     def test_db_tripleIdentity(self):
         session = getSession()
         queries = Queries(session)
@@ -21,4 +20,4 @@ class TestHash(unittest.TestCase):
         raw_trips = list(queries.getTriplesById(10, 11))
         te = TripleExporter()
         trips = [te.star_triple(t) for t in raw_trips]
-        embed()
+        breakpoint()

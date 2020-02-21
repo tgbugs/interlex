@@ -1,15 +1,16 @@
 import unittest
+import pytest
 from pathlib import Path
 from sqlalchemy.exc import IntegrityError
-from pyontutils.config import devconfig  # FIXME this will cause issues down the line
-from test.test_stress import nottest  # FIXME put nottest in test utils
 from pyontutils.utils import TermColors as tc
+from .common import working_dir
 
 
 class TestSQLs(unittest.TestCase):
     def setUp(self):
-        self.positive_f = Path(devconfig.git_local_base, 'interlex/sql/test.sql')
-        self.negative_f = Path(devconfig.git_local_base, 'interlex/sql/test-fail.sql')
+        # FIXME share/interlex/sql is from setup.py
+        self.positive_f = working_dir / 'sql/test.sql'
+        self.negative_f = working_dir / 'sql/test-fail.sql'
 
     @staticmethod
     def load_sql(path):
@@ -40,7 +41,7 @@ class TestSQLs(unittest.TestCase):
             if test:
                 yield '\n'.join(test)
         
-    @nottest
+    @pytest.mark.skip('does db things ??? maybe?')
     def test_0_positive(self):
         from test.setup_testing_db import getSession
         session = getSession()
@@ -62,7 +63,7 @@ class TestSQLs(unittest.TestCase):
                                  f'\n{sep}\n'.join((f'test:\n\n{t}\n\nerror:\n\n{e}\n'
                                                     for t, e in failed)))
 
-    @nottest
+    @pytest.mark.skip('???')
     def test_1_negative(self):
         from test.setup_testing_db import getSession
         session = getSession()

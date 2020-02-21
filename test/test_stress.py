@@ -1,13 +1,8 @@
 import unittest
+import pytest
 from joblib import Parallel, delayed
 from pyontutils.ontutils import url_blaster
 from interlex.config import test_host, test_stress_port
-
-try:
-    from nose.tools import nottest
-except:
-    def nottest(function):
-        return function
 
 
 def blast(scheme, host, port, start, stop):
@@ -21,7 +16,8 @@ class TestStress(unittest.TestCase):
     host = test_host
     port = test_stress_port
     scheme = 'http'
-    @nottest
+
+    @pytest.mark.skip('only run manually')
     def test_stress(self):
         n_jobs = 9
         start = 100000

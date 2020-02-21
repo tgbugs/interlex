@@ -1,17 +1,19 @@
+import socket
 from collections import defaultdict
+from sqlalchemy import create_engine, inspect
+from interlex import config
 from interlex.exc import bigError
 from interlex.core import synonym_types, dbUri
 from interlex.dump import Queries
+from interlex.load import TripleLoaderFactory
 
 
 # get interlex
 class InterLexLoad:
     stype_lookup = synonym_types
-    def __init__(self, Loader, do_cdes=False, debug=False):
-        import socket
-        from sqlalchemy import create_engine, inspect
-        from interlex import config
-        self.loader = Loader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex')
+    def __init__(self, db, do_cdes=False, debug=False):
+        TripleLoader = TripleLoaderFactory(db.session)
+        self.loader = TripleLoader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex')
 
         self.queries = Queries(self.loader.session)
         self.do_cdes = do_cdes

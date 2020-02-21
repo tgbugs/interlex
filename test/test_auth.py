@@ -1,12 +1,12 @@
 import unittest
+import pytest
 from interlex.exc import NotGroup
 from interlex.load import UnsafeBasicDBFactory
-from test.test_stress import nottest  # FIXME put nottest in test utils
-from test.setup_testing_db import getSession
+from .setup_testing_db import getSession
 
 
 class TestAuth(unittest.TestCase):
-    @nottest
+    @pytest.mark.skip('manual')
     def test_not_group(self):
         session = getSession()
         try:

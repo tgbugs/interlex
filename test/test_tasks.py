@@ -1,17 +1,17 @@
 import unittest
 from time import sleep
+import pytest
 from celery.result import AsyncResult
 from interlex import config
 from interlex.uri import run_uri
 from interlex.tasks import cel, multiple, bigload, add
-from test.test_stress import nottest  # FIXME put nottest in test utils
-from IPython import embed
 
 if config.database != config.test_database:
     raise ValueError('Wrong environment for testing!')
 
+
 class TestTasks(unittest.TestCase):
-    @nottest
+    @pytest.mark.skip('not ready/manual')
     def test_task(self):
         app = run_uri(echo=True)
         cel.init_app(app)
@@ -32,7 +32,7 @@ class TestTasks(unittest.TestCase):
             result_or_task = fast_part('asdf')
             # my issues below make it seem like I can't reuse the task id anyway >_<
             # e.g. from another guni worker
-            embed()
+            breakpoint()
 
             return
             stask = multiple.delay('loader', 'name', 'ebn')
@@ -54,7 +54,7 @@ class TestTasks(unittest.TestCase):
             sleep(1)
             print(big_task.status)
             print(big_task.get())
-            #embed()
+            #breakpoint()
             #big_result = big_task.get()
             #print(big_result)
 

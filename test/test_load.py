@@ -1,12 +1,12 @@
 import os
 import unittest
 from unittest.mock import MagicMock
+import pytest
 from pathlib import Path
 from pyontutils.config import devconfig  # FIXME this will cause issues down the line
 from interlex.exc import LoadError, NotGroup
 from interlex.core import FakeSession
 from interlex.load import FileFromFileFactory, FileFromIRIFactory
-from test.test_stress import nottest  # FIXME put nottest in test utils
 from test.setup_testing_db import getSession
 from IPython import embed
 
@@ -102,7 +102,7 @@ class TestLoader(unittest.TestCase):
         out = loader.load()
         return out
 
-    @nottest
+    @pytest.mark.skip('manual test')
     def test_small_resource(self):
         from interlex.endpoints import Endpoints  # FIXME
         s = getSession()
@@ -118,7 +118,7 @@ class TestLoader(unittest.TestCase):
         finally:
             s.close()
 
-    @nottest
+    @pytest.mark.skip('manual test')
     def test_small_file(self):
         session = getSession()
         FileFromFile = FileFromFileFactory(session)
