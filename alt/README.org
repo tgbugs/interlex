@@ -1,3 +1,4 @@
+#+TITLE: InterLex alternate resolver setup
 * InterLex Alt
 :PROPERTIES:
 :CUSTOM_ID: interlex-alt
