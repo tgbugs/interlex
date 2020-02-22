@@ -1,12 +1,10 @@
 #+TITLE: InterLex alternate resolver setup
-* InterLex Alt
-:PROPERTIES:
-:CUSTOM_ID: interlex-alt
-:END:
+#+OPTIONS: num:nil
 
-This is a reduced set of the InterLex codebase for serving directly from
-the mysql database. The necessary subset of the code that is needed is
-copied into this directory and installed from the main interlex source.
+InterLex =alt= is a reduced set of the InterLex codebase for serving
+directly from the mysql database. The necessary subset of the code
+that is needed is copied into this directory and installed from the
+main interlex source.
 
 * Setup
 :PROPERTIES:
