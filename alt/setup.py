@@ -25,7 +25,7 @@ try:
             cleanup.append(cpfile)
 
     setup(name='InterLex Alt',
-          version='0.0.1',
+          version='0.0.2',
           description='Serialize InterLex records',
           long_description=' ',
           url='https://github.com/tgbugs/interlex',
@@ -36,7 +36,6 @@ try:
           keywords='probably dont use this',
           packages=['interlex'],
           install_requires=[
-              'augpathlib>=0.0.5',  # until the pyontutils version dep is needed
               'flask',
               'flask_sqlalchemy',
               'gevent',
