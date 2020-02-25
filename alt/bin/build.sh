@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # [[file:~/git/interlex/alt/README.org::build.sh][build.sh]]
-# [[[[file:~/git/interlex/alt/README.org::*alt-path][*alt-path]]][*alt-path]]
+# [[[[file:~/git/interlex/alt/README.org::&alt-path][&alt-path]]][&alt-path]]
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do # resolve all symlinks
   DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
@@ -10,8 +10,7 @@ done
 ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
 
 ALT_PATH="${ABS_PATH}/../"
-echo ${ALT_PATH}
-# *alt-path ends here
+# &alt-path ends here
 # [[[[file:~/git/interlex/alt/README.org::*pushd-clean][*pushd-clean]]][*pushd-clean]]
 pushd ${ALT_PATH} &&
 git clean -dfx &&  # cleans only the alt subdir
@@ -30,6 +29,6 @@ zip -r alt.zip run/ &&
 # *build-alt-zip ends here
 # [[[[file:~/git/interlex/alt/README.org::*scp-zip][*scp-zip]]][*scp-zip]]
 scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
-popd
+popd || exit 1
 # *scp-zip ends here
 # build.sh ends here

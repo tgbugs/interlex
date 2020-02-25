@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do # resolve all symlinks
+  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # resolve relative symlinks
+done
+ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+
+ALT_PATH="${ABS_PATH}/../"
+THIS_FILE=${ALT_PATH}/README.org
+emacs --batch \
+      --quick \
+      --load ~/git/orgstrap/init.el \
+      --load org \
+      --load ob-shell \
+      --eval "(org-babel-tangle-file \"${THIS_FILE}\")"

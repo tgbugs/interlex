@@ -6,15 +6,35 @@ directly from the mysql database. The necessary subset of the code
 that is needed is copied into this directory and installed from the
 main interlex source.
 
+* Using this file :noexport:
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+You can either [[https://orgmode.org/manual/Extracting-Source-Code.html][tangle]]
+this file in emacs using =C-c C-v t= or you can tangle
+the whole file from the command line using with the following.
+#+name: tangle-this-file
+#+header: :tangle ./bin/tangle-readme
+#+header: :shebang "#!/usr/bin/env bash" :tangle-mode (identity #o755)
+#+begin_src bash :eval never :results none :noweb yes
+<<&alt-path>>
+THIS_FILE=${ALT_PATH}/README.org
+emacs --batch \
+      --quick \
+      --load ~/git/orgstrap/init.el \
+      --load org \
+      --load ob-shell \
+      --eval "(org-babel-tangle-file \"${THIS_FILE}\")"
+#+end_src
+The core functionality is tangled to files in [[file:./bin/]].
+You should also run =shellcheck= on the tangled files if you make any changes.
 * Setup
 :PROPERTIES:
 :CUSTOM_ID: setup
 :END:
-
 ** Install wheel on build machine
 The build machine will work with any version of python, however it that
 version does need to have =wheel= installed e.g. via =pip install wheel=.
-
 ** Install python on server
 Install =python3.6-devel= (or greater), =pip=, and =pipenv= on the server that
 will run InterLex Alt. For example on CentOS
@@ -23,16 +43,13 @@ will run InterLex Alt. For example on CentOS
 sudo yum install python36-devel python36-pip
 sudo pip install pipenv
 #+end_src
-
 ** Set environment variables
 Set =INTERLEX_USER= and =INTERLEX_SERVER= environment variables.
 The =INTERLEX_USER= should have =sudo= access. NOTE: this is probably
 bad security practice since =INTERLEX_USER= also runs the server.
-
 ** Build and deploy code and config
-
 Get the absolute path to the script and use it to find the alt folder.
-#+name: *alt-path
+#+name: &alt-path
 #+begin_src bash
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do # resolve all symlinks
@@ -43,7 +60,6 @@ done
 ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
 
 ALT_PATH="${ABS_PATH}/../"
-echo ${ALT_PATH}
 #+end_src
 
 Go to the alt folder and clean out any existing build files.
@@ -72,7 +88,7 @@ Deploy the build artifact to the server.
 #+name: *scp-zip
 #+begin_src bash
 scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
-popd
+popd || exit 1
 #+end_src
 
 The first time InterLex Alt is set up on a server run [[file:./bin/config-build.sh]].
@@ -81,7 +97,7 @@ The first time InterLex Alt is set up on a server run [[file:./bin/config-build.
 #+header: :noweb no-export
 #+header: :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/config-build.sh :comments noweb
-<<*alt-path>>
+<<&alt-path>>
 <<*pushd-clean>>
 grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
 <<*build-alt-zip>>
@@ -95,12 +111,11 @@ Subsequently run [[file:./bin/build.sh]].
 #+header: :noweb no-export
 #+header: :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/build.sh :comments noweb
-<<*alt-path>>
+<<&alt-path>>
 <<*pushd-clean>>
 <<*build-alt-zip>>
 <<*scp-zip>>
 #+end_src
-
 ** Remote commands
 After deploying the files to the server run the following remote
 commands on =INTERLEX_SERVER=. NOTE: Make sure you create a
