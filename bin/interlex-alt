@@ -1,2 +1,12 @@
 #!/usr/bin/env sh
-gunicorn --bind unix:/run/ilxalt/socket --pid /run/ilxalt/pid -n interlex_alt -w 2 -k gevent -t 30 --preload --log-level info interlex.alt_server:app
+gunicorn \
+    --bind unix:/run/ilxalt/socket \
+    --pid /run/ilxalt/pid \
+    --name interlex_alt \
+    --workers 2 \
+    --worker-class gevent \
+    --timeout 30 \
+    --log-level INFO \
+    --capture-output \
+    --preload \
+    interlex.alt_server:app
