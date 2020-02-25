@@ -42,6 +42,7 @@ try:
               'gunicorn',
               'mysql-connector',
               'neurdflib-jsonld',
+              'pymysql',
               'pyontutils',
           ],
           extras_require={'dev':[]},
