@@ -33,7 +33,7 @@ class MysqlExport:
 
         sql = ('SELECT * from terms WHERE '
                'status != -2 AND '  # FIXME deleted terms :/
-               'cid = (SELECT id FROM communities WHERE name = :name)')
+               'orig_cid = (SELECT id FROM communities WHERE name = :name)')
         args = dict(name=name)
         yield from self.session.execute(sql, args)
 
@@ -43,6 +43,9 @@ class MysqlExport:
         yield from self.session.execute(sql, args)
 
     def existing_ids_triples(self, ids):
+        if not ids:
+            return
+
         sql = ('SELECT te_s.iri, te.preferred, te.iri FROM term_existing_ids as te'
                '  JOIN term_existing_ids as te_s '
                '    ON te.tid = te_s.tid '
@@ -72,6 +75,9 @@ class MysqlExport:
         yield from self.session.execute(sql, args)
 
     def id_triples(self, ids):
+        if not ids:
+            return
+
         args = dict(ids=tuple(ids))
         # FIXME urg the ILX:%
         sql = f'''
