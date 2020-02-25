@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # [[file:~/git/interlex/alt/README.org::config-remote.sh][config-remote.sh]]
 ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "
-# [[[[file:~/git/interlex/alt/README.org::*config-remote-command][*config-remote-command]]][*config-remote-command]]
+# [[[[file:~/git/interlex/alt/README.org::&config-remote-command][&config-remote-command]]][&config-remote-command]]
 rm -rf run/
 rm -rf deploy_files/
 unzip -o alt.zip || exit 1
@@ -32,7 +32,7 @@ if [ $? -ne 0 ]; then
     exit 100;
 fi
 sudo systemctl restart nginx
-# *config-remote-command ends here
+# &config-remote-command ends here
 "
 SSH_EXIT=$?
 if [ $SSH_EXIT -eq 15 ]; then
