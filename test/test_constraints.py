@@ -1,3 +1,4 @@
+import os
 import unittest
 import pytest
 from pathlib import Path
@@ -41,7 +42,7 @@ class TestSQLs(unittest.TestCase):
             if test:
                 yield '\n'.join(test)
         
-    @pytest.mark.skip('does db things ??? maybe?')
+    @pytest.mark.skipif('DBSETUPTEST' not in os.environ, reason='not setting up the database')
     def test_0_positive(self):
         from test.setup_testing_db import getSession
         session = getSession()
@@ -63,7 +64,7 @@ class TestSQLs(unittest.TestCase):
                                  f'\n{sep}\n'.join((f'test:\n\n{t}\n\nerror:\n\n{e}\n'
                                                     for t, e in failed)))
 
-    @pytest.mark.skip('???')
+    @pytest.mark.skipif('DBSETUPTEST' not in os.environ, reason='not setting up the database')
     def test_1_negative(self):
         from test.setup_testing_db import getSession
         session = getSession()
