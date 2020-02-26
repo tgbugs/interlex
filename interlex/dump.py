@@ -190,7 +190,7 @@ class MysqlExport:
         done = set() if not done else done
         predobjs = set()
         ids = set()
-        prids = {}
+        #prids = {}
         for term in terms:
             id, baseiri, preferred_iri, type, ilxtype, ilx_fragment = basics(term)
             ids.add(id)
@@ -202,21 +202,26 @@ class MysqlExport:
             if term.definition:
                 yield preferred_iri, definition, rdflib.Literal(term.definition)
 
-            #if preferred_iri != baseiri:
-            yield preferred_iri, ilxtr.hasIlxId, baseiri  # TODO hasIlxId sco hasRefId, hasMutualId for non ref ids
-            prids[preferred_iri] = ilx_fragment
+            # TODO hasIlxId sco hasRefId, hasMutualId for non ref ids
+            yield preferred_iri, ilxtr.hasIlxId, baseiri
 
-        for preferred_iri, pref, o in self.existing_ids_triples(ids):  # FIXME not actually preferred
-            preferred_iri = rdflib.URIRef(preferred_iri)
+            #prids[preferred_iri] = ilx_fragment
+
+        for ilx_iri, pref, o in self.existing_ids_triples(ids):
+            ilx_iri = rdflib.URIRef(ilx_iri)
             o = rdflib.URIRef(o.rstrip())  # FIXME ARGH rstrip
             predobjs.add(o)
 
-            yield preferred_iri, ilxtr.hasExistingId, o
-            if preferred_iri != o and 'uri.interlex.org' not in o:
-                yield preferred_iri, ilxtr.hasExternalId, o
+            yield ilx_iri, ilxtr.hasExistingId, o
+
+            if ilx_iri == o:  # don't bother with more checks dupe trips are ok
+                yield ilx_iri, ilxtr.hasIlxId, o
+
+            if ilx_iri != o and 'uri.interlex.org' not in o:
+                yield ilx_iri, ilxtr.hasExternalId, o
 
             if pref == '1':
-                yield preferred_iri, ilxtr.hasIlxPreferredId, o
+                yield ilx_iri, ilxtr.hasIlxPreferredId, o
 
         more_terms_ilx_fragments = set()
         for preferred_iri, p, o in self.id_triples(ids):  # FIXME not actually preferred
@@ -275,16 +280,21 @@ class MysqlExport:
                 yield preferred_iri, rdf.type, type
                 yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
 
-            for preferred_iri, pref, o in self.existing_ids_triples(ids):  # FIXME not actually preferred
-                preferred_iri = rdflib.URIRef(preferred_iri)
+            for ilx_iri, pref, o in self.existing_ids_triples(ids):  # FIXME not actually preferred
+                ilx_iri = rdflib.URIRef(ilx_iri)
                 o = rdflib.URIRef(o.rstrip())  # FIXME ARGH rstrip
                 predobjs.add(o)
-                yield preferred_iri, ilxtr.hasExistingId, o
-                if preferred_iri != o and 'uri.interlex.org' not in o:
-                    yield preferred_iri, ilxtr.hasExternalId, o
+
+                yield ilx_iri, ilxtr.hasExistingId, o
+
+                if ilx_iri == o:  # don't bother with extra checks duplicate triples are ok
+                    yield ilx_iri, ilxtr.hasIlxId, o
+
+                if ilx_iri != o and 'uri.interlex.org' not in o:
+                    yield ilx_iri, ilxtr.hasExternalId, o
 
                 if pref == '1':
-                    yield preferred_iri, ilxtr.hasIlxPreferredId, o
+                    yield ilx_iri, ilxtr.hasIlxPreferredId, o
 
 
 class TripleExporter:

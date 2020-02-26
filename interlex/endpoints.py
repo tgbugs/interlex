@@ -11,11 +11,12 @@ from pyontutils.utils import TermColors as tc
 from pyontutils.namespaces import makePrefixes, definition
 from interlex import tasks
 from interlex import config
-from interlex.exc import NotGroup, NameCheckError, UnsupportedType
+from interlex import exc
 from interlex.auth import Auth
 from interlex.core import printD, diffCuries, makeParamsValues, default_prefixes
 from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
+from interlex.utils import log
 from interlex.config import ilx_pattern
 from interlex.render import TripleRender  # FIXME need to move the location of this
 from IPython import embed
@@ -86,8 +87,8 @@ def basic(function):
 def basic2(function):
     @wraps(function)
     def basic2_checks(self, *args, **kwargs):
-        group = kwargs['group']  # FIXME really group
         if 'db' not in kwargs:  # being called via super() probably
+            group = kwargs['group']
             maybe_db, auth_user = getBasicDB(self, group, request)
             if not isinstance(maybe_db, BasicDBFactory):
                 if maybe_db is None:
@@ -99,16 +100,26 @@ def basic2(function):
 
             kwargs['db'] = db
 
-        if 'other_group' in kwargs:
-            other_group = kwargs['other_group']
-        elif 'other_group_diff' in kwargs:
-            other_group = kwargs['other_group_diff']
+            if 'other_group' in kwargs:
+                other_group = kwargs['other_group']
+            elif 'other_group_diff' in kwargs:
+                other_group = kwargs['other_group_diff']
 
-        db2 = self.getBasicInfoReadOnly(other_group, auth_user)
-        if db2 is None:
+            db2 = self.getBasicInfoReadOnly(other_group, auth_user)
+            if db2 is None:
+                return abort(404)
+
+            db.other = db2
+
+        elif hasattr(kwargs['db'], 'other'):
+            pass  # its ok, this is probably being called by another wrapped function 
+
+        else:
+            log.error('a database was provided as a kwarg '
+                      'that did not have other already bound\n'
+                      f'{request.url}')
             return abort(404)
 
-        db.other = db2
         return function(self, *args, **kwargs)
 
     return basic2_checks
@@ -136,7 +147,7 @@ class Endpoints:
     def getBasicInfo(self, group, auth_user, token):
         try:
             return self.BasicDB(group, auth_user, token, read_only=False)
-        except NotGroup:
+        except exc.NotGroup:
             return None
 
     def getBasicInfoReadOnly(self, group, auth_user):
@@ -149,7 +160,7 @@ class Endpoints:
         try:
             # we keep the user for provenance and auditing purposes
             return self.UnsafeBasicDB(group, auth_user, read_only=True)
-        except NotGroup:
+        except exc.NotGroup:
             printD('not group?')
             return None
 
@@ -163,8 +174,8 @@ class Endpoints:
         if not PREFIXES:  # we get the base elsewhere
             PREFIXES = default
         #printD(PREFIXES)
-        g = makeGraph(group + '_curies_helper', prefixes=PREFIXES if PREFIXES else default_prefixes)
-        return PREFIXES, g
+        graph = makeGraph(group + '_curies_helper', prefixes=PREFIXES if PREFIXES else default_prefixes).g
+        return PREFIXES, graph
 
     def build_reference_name(self, group, path):
         # need this for testing, in an ideal world we read from headers
@@ -223,33 +234,30 @@ class Endpoints:
             _, id = maybe_ilx.split('_')
             return group, id
 
-    # TODO PATCH
-    @basic
-    def ilx(self, group, id, db=None):
-        # TODO allow PATCH here with {'add':[triples], 'delete':[triples]}
-
+    def _even_more_basic(self, group, id, db):
         if group != 'base' and group != 'latest':
             sql = 'SELECT id FROM interlex_ids WHERE id = :id'
             try:
                 res = next(self.session.execute(sql, dict(id=id)))
                 id = res.id
-                #printD(id, db.group_id)
+                #log.debug((id, db.group_id))
             except StopIteration:
-                return abort(404)
+                abort(404)
 
         try:
             _, _, func = tripleRender.check(request)
-        except UnsupportedType as e:
-            return e.message, e.code
+        except exc.UnsupportedType as e:
+            abort(e.code, {'message': e.message})
 
-        PREFIXES, g = self.getGroupCuries(group)
+    def _ilx(self, group, id, func):
+        PREFIXES, graph = self.getGroupCuries(group)
         resp = self.queries.getById(id, group)
         #printD(resp)
         # TODO formatting rules for subject and objects
         object_to_existing = self.queries.getResponseExisting(resp, type='o')
 
         te = TripleExporter()
-        _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
+        _ = [graph.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
 
         # TODO list users with variants from base and/org curated
         # we need an 'uncurated not latest' or do we?
@@ -262,12 +270,20 @@ class Endpoints:
             # FIXME getting additional content from the db based on file type
             # leads to breakdown of separation of concerns due to statefulness
             # slow but probably worth it for enhancing readability
-            iris = set(e for t in g.g for e in t if isinstance(e, URIRef))
+            iris = set(e for t in graph for e in t if isinstance(e, URIRef))
             labels = {URIRef(s):label for s, label in self.queries.getLabels(group, iris)}
         else:
             labels = None
 
-        return tripleRender(request, g, group, id, object_to_existing, title, labels=labels)
+        return graph, object_to_existing, title, labels
+
+    # TODO PATCH
+    @basic
+    def ilx(self, group, id, db=None):
+        # TODO allow PATCH here with {'add':[triples], 'delete':[triples]}
+        func = self._even_more_basic(group, id, db)
+        graph, object_to_existing, title, labels = self._ilx(group, id, func)
+        return tripleRender(request, graph, group, id, object_to_existing, title, labels=labels)
 
     @basic
     def ilx_get(self, group, id, extension, db=None):
@@ -315,7 +331,7 @@ class Endpoints:
             # TODO rdf version of the disambiguation page
             try:
                 _, _, func = tripleRender.check(request)
-            except UnsupportedType as e:
+            except exc.UnsupportedType as e:
                 return e.message, e.code
 
             object_to_existing = []
@@ -348,7 +364,7 @@ class Endpoints:
         # /<group>/ontologies/obo/uberon.owl << this way
         # /<group>/uris/obo/uberon.owl << no mapping to ontologies here
         title = f'uris.{group}:{uri_path}'
-        PREFIXES, mgraph = self.getGroupCuries(group)
+        PREFIXES, graph = self.getGroupCuries(group)
         resp = self.queries.getByGroupUriPath(group, uri_path, redirect=False)
         if not resp:
             iri = request.url
@@ -361,9 +377,9 @@ class Endpoints:
             object_to_existing = self.queries.getResponseExisting(resp, type='o')
 
             te = TripleExporter()
-            _ = [mgraph.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
+            _ = [graph.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
 
-            return tripleRender(request, mgraph, group, id, object_to_existing)
+            return tripleRender(request, graph, group, id, object_to_existing)
 
     # TODO POST PUT PATCH
     # just overload post? don't allow changing? hrm?!?!
@@ -412,12 +428,15 @@ class Endpoints:
     def curies(self, group, prefix_iri_curie, db=None):
         # FIXME confusion between group (aka group) and logged in group :/
         #printD(prefix_iri_curie)
-        PREFIXES, g = self.getGroupCuries(group)
-        qname, expand = g.qname, g.expand
+        PREFIXES, graph = self.getGroupCuries(group)
         if prefix_iri_curie.startswith('http') or prefix_iri_curie.startswith('file'):  # TODO decide about urlencoding
             iri = prefix_iri_curie
-            curie = qname(iri)
-            return curie
+            try:
+                curie = graph.namespace_manager.qname
+                return curie, 200
+            except KeyError:
+                return f'Unknown iri {iri}', 404
+
         elif ':' in prefix_iri_curie:
             curie = prefix_iri_curie
             prefix, suffix = curie.split(':', 1)
@@ -426,10 +445,11 @@ class Endpoints:
             else:
                 id = None
 
-            try:
-                iri = expand(curie)
-            except KeyError:
+            namespace = graph.namespace_manager.store.namespace(prefix)  # FIXME ...
+            if namespace is None:
                 return f'Unknown prefix {prefix}', 404
+
+            iri = namespace + suffix
 
             maybe_ilx = self.isIlxIri(iri)
             if not suffix and maybe_ilx:
@@ -460,7 +480,7 @@ class Endpoints:
                         # force all terms to be mapped
                         try:
                             _, _, func = tripleRender.check(request)
-                        except UnsupportedType as e:
+                        except exc.UnsupportedType as e:
                             return e.message, e.code
 
                         resp = self.queries.getBySubject(iri, group)
@@ -514,7 +534,7 @@ class Endpoints:
         # TODO load stats etc
         try:
             loader = self.FileFromPost(group, dbuser, self.reference_host)
-        except NotGroup:
+        except exc.NotGroup:
             return abort(404)
 
         header = request.headers
@@ -691,9 +711,9 @@ class Ontologies(Endpoints):
                         
                 return Response(gen(), mimetype='application/n-triples')
                 #object_to_existing = self.queries.getResponseExisting(oof, type='o')
-                #PREFIXES, mgraph = self.getGroupCuries(group)
-                #_ = [mgraph.g.add(te.star_triple(*r)) for r in oof]
-                #return tripleRender(request, mgraph, user, 'FIXMEFIXME', object_to_existing)
+                #PREFIXES, graph = self.getGroupCuries(group)
+                #_ = [graph.add(te.star_triple(*r)) for r in oof]
+                #return tripleRender(request, graph, user, 'FIXMEFIXME', object_to_existing)
 
             return 'NOT IMPLEMENTED\n', 400
 
@@ -706,7 +726,7 @@ class Ontologies(Endpoints):
             reference_name = self.build_reference_name(group, path)
             try:
                 print('pretty sure that we are catching this in basic and basic2 now...')
-            except NotGroup:
+            except exc.NotGroup:
                 return abort(404)
 
             existing = False  # TODO check if the file already exists
@@ -769,7 +789,7 @@ class Ontologies(Endpoints):
                                 job_url = request.scheme + '://' + self.reference_host + url_for("route_api_job", jobid=task.id)
                                 return ('that\'s quite a large file you\'ve go there!'
                                         f'\nit has been submitted for processing {job_url}', 202)
-                        except NameCheckError as e:
+                        except exc.NameCheckError as e:
                             return e.message, e.code
 
                         setup_ok = loader(expected_bound_name)
@@ -914,15 +934,25 @@ class OwnVersions(Own, Versions):
 class Diff(Ontologies):
     @basic2
     def ilx(self, group, other_group_diff, id, db=None):
-        this = super().ilx(group=group, id=id, db=db)
-        other = super().ilx(group=other_group_diff, id=id, db=db)
-        if this[1] == 200 and other[1] == 200:
-            head, _ = this[0].rsplit('</body>')
-            _, tail = other[0].split('<body>')
+        funcs = [self._even_more_basic(grp, id, db)
+                 for grp in (group, other_group_diff)]
 
-            return head + ('<br>' * 10) + tail, 501
-        else:
-            return this
+        stuff = [self._ilx(grp, id, func) for grp, func in
+                 zip((group, other_group_diff), funcs)]
+
+        this = stuff[0][0]
+        that = stuff[1][0]
+
+        add, rem, same = this.diffGraph(that)
+
+        # VERY TODO
+        # probably need a DiffRender ...
+
+        return ('<pre>' + '\nADDED\n' +
+                add.ttl + '\nREMOVED\n' +
+                rem.ttl + '\nSAME\n' +
+                same.ttl +
+                '</pre>'), 501
 
     @basic  # FIXME basic 2???
     def lexical(self, group, other_group_diff, label, db=None):

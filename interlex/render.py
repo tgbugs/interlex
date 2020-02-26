@@ -7,11 +7,12 @@ from flask import abort  # FIXME decouple this??
 from htmlfn import atag, htmldoc
 from htmlfn import table_style, render_table, ttl_html_style
 from ttlser import CustomTurtleSerializer
-from pyontutils.core import OntId
+from pyontutils.core import OntId, OntGraph
 from pyontutils.qnamefix import cull_prefixes
 from pyontutils.namespaces import isAbout, ilxtr
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex import exc
+from interlex.utils import log
 
 class TripleRender:
 
@@ -82,11 +83,11 @@ class TripleRender:
 
         return extension, mimetype, func
 
-    def __call__(self, request, mgraph, group, id, object_to_existing,
+    def __call__(self, request, graph, group, id, object_to_existing,
                  title=None, labels=None, ontid=None, ranking=default_prefix_ranking):
         extension, mimetype, func = self.check(request)
 
-        if not mgraph.g:
+        if not graph:
             if mimetype == 'text/html':
                 return abort(404)
             else:
@@ -95,7 +96,7 @@ class TripleRender:
         if labels is None:
             labels = {}
 
-        out = func(request, mgraph, group, id, object_to_existing,
+        out = func(request, graph, group, id, object_to_existing,
                    title, mimetype, labels, ontid, ranking)
         code = 303 if mimetype == 'text/html' and extension != 'html' else 200  # cool uris
         to_plain = 'ttl', 'nt', 'n3', 'nq'
@@ -119,9 +120,8 @@ class TripleRender:
     def curie_selection_logic(self):
         """ Same as iri selection but for curies """
 
-    def html(self, request, mgraph, group, id, object_to_existing,
+    def html(self, request, graph, group, id, object_to_existing,
              title, mimetype, labels, ontid, ranking):
-        graph = mgraph.g
         cts = CustomTurtleSerializer(graph)
         gsortkey = cts._globalSortKey
         psortkey = lambda p: cts.predicate_rank[p]
@@ -129,7 +129,7 @@ class TripleRender:
             s, p, o = triple
             return gsortkey(s), psortkey(p), gsortkey(o)
 
-        trips = (tuple(atag(e, mgraph.qname(e))
+        trips = (tuple(atag(e, e.n3(graph.namespace_manager))
                        if isinstance(e, rdflib.URIRef) and e.startswith('http')
                        else str(e)
                        for e in t)
@@ -148,8 +148,8 @@ class TripleRender:
             #ilxtr.hasIlxId,      # handled independently for now # TODO simplify the impl
         )
 
-        new_graph = rdflib.Graph()
-        [new_graph.bind(p, n) for p, n in graph.namespaces()]
+        new_graph = OntGraph()
+        graph.namespace_manager.populate(new_graph)
 
         not_in_rank = len(ranking) + 1
         def by_rank(oid):
@@ -183,6 +183,7 @@ class TripleRender:
                 hasIlxId[ns] = False
 
             if p == ilxtr.hasIlxId:
+                #log.debug((s, p, o))
                 new_graph.add((ns, p, o))
                 hasIlxId[ns] = True
                 continue
@@ -206,16 +207,24 @@ class TripleRender:
 
         if id is not None:
             uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/ilx_{id}')  # FIXME reference_host from db ...
-            preferred_iri = preferred_all[uri]
+            try:
+                preferred_iri = preferred_all[uri]
+            except KeyError as e:
+                graph.debug()
+                log.debug('printing graph one line above this')
+                log.exception(e)
+                log.error('the input graph probably has a bad structure '
+                          'probably need to sync from interlex again or write a lifting rule')
+                preferred_iri = None
         else:
             preferred_iri = None
 
         return preferred_iri, new_graph
 
-    def graph(self, request, mgraph, group, id, object_to_existing,
+    def graph(self, request, graph, group, id, object_to_existing,
               title, mimetype, ontid, ranking=default_prefix_ranking):
         # FIXME abstract to replace id with ontology name ... local ids are hard ...
-        preferred_iri, graph = self.renderPreferences(group, mgraph.g, id, ranking)
+        preferred_iri, rgraph = self.renderPreferences(group, graph, id, ranking)
         nowish = datetime.utcnow()  # request doesn't have this
         epoch = nowish.timestamp()
         iso = nowish.isoformat()
@@ -230,61 +239,58 @@ class TripleRender:
             ver_ontid = rdflib.URIRef(f'{base}/{po.stem}/version/{epoch}/{po.name}')
 
         # FIXME this should be the preferred it ...
-        graph.add((ontid, rdf.type, owl.Ontology))
-        graph.add((ontid, owl.versionIRI, ver_ontid))
-        graph.add((ontid, owl.versionInfo, rdflib.Literal(iso)))
+        rgraph.add((ontid, rdf.type, owl.Ontology))
+        rgraph.add((ontid, owl.versionIRI, ver_ontid))
+        rgraph.add((ontid, owl.versionInfo, rdflib.Literal(iso)))
         if preferred_iri is not None:
-            graph.add((ontid, isAbout, preferred_iri))
-            graph.add((ontid, rdfs.comment, rdflib.Literal('InterLex single term result for '
+            rgraph.add((ontid, isAbout, preferred_iri))
+            rgraph.add((ontid, rdfs.comment, rdflib.Literal('InterLex single term result for '
                                                            f'{group}/ilx_{id} at {iso}')))
 
         # TODO consider data identity?
-        ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
-        return ng
+        return cull_prefixes(rgraph, {k:v for k, v in rgraph.namespaces()}).g  # ICK as usual
 
-    def ttl(self, request, mgraph, group, id, object_to_existing,
+    def ttl(self, request, graph, group, id, object_to_existing,
             title, mimetype, labels, ontid, ranking):
-        ng = self.graph(request, mgraph, group, id,
-                        object_to_existing, title, mimetype, ontid, ranking)
-        return ng.g.serialize(format='nifttl')
+        rgraph = self.graph(request, graph, group, id,
+                            object_to_existing, title, mimetype, ontid, ranking)
+        return rgraph.serialize(format='nifttl')
 
-    def ttl_html(self, request, mgraph, group, id, object_to_existing,
+    def ttl_html(self, request, graph, group, id, object_to_existing,
                  title, mimetype, labels, ontid, ranking):
-        ng = self.graph(request, mgraph, group, id,
-                        object_to_existing, title, mimetype, ontid, ranking)
-        body = ng.g.serialize(format='htmlttl', labels=labels).decode()
+        rgraph = self.graph(request, graph, group, id,
+                            object_to_existing, title, mimetype, ontid, ranking)
+        body = rgraph.serialize(format='htmlttl', labels=labels).decode()
         # TODO owl:Ontology -> <head><meta> prov see if there is a spec ...
         return htmldoc(body,
                        title=title,
                        styles=(table_style, ttl_html_style))
 
-    def rdf_ser(self, request, mgraph, group, id, object_to_existing,
+    def rdf_ser(self, request, graph, group, id, object_to_existing,
                 title, mimetype, labels, ontid, ranking, **kwargs):
-        ng = self.graph(request, mgraph, group, id,
-                        object_to_existing, title, mimetype, ontid, ranking)
-        return ng.g.serialize(format=mimetype, **kwargs)
+        rgraph = self.graph(request, graph, group, id,
+                            object_to_existing, title, mimetype, ontid, ranking)
+        return rgraph.serialize(format=mimetype, **kwargs)
 
-    def jsonld(self, request, mgraph, group, id, object_to_existing,
+    def jsonld(self, request, graph, group, id, object_to_existing,
                title, mimetype, labels, ontid, ranking):
-        return self.rdf_ser(request, mgraph, group, id,
+        return self.rdf_ser(request, graph, group, id,
                             object_to_existing, title, mimetype, labels, ontid, ranking,
                             auto_compact=True)
 
-    def json(self, request, mgraph, group, id, object_to_existing,
+    def json(self, request, graph, group, id, object_to_existing,
              title, mimetype, labels, ontid, ranking):
         # lol
-        graph = mgraph.g
-        ng = cull_prefixes(graph, {k:v for k, v in graph.namespaces()})  # ICK as usual
-        out = {'prefixes': {k:v for k, v in ng.g.namespaces()},
-               'triples': [[mgraph.qname(e)
+        rgraph = cull_prefixes(graph, {k:v for k, v in graph.namespaces()}).g  # ICK as usual
+        out = {'prefixes': {k:v for k, v in rgraph.namespaces()},
+               'triples': [[e.n3(rgraph.namespace_manager)
                             if isinstance(e, rdflib.URIRef) and e.startswith('http')
                             else str(e)
-                            for e in t ]
+                            for e in t]
                            for t in graph]}
         return json.dumps(out)
 
-    def jsonilx(self, request, mgraph, group, id, object_to_existing,
+    def jsonilx(self, request, graph, group, id, object_to_existing,
                 title, mimetype, labels, ontid, ranking):
-        graph = mgraph.g
         # TODO
         return {}

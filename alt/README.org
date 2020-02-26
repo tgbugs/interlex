@@ -209,9 +209,11 @@ fi
 :PROPERTIES:
 :CUSTOM_ID: testing
 :END:
-
 On a redeploy, the easiest way to test whether everything is working is
 to change TestRoutes.host in =test/test_alt.py= to match the test server
 and then run =python -m unittest test/test_alt.py=. TODO add this to the
 deploy scripts for the test server? Simple testing
-=curl --header 'Host: uri.interlex.org' http://${TEST_HOST}/base/ilx_0109470.ttl=
+#+begin_src bash
+TEST_HOST=test.host; curl --header 'Host: uri.interlex.org' http://${TEST_HOST}/base/ilx_0109470.ttl
+TEST_HOST=test.host; curl --header 'Host: uri.interlex.org' http://${TEST_HOST}/sparc/ontologies/community-terms.ttl
+#+end_src

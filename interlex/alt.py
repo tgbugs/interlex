@@ -45,10 +45,10 @@ def server_alt(db=None, dburi=dbUri()):
         except exc.UnsupportedType as e:
             return e.message, e.code
 
-        mgraph = makeGraph('base' + '_export_helper', prefixes=uPREFIXES)
-        [mgraph.g.add(t) for t in ilxexp(id)]
+        graph = makeGraph('base' + '_export_helper', prefixes=uPREFIXES).g
+        [graph.add(t) for t in ilxexp(id)]
         try:
-            return tripleRender(request, mgraph, user, id, object_to_existing, title)
+            return tripleRender(request, graph, user, id, object_to_existing, title)
         except BaseException as e:
             print(tc.red('ERROR'), e)
             raise e
@@ -81,8 +81,8 @@ def server_alt(db=None, dburi=dbUri()):
         except exc.UnsupportedType as e:
             return e.message, e.code
 
-        mgraph = makeGraph(group + '_export_helper', prefixes=uPREFIXES)
-        [mgraph.g.add(t) for t in ilxexp._call_group(group)]
+        graph = makeGraph(group + '_export_helper', prefixes=uPREFIXES).g
+        [graph.add(t) for t in ilxexp._call_group(group)]
         ontid = f'http://uri.interlex.org/{group}/ontologies/community-terms'  # FIXME
         kwargs = {}  # FIXME indicates a design flaw ...
         if group == 'sparc':  # FIXME should not be hardcoded should be a function -> database
@@ -90,7 +90,7 @@ def server_alt(db=None, dburi=dbUri()):
             kwargs['ranking'] = _pr
         try:
             # FIXME TODO
-            return tripleRender(request, mgraph, group, None, object_to_existing,
+            return tripleRender(request, graph, group, None, object_to_existing,
                                 title, ontid=ontid, **kwargs)
         except BaseException as e:
             print(tc.red('ERROR'), e)
