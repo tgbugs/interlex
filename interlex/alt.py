@@ -118,8 +118,10 @@ def main():
     session = Session()
 
     ilxexp = MysqlExport(session)
-    ilx_fragment = 'ilx_0101431'
-    trips = list(ilxexp(ilx_fragment))
+    ilx_id = '0101431'
+    ilx_fragment = 'ilx_' + ilx_id
+    term = ilxexp.term(ilx_fragment)
+    trips = list(ilxexp(ilx_id))
 
 
 if __name__ == '__main__':

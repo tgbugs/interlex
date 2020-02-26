@@ -140,6 +140,14 @@ class TripleRender:
                        styles=(table_style,))
 
     def renderPreferences(self, group, graph, id, ranking=default_prefix_ranking):
+        # list of predicates where objects should not be rewritten
+        # TODO maybe make it possible to add to this?
+        # and/or make it possible to get the raw unrendered form more easily
+        p_no_rewrite=(
+            ilxtr.hasExistingId,  # don't change existing ids
+            #ilxtr.hasIlxId,      # handled independently for now # TODO simplify the impl
+        )
+
         new_graph = rdflib.Graph()
         [new_graph.bind(p, n) for p, n in graph.namespaces()]
 
@@ -184,7 +192,7 @@ class TripleRender:
             else:
                 np = p
 
-            if o in preferred_all:
+            if o in preferred_all and p not in p_no_rewrite:
                 no = preferred_all[o]
             else:
                 no = o
@@ -201,42 +209,6 @@ class TripleRender:
             preferred_iri = preferred_all[uri]
         else:
             preferred_iri = None
-
-        return preferred_iri, new_graph
-
-        if id is not None:
-            uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/ilx_{id}')  # FIXME reference_host from db ...
-            existing = sorted((OntId(o)
-                               for _, o in chain(graph[:ilxtr.hasExistingId:],
-                                                 ((None, uri),))),  # uri backstops unmapped prefixes
-                              key=by_rank)  # can use [uri::] for now because of the mysql logic
-            preferred_iri = existing[0].u
-            if preferred_iri != uri:
-                new_graph.add((preferred_iri, ilxtr.hasIlxId, uri))
-            #print(repr(uri), repr(preferred_iri))
-        else:
-            preferred_iri = None
-
-
-        for s, p, o in graph:
-            if o == preferred_iri and p == ilxtr.hasExistingId and preferred_iri != uri:
-                # prevent the preferred iri from being listed as an existing iri of itself
-                continue
-            elif preferred_iri == uri == o and p == ilxtr.hasIlxId:
-                # prevent ilx ids from being listed as ilx ids of themselves
-                # mysql case
-                continue
-
-            if s == uri:
-                ns = preferred_iri
-            else:
-                ns = s
-
-            np = p  # TODO
-            no = o  # TODO
-            t = (ns, np, no)
-            #print(repr(s), repr(uri), repr(ns))  # TODO group iri vs base iri issues
-            new_graph.add(t)
 
         return preferred_iri, new_graph
 
