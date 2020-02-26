@@ -29,9 +29,10 @@ def getBasicDB(self, group, request):
     try:
         auth_group, auth_user, scope, auth_token = self.auth.authenticate_request(request)
     except self.auth.ExpiredTokenError:
-        return f'Your token has expired, please get a new one at {self.link_to_new_token}', 401
+        abort(401, {'message': ('Your token has expired, please get a '
+                                f'new one at {self.link_to_new_token}')})
     except self.auth.AuthError:
-        return 'Your token could not be verified.', 400  # FIXME pull the message up?
+        abort(400, {'message': 'Your token could not be verified.'})  # FIXME pull the message up?
 
     if request.method in ('HEAD', 'GET'):
         db = self.getBasicInfoReadOnly(group, auth_user)
@@ -49,7 +50,7 @@ def getBasicDB(self, group, request):
                     # not 403 because this way we are ignorant by default
                     # we dont' have to wonder whether the url they were
                     # looking for was private or not (most shouldn't be)
-                    return abort(404)
+                    abort(404)
 
         db = self.getBasicInfo(group, auth_user, auth_token)
 
@@ -71,7 +72,7 @@ def basic(function):
             maybe_db, _ = getBasicDB(self, group, request)
             if not isinstance(maybe_db, BasicDBFactory):
                 if maybe_db is None:
-                    return abort(404)
+                    abort(404)
                 else:
                     return maybe_db
             else:
@@ -92,7 +93,7 @@ def basic2(function):
             maybe_db, auth_user = getBasicDB(self, group, request)
             if not isinstance(maybe_db, BasicDBFactory):
                 if maybe_db is None:
-                    return abort(404)
+                    abort(404)
                 else:
                     return maybe_db
             else:
@@ -107,7 +108,7 @@ def basic2(function):
 
             db2 = self.getBasicInfoReadOnly(other_group, auth_user)
             if db2 is None:
-                return abort(404)
+                abort(404)
 
             db.other = db2
 
@@ -118,7 +119,7 @@ def basic2(function):
             log.error('a database was provided as a kwarg '
                       'that did not have other already bound\n'
                       f'{request.url}')
-            return abort(404)
+            abort(404)
 
         return function(self, *args, **kwargs)
 
@@ -332,7 +333,7 @@ class Endpoints:
             try:
                 _, _, func = tripleRender.check(request)
             except exc.UnsupportedType as e:
-                return e.message, e.code
+                abort(e.code, {'message': e.message})
 
             object_to_existing = []
             te = TripleExporter()
@@ -398,7 +399,7 @@ class Endpoints:
             ok, to_add, existing, message = diffCuries(PREFIXES, newPrefixes)
             # FIXME this is not inside a transaction so it could fail!!!!
             if not ok:
-                return message, 409
+                abort(409, {'message': message})
             elif not to_add:
                 return 'No new curies were added.', 409  # FIXME
 
@@ -481,7 +482,7 @@ class Endpoints:
                         try:
                             _, _, func = tripleRender.check(request)
                         except exc.UnsupportedType as e:
-                            return e.message, e.code
+                            abort(e.code, {'message': e.message})
 
                         resp = self.queries.getBySubject(iri, group)
                         te = TripleExporter()
@@ -504,7 +505,7 @@ class Endpoints:
                         id = 'None-FIXMETODO'
                         title = 'InterLex local' + curie
                         return tripleRender(request, g, group, id, object_to_existing, title, labels=labels)
-                        return abort(404)
+                        abort(404)
                         pass
 
                 return redirect(url_for(f'Endpoints.ilx /<group>/{ilx_pattern}',
@@ -790,7 +791,7 @@ class Ontologies(Endpoints):
                                 return ('that\'s quite a large file you\'ve go there!'
                                         f'\nit has been submitted for processing {job_url}', 202)
                         except exc.NameCheckError as e:
-                            return e.message, e.code
+                            abort(e.code, {'message': e.message})
 
                         setup_ok = loader(expected_bound_name)
                         if setup_ok is not None:
@@ -822,7 +823,7 @@ class Ontologies(Endpoints):
     def ontologies_version(self, group, filename, epoch_verstr_ont,
                             filename_terminal, extension=None, ont_path='', db=None):
         if filename != filename_terminal:
-            return abort(404)  # 400 maybe ?
+            abort(404)  # 400 maybe ?
         else:
             return request.path, 501
 
@@ -883,13 +884,13 @@ class Own(Ontologies):
 
     @basic2
     def ontologies_ilx(self, group, other_group, id, extension, db=None):
-        return abort(404)  # this doesn't really exist but would be a pain to remove from the path gen
+        abort(404)  # this doesn't really exist but would be a pain to remove from the path gen
 
     @basic2
     def ontologies_version(self, group, other_group, filename, epoch_verstr_ont,
                             filename_terminal, extension=None, ont_path='', db=None):
         if filename != filename_terminal:
-            return abort(404)
+            abort(404)
         else:
             return request.path, 501
 
@@ -901,7 +902,7 @@ class Own(Ontologies):
     def ontologies_uris_version(self, group, other_group, filename, epoch_verstr_ont,
                                 filename_terminal, extension=None, ont_path='', db=None):
         if filename != filename_terminal:
-            return abort(404)
+            abort(404)
         else:
             return request.path, 501
 
@@ -1015,7 +1016,7 @@ class Diff(Ontologies):
     def ontologies_version(self, group, other_group_diff, filename,
                             epoch_verstr_ont, filename_terminal, extension=None, ont_path='', db=None):
         if filename != filename_terminal:
-            return abort(404)
+            abort(404)
         else:
             return request.path, 501
 
@@ -1027,7 +1028,7 @@ class Diff(Ontologies):
     def ontologies_uris_version(self, group, other_group_diff, filename,
                             epoch_verstr_ont, filename_terminal, extension=None, ont_path='', db=None):
         if filename != filename_terminal:
-            return abort(404)
+            abort(404)
         else:
             return request.path, 501
 
