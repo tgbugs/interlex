@@ -47,13 +47,28 @@ class DocsApi(Api):
 
 
 def uriStructure():
-    basic = [ilx_pattern, 'readable']
     ilx_get = ilx_pattern + '.<extension>'
+    path_names = {
+        # dissociate the node names which must be unique
+        # from the name the will have in the resolver structure
+        '*uris_ont': 'uris',
+        '*uris_version': 'version',
+        '*<uris_filename>': '<filename>',
+        '*<path:uris_ont_path>': '<path:ont_path>',
+        '*ont_ilx_get': ilx_get,
+        #'*<other_group_diff>': '<other_group>',  # FIXME consider whether this is a good idea ...
+    }
+
+    def path_to_route(node):
+        return path_names[node] if node in path_names else node
+
+    basic = [ilx_pattern, 'readable']
     branches = ['uris', 'curies', 'ontologies', 'versions']  # 'prov'
     compare = ['own', 'diff']
     version_compare = []  # TODO? probably best to deal with the recursion in make_paths
     versioned_ids = basic + ['curies', 'uris']
     intermediate_filename = ['<filename>.<extension>', '<filename>']
+    uris_intermediate_filename = ['<filename>.<extension>', '*<uris_filename>']
     parent_child = {
         '<group>':              basic + [ilx_get, 'lexical'] + branches + compare + ['contributions', 'upload', 'prov'],
         '<other_group>':        branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
@@ -62,12 +77,17 @@ def uriStructure():
         'readable':            ['<word>'],
         'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
         '<epoch_verstr_id>':   versioned_ids + version_compare,
-        'ontologies':          [2, ilx_get, 'auto'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
-        'auto':                intermediate_filename + ['<path:ont_path>'],
+        #'ontologies':          [2, ilx_get, '*uris_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
+        'ontologies':          ['*ont_ilx_get', '*uris_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
         #'collections':         [2, '<path:ont_path>'] + intermediate_filename,  # TODO more general than files, ontologies, or resources
         # TODO distinguish between ontology _files_ and 'ontologies' which are the import closure?
         # ya, identified vs unidentified imports, owl only supports unidentified imports
         '<path:ont_path>':     intermediate_filename,  # FIXME this would seem to only allow a single extension?
+        '*<path:uris_ont_path>':     uris_intermediate_filename,  # FIXME this would seem to only allow a single extension?
+        '*uris_ont':            uris_intermediate_filename + ['*<path:uris_ont_path>'],  # FIXME need the ability to dissociate node name from render name
+        '*<uris_filename>':     [None, '*uris_version'],
+        '*uris_version':        ['<epoch_verstr_ont>'],
+
         '<filename>':          [None, 'version'],
         'version':             ['<epoch_verstr_ont>'],
         '<epoch_verstr_ont>':  ['<filename_terminal>', '<filename_terminal>.<extension>'],
@@ -95,7 +115,7 @@ def uriStructure():
                     '<filename_terminal>':['GET', 'POST'],
                     '<filename_terminal>.<extension>':['GET', 'POST'],
     }
-    return parent_child, node_methods
+    return parent_child, node_methods, path_to_route
 
 
 def add_leafbranches(nodes):
@@ -108,15 +128,17 @@ def add_leafbranches(nodes):
         if 'contributions' in nodes:
             nodes = prefix + ('contributions_',)
         else:
-            log.debug(f'unhandled leafbranch {nodes}')
+            log.debug(f'possibly unhandled leafbranch {nodes}')
 
     return nodes
 
 
 def build_endpoints(db):
     from interlex.endpoints import Endpoints, Versions, Own, OwnVersions, Diff, DiffVersions
+    from interlex.endpoints import Ontologies
 
     endpoints = Endpoints(db)
+    ontologies = Ontologies(db)
     versions = Versions(db)
     own = Own(db)
     ownversions = OwnVersions(db)
@@ -127,15 +149,24 @@ def build_endpoints(db):
 
     dispatch = {'diff': {'versions': {'': diffversions},
                          '': diff},
+                #'ontologies': {'': ontologies},
                 'own': {'versions': {'': ownversions},
                         '': own},
                 'versions': {'': versions},
-                '': endpoints}
+                'ontologies': {'': ontologies},
+                '': endpoints,
+                #'': {'ontologies': {'': ontologies}, '': endpoints}
+    }
 
     def route_endpoint_mapper(nodes, dispatch_dict=dispatch):
         for path_element, subdispatch in dispatch_dict.items():
             if path_element == '':
                 return subdispatch
+                #if isinstance(subdispatch, dict):
+                    #return route_endpoint_mapper(nodes, subdispatch)
+                #else:
+                    #return subdispatch
+
             elif path_element in nodes:
                 return route_endpoint_mapper(nodes, subdispatch)
 
@@ -153,6 +184,9 @@ def route_methods(nodes, node_methods):
 
 def build_api(app):
     # swagger dosc setup
+    # FIXME we probably want to exclude explicit endpoints for ontologies/uris
+    # since we are really just using the router to enforce regularity of naming
+    # and we can handle all of it with one function
     api = DocsApi(app,  # NOTE if the docs fail to load, make sure X-Forwarded-Proto is set in nginx
                   version='0.0.1',
                   title='InterLex URI structure API',
@@ -221,8 +255,9 @@ def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
     api, doc_namespaces = build_api(app)                     # api init
     add_api_rule = api_rule_maker(api, doc_namespaces)       # api binding
 
-    parent_child, node_methods = structure()                 # uri path nodes
-    routes = list(make_paths(parent_child))                  # routes
+    parent_child, node_methods, path_to_route = structure() # uri path nodes
+    paths = list(make_paths(parent_child))                  # paths
+    routes = ['/'.join(path_to_route(node) for node in path) for path in paths]
 
     @app.route('/api/job/<jobid>')
     def route_api_job(jobid):
@@ -233,12 +268,14 @@ def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
         printD('r', task.result)
         return task.status
 
-    for route in routes:
-        nodes = route.split('/')
+    for route, nodes in zip(routes, paths):
         nodes = add_leafbranches(nodes)
         endpoint_type = route_endpoint_mapper(nodes)
         function = endpoint_type.get_func(nodes)
         methods = route_methods(nodes, node_methods)
+
+        #log.info(nodes)
+        #log.info(endpoint_type)
 
         # route -> endpoint function
         name = endpoint_type.__class__.__name__ + '.' + function.__name__ + ' ' + route
@@ -248,7 +285,14 @@ def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
         apiname = endpoint_type.__class__.__name__ + '_' + function.__name__
         add_api_rule(route, apiname, function, methods, nodes)
 
-    #for k, v in app.view_functions.items():
+    for k, v in app.view_functions.items():
+        if ' ' in k:
+            name, path = str(k).split(' ', 1)
+        else:
+            name, path = k, ''
+
+        if path:
+            log.debug(f'{name:<40}{path:<130}{v}')
         #printD(k, v)
 
     return app

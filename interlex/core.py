@@ -366,15 +366,28 @@ def server_api(db=None, dburi=dbUri()):
 
     return app
 
-def make_paths(parent_child, parent='<group>', options=tuple(), limit=9999, depth=0):
+
+def make_paths(parent_child, parent='<group>', options=tuple(), limit=9999, depth=0, path_names=tuple()):
+    """ path_names is actually a dict, but hey mutable defaults """
+
     def inner(child, parent, idepth):
-        for path in make_paths(parent_child, child, options=options, limit=limit, depth=idepth):
+        for path in make_paths(parent_child, child, options=options, limit=limit, depth=idepth,
+                               path_names=path_names):
             #printD('PATH:', path)
             if parent in options:
                 for option in options[parent][:limit]:
-                    yield '/' + option + path
+                    if parent == '<group>':
+                        prefix = '', option
+                    else:
+                        prefix = option,
+
+                    yield prefix + path
+
+            elif parent == '<group>':
+                yield ('', parent) + path
             else:
-                yield '/' + parent + path
+                yield (parent,) + path
+
 
     if parent in parent_child:
         for child in parent_child[parent]:
@@ -382,7 +395,7 @@ def make_paths(parent_child, parent='<group>', options=tuple(), limit=9999, dept
             if child in options:
                 todo = options[child][:limit]
                 if child in parent_child:  # only branches need to go again
-                    todo += (child,)
+                    todo += child,
                 for option in todo:
                     yield from inner(option, parent, depth + 1)
             else:
@@ -390,21 +403,19 @@ def make_paths(parent_child, parent='<group>', options=tuple(), limit=9999, dept
     else:
         if parent in options:
             for option in options[parent][:limit]:
-                path = '/' + option
+                path += option,
                 yield path
         elif parent is None:  # branches that are also terminals
-            yield '/'
+            yield '',
         elif parent == depth:
             # branchers that are also terminals at a given depth
             # where the depth should be considered as the zero indexed
             # depth of the empty string following the slash
-            yield '/'
+            yield '',
         elif isinstance(parent, int):
             pass  # skip other depths
         else:
-            path = '/' + parent
-            #printD('PATH:', path)
-            yield path
+            yield parent,
 
 
 class RegexConverter(BaseConverter):

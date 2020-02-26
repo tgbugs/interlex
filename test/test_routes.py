@@ -5,9 +5,11 @@ from interlex.uri import uriStructure
 from interlex.core import make_paths
 from interlex.config import ilx_pattern
 from interlex.config import test_host, test_port
+from interlex.utils import log
+
 
 def makeTestRoutes(limit=1):
-    parent_child, node_methods = uriStructure()
+    parent_child, node_methods, path_to_route = uriStructure()
     groups = 'base', 'origin', 'tgbugs'  # base redirects to default/curated ...
     other_groups = 'latest', 'curated', 'bob'
     ilx_patterns = 'ilx_0123456', 'ilx_0090000'
@@ -17,6 +19,7 @@ def makeTestRoutes(limit=1):
     filenames = 'brain', 'myOntology', 'your-ontology-123', '_yes_this_works'
     extensions = 'ttl', 'owl', 'n3', 'xml', 'json'
     filenames_extensions = tuple(f + '.' + e for f in filenames for e in extensions)
+    ilx_patterns_extensions = tuple(f + '.' + e for f in ilx_patterns for e in extensions)
     pics = 'GO', 'GO:', 'GO:123', 'http://purl.obolibrary.org/obo/GO_'
     identities = 'i am a tea pot short and stout this is my hash and i am out!',
     ont_paths = 'anatomy', 'anatomy/brain', 'anatomy/stomach', 'methods-core/versions/100'
@@ -25,25 +28,31 @@ def makeTestRoutes(limit=1):
                  'mouse/versions/1/',
                  'mouse/versions/1/labels')
     options = {
-        ilx_pattern:ilx_patterns,
-        '<group>':groups,
-        '<other_group>':other_groups,
-        '<other_group_diff>':other_groups,
-        '<word>':words,
-        '<label>':labels,
-        '<epoch_verstr_id>':versions,
-        '<epoch_verstr_ont>':versions,
-        '<filename>':filenames,
-        '<filename_terminal>':filenames,
-        '<filename>.<extension>':filenames_extensions,
-        '<filename_terminal>.<extension>':filenames_extensions,
-        '<prefix_iri_curie>':pics,
-        '<path:uri_path>':uri_paths,
-        '<path:ont_path>':ont_paths,
-        '<identity>':identities,
+        ilx_pattern: ilx_patterns,
+        ilx_pattern + '.<extension>': ilx_patterns_extensions,
+        '<group>': groups,
+        '<other_group>': other_groups,
+        '<other_group_diff>': other_groups,
+        '<word>': words,
+        '<label>': labels,
+        '<epoch_verstr_id>': versions,
+        '<epoch_verstr_ont>': versions,
+        '<filename>': filenames,
+        '<filename_terminal>': filenames,
+        '<filename>.<extension>': filenames_extensions,
+        '<filename_terminal>.<extension>': filenames_extensions,
+        '<prefix_iri_curie>': pics,
+        '<path:uri_path>': uri_paths,
+        '<path:ont_path>': ont_paths,
+        '<identity>': identities,
+
+        '*ont_ilx_get': ilx_patterns_extensions,
+        '*<uris_filename>': filenames,
+        '*<path:uris_ont_path>': ont_paths,
     }
     # make cartesian product of combinations
-    routes = make_paths(parent_child, options=options, limit=limit)
+    paths = make_paths(parent_child, options=options, limit=limit)
+    routes = ['/'.join(path_to_route(node) for node in path) for path in paths]
     return routes
 
 
@@ -70,7 +79,14 @@ class TestRoutes(RouteTester, unittest.TestCase):
             ]
         urls = [f'{self.prefix}{r}' for r in routes] + urls
         [print(u) for u in urls]
-        url_blaster(urls, 0, fail=True)
+
+        def ok_test(r):
+            if r.status_code == 501:
+                log.info(f'TODO: {r.request.path_url}')
+
+            return r.ok or r.status_code == 501
+
+        url_blaster(urls, 0, fail=True, ok_test=ok_test)
 
     def test_negative(self):
         urls = [

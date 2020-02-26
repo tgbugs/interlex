@@ -66,7 +66,7 @@ def server_alt(db=None, dburi=dbUri()):
     def ontologies_ilx_get(id, extension):
         return ilx(id)
 
-    @app.route('/<group>/ontologies/auto/community-terms')
+    @app.route('/<group>/ontologies/community-terms')
     def group_ontologies_terms(group):
         if group not in ilxexp._group_community:
             return 'no such group', 404
@@ -83,7 +83,7 @@ def server_alt(db=None, dburi=dbUri()):
 
         mgraph = makeGraph(group + '_export_helper', prefixes=uPREFIXES)
         [mgraph.g.add(t) for t in ilxexp._call_group(group)]
-        ontid = f'http://uri.interlex.org/{group}/ontologies/auto/community-terms'  # FIXME
+        ontid = f'http://uri.interlex.org/{group}/ontologies/community-terms'  # FIXME
         kwargs = {}  # FIXME indicates a design flaw ...
         if group == 'sparc':  # FIXME should not be hardcoded should be a function -> database
             _pr = ['FMA'] + [p for p in tripleRender.default_prefix_ranking if p != 'FMA']
@@ -97,7 +97,7 @@ def server_alt(db=None, dburi=dbUri()):
             raise e
             return abort(404)
 
-    @app.route('/<group>/ontologies/auto/community-terms.<extension>')
+    @app.route('/<group>/ontologies/community-terms.<extension>')
     def group_ontologies_terms_get(group, extension):
         return group_ontologies_terms(group)
 

@@ -190,9 +190,19 @@ class Endpoints:
             'uris':self.uris,
             'curies_':self.curies_,
             'curies':self.curies,
+
+            # FIXME how to deal with own/other for ontologies/uris ?
+            # FIXME ontologies are weird with need to be here ...
+            # but eithe you duplicate functions or you duplicate diff and own classes
             'ontologies_':self.ontologies_,
             'ontologies':self.ontologies,
             'version':self.ontologies_version,  # FIXME collision prone?
+
+            '*ont_ilx_get':self.ontologies_ilx,
+            '*uris_ont':self.ontologies_uris,
+            '*<path:uris_ont_path>':self.ontologies_uris,
+            '*uris_version':self.ontologies_uris_version,
+
             'contributions_':self.contributions_,
             'contributions':self.contributions,
             'upload':self.upload,
@@ -557,12 +567,76 @@ class Endpoints:
             else:
                 return json.dumps(names), 200, {'Content-Type':'application/json'}
 
+    @basic
+    def prov(self, *args, **kwargs):
+        """ Return all the identities that an org/user has uploaded
+            Show users their personal uploads and then their groups.
+            Show groups all uploads with the user who did it
+        """
+        # in html
+        # reference_name, bound_name, identity, date, triple_count, parts
+        # if org: uploading_user
+        # if user: contribs per group
+        return 'TODO\n'
+
+    @basic
+    def ontologies_(self, group, db=None):
+        """ The terminal ontologies query does go on endpoints """
+        return json.dumps('your list sir')
+
+    @basic
+    def ontologies_ilx(self, group, id, extension, db=None):
+        return self.ilx(group=group, id=id, db=db)
+
+    @basic
+    def ontologies(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_version(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_uris(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_uris_version(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+
+class Ontologies(Endpoints):
+    # FIXME this is really more of a dead class but that's ok
+    # splits up the organization
+
+
     # TODO enable POST here from users (via apikey) that are contributor or greater in a group admin is blocked from posting in this way
     # TODO curies from ontology files vs error on unknown? vs warn that curies were not added << last option best, warn that they were not added
     # TODO HEAD -> return owl:Ontology section
+
     @basic
-    def ontologies_(self, group, db=None):
-        return json.dumps('your list sir')
+    def ontologies_uris(self, group, filename, extension=None, ont_path='', db=None):
+        # probably just slap a /uris/ on the front of the path
+        return self.ontologies(group=group,
+                               filename=filename,
+                               extension=extension,
+                               ont_path='uris/' + ont_path,
+                               db=db)
+
+    @basic
+    def ontologies_uris_version(self, group, filename, epoch_verstr_ont, filename_terminal,
+                                extension=None, ont_path='', db=None):
+        return self.ontologies_version(group=group,
+                                       filename=filename,
+                                       epoch_verstr_ont=epoch_verstr_ont,
+                                       filename_terminal=filename_terminal,
+                                       extension=extension,
+                                       ont_path='uris/' + ont_path,
+                                       db=db)
 
     @basic
     def ontologies(self, group, filename, extension=None, ont_path='', db=None):
@@ -728,21 +802,10 @@ class Endpoints:
     def ontologies_version(self, group, filename, epoch_verstr_ont,
                             filename_terminal, extension=None, ont_path='', db=None):
         if filename != filename_terminal:
-            return abort(404)
+            return abort(404)  # 400 maybe ?
         else:
-            return 'TODO\n'
+            return request.path, 501
 
-    @basic
-    def prov(self, *args, **kwargs):
-        """ Return all the identities that an org/user has uploaded
-            Show users their personal uploads and then their groups.
-            Show groups all uploads with the user who did it
-        """
-        # in html
-        # reference_name, bound_name, identity, date, triple_count, parts
-        # if org: uploading_user
-        # if user: contribs per group
-        return 'TODO\n'
 
 
 class Versions(Endpoints):
@@ -757,42 +820,50 @@ class Versions(Endpoints):
 
     @basic
     def readable(self, group, epoch_verstr_id, word, db=None):
-        return request.path
+        return request.path, 501
 
     @basic
     def uris(self, group, epoch_verstr_id, uri_path, db=None):
-        return request.path
+        return request.path, 501
 
     @basic
     def curies_(self, group, epoch_verstr_id, db=None):
         PREFIXES, g = self.getGroupCuries(group, epoch_verstr=epoch_verstr_id)
-        return 'TODO\n'
+        return request.path, 501
         return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
     @basic
     def curies(self, group, epoch_verstr_id, prefix_iri_curie, db=None):
-        return request.path
+        return request.path, 501
 
 
-class Own(Endpoints):
+class Own(Ontologies):
     @basic2
     def uris(self, group, other_group, uri_path, db=None):
-        return request.path
+        return request.path, 501
 
     @basic2
     def curies_(self, group, other_group, db=None):
         PREFIXES, g = self.getGroupCuries(group)
         otherPREFIXES, g = self.getGroupCuries(other_group)
-        return 'TODO\n'
+        return request.path, 501
         return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
     @basic2
     def curies(self, group, other_group, prefix_iri_curie, db=None):
-        return request.path
+        return request.path, 501
 
     @basic2
     def ontologies(self, group, other_group, filename, extension=None, ont_path='', db=None):
-        return request.path
+        # this is useful for some auto generated ontologies that could be different
+        # consider that you want to see /tgbugs/own/sparc/ontologies/community-terms
+        # that is useful because otherwise you would have to figure out how they
+        # were generating that list which is a pain
+        return request.path, 501
+
+    @basic2
+    def ontologies_ilx(self, group, other_group, id, extension, db=None):
+        return abort(404)  # this doesn't really exist but would be a pain to remove from the path gen
 
     @basic2
     def ontologies_version(self, group, other_group, filename, epoch_verstr_ont,
@@ -800,40 +871,60 @@ class Own(Endpoints):
         if filename != filename_terminal:
             return abort(404)
         else:
-            return 'TODO\n'
+            return request.path, 501
+
+    @basic2
+    def ontologies_uris(self, group, other_group, filename, extension=None, ont_path='', db=None):
+        return request.path, 501
+
+    @basic2
+    def ontologies_uris_version(self, group, other_group, filename, epoch_verstr_ont,
+                                filename_terminal, extension=None, ont_path='', db=None):
+        if filename != filename_terminal:
+            return abort(404)
+        else:
+            return request.path, 501
 
 
 class OwnVersions(Own, Versions):
     @basic2
     def ilx(self, group, other_group, epoch_verstr_id, id, db=None):
-        return request.path
+        return request.path, 501
 
     @basic2
     def readable(self, group, other_group, epoch_verstr_id, word, db=None):
-        return request.path
+        return request.path, 501
 
     @basic2
     def uris(self, group, other_group, epoch_verstr_id, uri_path, db=None):
-        return request.path
+        return request.path, 501
 
     @basic2
     def curies_(self, group, other_group, epoch_verstr_id, db=None):
         PREFIXES, g = self.getGroupCuries(group)  # TODO OwnVersionsVersions for double diff (not used here)
         otherPREFIXES, g = self.getGroupCuries(other_group, epoch_verstr=epoch_verstr_id)
-        return 'TODO\n'
+        return request.path, 501
         return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
     @basic2
     def curies(self, group, other_group, epoch_verstr_id, prefix_iri_curie, db=None):
-        return request.path
+        return request.path, 501
 
 
-class Diff(Endpoints):
+class Diff(Ontologies):
     @basic2
     def ilx(self, group, other_group_diff, id, db=None):
-        return request.path
+        this = super().ilx(group=group, id=id, db=db)
+        other = super().ilx(group=other_group_diff, id=id, db=db)
+        if this[1] == 200 and other[1] == 200:
+            head, _ = this[0].rsplit('</body>')
+            _, tail = other[0].split('<body>')
 
-    @basic
+            return head + ('<br>' * 10) + tail, 501
+        else:
+            return this
+
+    @basic  # FIXME basic 2???
     def lexical(self, group, other_group_diff, label, db=None):
         # FIXME the logic here is all wonky
         do_redirect, identifier_or_defs = self.queries.getByLabel(label, group)
@@ -865,55 +956,75 @@ class Diff(Endpoints):
 
     @basic2
     def readable(self, group, other_group_diff, word, db=None):
-        return request.path
+        return request.path, 501
 
     @basic2
     def uris(self, group, other_group_diff, uri_path, db=None):
-        return request.path
+        return request.path, 501
 
     @basic2
     def curies_(self, group, other_group_diff, db=None):
         PREFIXES, g = self.getGroupCuries(group)  # TODO OwnVersionsVersions for double diff (not used here)
         otherPREFIXES, g = self.getGroupCuries(other_group_diff)
-        return 'TODO\n'
+        return request.path, 501
         return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
     @basic2
     def curies(self, group, other_group_diff, prefix_iri_curie, db=None):
-        return request.path
+        return request.path, 501
+
     @basic2
     def ontologies(self, group, other_group_diff, filename, extension=None, ont_path='', db=None):
-        return request.path
+        return request.path, 501
+
+    @basic2
+    def ontologies_ilx(self, group, other_group_diff, id, extension, db=None):
+        return self.ilx(group=group, other_group_diff=other_group_diff, id=id, db=db)
+
     @basic2
     def ontologies_version(self, group, other_group_diff, filename,
                             epoch_verstr_ont, filename_terminal, extension=None, ont_path='', db=None):
         if filename != filename_terminal:
             return abort(404)
         else:
-            return 'TODO\n'
+            return request.path, 501
+
+    @basic2
+    def ontologies_uris(self, group, other_group_diff, filename, extension=None, ont_path='', db=None):
+        return request.path
+
+    @basic2
+    def ontologies_uris_version(self, group, other_group_diff, filename,
+                            epoch_verstr_ont, filename_terminal, extension=None, ont_path='', db=None):
+        if filename != filename_terminal:
+            return abort(404)
+        else:
+            return request.path, 501
 
 
 class DiffVersions(Diff, Versions):
     @basic2
     def ilx(self, group, other_group_diff, epoch_verstr_id, id, db=None):
-        return request.path
+        return request.path, 501
+
     @basic2
     def readable(self, group, other_group_diff, epoch_verstr_id, word, db=None):
-        return request.path
+        return request.path, 501
+
     @basic2
     def uris(self, group, other_group_diff, epoch_verstr_id, uri_path, db=None):
-        return request.path
+        return request.path, 501
 
     @basic2
     def curies_(self, group, other_group_diff, epoch_verstr_id, db=None):
         PREFIXES, g = self.getGroupCuries(group)  # TODO OwnVersionsVersions for double diff (not used here)
         otherPREFIXES, g = self.getGroupCuries(other_group_diff, epoch_verstr=epoch_verstr_id)
-        return 'TODO\n'
+        return request.path, 501
         return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
 
     @basic2
     def curies(self, group, other_group_diff, epoch_verstr_id, prefix_iri_curie, db=None):
-        return request.path
+        return request.path, 501
 
 
 class VersionsOwn(Endpoints):
