@@ -943,7 +943,7 @@ class Diff(Ontologies):
         this = stuff[0][0]
         that = stuff[1][0]
 
-        add, rem, same = this.diffGraph(that)
+        add, rem, same = this.diffFromGraph(that)
 
         # VERY TODO
         # probably need a DiffRender ...
