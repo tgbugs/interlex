@@ -1,12 +1,15 @@
 import socket
+import rdflib  # FIXME FIXME FIXME BAD DESIGN DETECTED
 from flask import Flask, request, abort
 from flask_sqlalchemy import SQLAlchemy
 import ontquery as oq
+from pyontutils import sneechenator as snch  # FIXME why do we need to import this here this is an issue :/
 from pyontutils.utils import mysql_conn_helper, TermColors as tc
 from pyontutils.core import makeGraph, OntGraph
-from pyontutils.namespaces import PREFIXES as uPREFIXES  # FIXME
-from interlex import config
+from pyontutils.namespaces import PREFIXES as uPREFIXES, rdf  # FIXME should not need these here :/
 from interlex import exc
+from interlex import config
+from interlex import render
 from interlex.dump import MysqlExport
 from interlex.render import TripleRender  # FIXME need to move the location of this
 
@@ -103,7 +106,7 @@ def server_alt(db=None, dburi=dbUri()):
     def group_ontologies_terms_get(group, extension):
         return group_ontologies_terms(group)
 
-    @app.route('/<group>/external/mapped')
+    @app.route('/<group>/external/mapped', methods=['GET', 'POST'])
     def group_external_mapped(group):
         # semantics here need a review, but I think the sensible thing to do
         # would just be to match the longest matching namespace and return
@@ -137,14 +140,36 @@ def server_alt(db=None, dburi=dbUri()):
         graph = OntGraph()
         oq.OntCuries.populate(graph)
 
-        # TODO metadata section should match sneech index graph
-        graph.populate_from_triples(ilxexp.index_triples(ns))
+        if request.method == 'POST':
+            """ Accepts a newline separated list of uris """
+            uris = request.data.decode().split('\n')
+            graph.populate_from_triples(ilxexp.alreadyMapped(ns, uris))
+            ontid = rdflib.URIRef(f'http://uri.interlex.org/base/resources/indexes/{prefix}#UnknownSubset')  # FIXME this breaks version iri generation
+            title = f"Subset of Mapped IRIs for {prefix}"
+            tmet = ((s, rdf.type, snch.snchn.PartialIndexGraph) for s in (ontid,))
 
-        ontid = f'http://uri.interlex.org/base/ontologies/indexes/{prefix}'  # FIXME in theory could change
-        title = f"External IRIs for {prefix}"
-        asdf = tripleRender(request, graph, group, None, object_to_existing,
-                            title, ontid=ontid, redirect=False)
-        return asdf
+        elif request.method == 'GET':
+            # TODO metadata section should match sneech index graph
+            graph.populate_from_triples(ilxexp.index_triples(ns))
+            ontid = rdflib.URIRef(f'http://uri.interlex.org/base/resources/indexes/{prefix}')  # FIXME in theory prefix could change make sure it wont ...
+            title = f"Mapped IRIs for {prefix}"
+            tmet = ((s, rdf.type, snch.snchn.IndexGraph) for s in (ontid,))
+        else:
+            return abort(501)
+
+        # FIXME triple render is actually not what we want here
+        # we just want the asTtl, asRdfXml, asOwlXml, asManchester, asOwlFunctional, asTtlHtml, etc.
+        # all keyed off of mimetype ...
+        # so we can untangle triple render from the transforms, the format, etc.
+
+        # FIXME probably not an ontid at this point ... so distinguish resources and ontologies ??! *think think think*
+        # or if we should leave already mapped clean from the database
+        # and add a partialIndexGraph generator as well ...
+        #, graph, group, None, object_to_existing, title, ontid=ontid, redirect=False)
+        extension, mimetype, func = tripleRender.check(request)
+        graph.populate_from(tmet)  # FIXME I think the way to solve the neededing namespaces here is to move this inside the branches
+        # and the we move it into render and let render mediate the additional stream types beyond owl, interlex, neurdf etc
+        return graph.asMimetype(mimetype)
 
 
     return app

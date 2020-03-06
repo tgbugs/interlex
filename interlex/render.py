@@ -32,7 +32,7 @@ class TripleRender:
     def __init__(self):
         self.mimetypes = {None:self.html,
                           'text/html':self.ttl_html,
-                          'text/vnd.scicrunch.interlex+html': self.ttl_html,
+                          'text/turtle+html': self.ttl_html,
                           'application/json':self.json,
                           'application/ld+json':self.jsonld,
                           'text/turtle':self.ttl,
@@ -42,7 +42,7 @@ class TripleRender:
                           'application/vnd.scicrunch.interlex+json': self.jsonilx,
                           #'application/n-quads':self.rdf_ser  # TODO need qualifier context store
         }
-        self.extensions = {'html': 'text/vnd.scicrunch.interlex+html',
+        self.extensions = {'html': 'text/turtle+html',
                            'json': 'application/json',
                            'jsonilx': 'application/vnd.scicrunch.interlex+json',
                            'jsonld': 'application/ld+json',
@@ -71,7 +71,7 @@ class TripleRender:
             except KeyError as e:
                 raise exc.UnsupportedType(f"don't know what to do with {extension}", 415) from e
         elif (extension is None and
-              'text/vnd.scicrunch.interlex+html' not in mimetypes and
+              'text/turtle+html' not in mimetypes and
               'text/html' in request.accept_mimetypes and
               '*/*' in mimetypes):
             # */* is 'in' but not really for text/html requests ...

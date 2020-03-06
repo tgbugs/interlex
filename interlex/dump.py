@@ -1,4 +1,5 @@
 import rdflib
+from pyontutils import sneechenator as snch
 from pyontutils.core import OntId
 from pyontutils.utils import TermColors as tc
 from pyontutils.utils_extra import check_value
@@ -73,6 +74,24 @@ class MysqlExport:
 
     def index_triples(self, namespace):
         for s, o in self.existing_in_namespace(namespace):
+            yield rdflib.URIRef(s), ilxtr.hasIlxId, rdflib.URIRef(o)
+
+    def existing_mapped(self, namespace, iris):
+        sql = ('SELECT te.iri, te_o.iri FROM term_existing_ids as te'
+               '  JOIN term_existing_ids as te_o '
+               '    ON te.tid = te_o.tid '
+               " WHERE te.iri LIKE CONCAT(:namespace, '%')"
+               '   AND te.iri in :iris'
+               "   AND te_o.curie like 'ILX:%'")
+        # the user has to tell us namespace anyway so make use of it
+        # yes we could implement a generic iri mapping facility
+        # but to be efficient it probably makes more sense to create
+        # an temporary index of the set of iris to map or something
+        args = dict(namespace=namespace, iris=tuple(iris))
+        yield from self.session.execute(sql, args)
+
+    def alreadyMapped(self, namespace, iris):
+        for s, o in self.existing_mapped(namespace, iris):
             yield rdflib.URIRef(s), ilxtr.hasIlxId, rdflib.URIRef(o)
 
     def term(self, ilx_fragment):
