@@ -4,9 +4,9 @@
 
 Usage:
     interlex server [uri curies alt api] [options] [<database>]
-    interlex dbsetup [options] [<database>]
-    interlex shell   [options] [<database>]
-    interlex sync    [options] [<database>]
+    interlex shell  [alt]  [options] [<database>]
+    interlex dbsetup       [options] [<database>]
+    interlex sync          [options] [<database>]
     interlex get           [options]
     interlex post ontology [options] <ontology-filename> ...
     interlex post triples  [options] (<reference-name> <triples-filename>) ...
@@ -91,38 +91,8 @@ class Main(clif.Dispatcher):
         raise NotImplementedError
 
     def shell(self):
-        from flask_sqlalchemy import SQLAlchemy
-        from interlex.uri import run_uri
-        from interlex.core import IdentityBNode
-        from interlex.load import TripleLoaderFactory
-        from interlex.dump import TripleExporter
-        from interlex.endpoints import Endpoints
-        te = TripleExporter()
-        def tripit(query_result):
-            return [te.triple(*r) for r in query_result]
-
-        app = run_uri()
-        # not sure why this is needed here but not
-        # runonce is called ...
-        app.config['SQLALCHEMY_ECHO'] = self.options.debug
-        db = SQLAlchemy(app)
-        endpoints = Endpoints(db)
-        session = db.session
-        queries = endpoints.queries
-
-        def diffthing():
-            h1, h2 = (''.join(sorted(r for s in f('tgbugs')
-                                     for rp in s
-                                     for r in rp))
-                      for f in (queries.dumpSciGraphNt, queries.dumpAllNt))
-
-            with open('/tmp/d1.nt', 'wt') as f1, open('/tmp/d2.nt', 'wt') as f2:
-                f1.write(h1), f2.write(h2)
-
-
-            os.system('diff -u /tmp/d2.nt /tmp/d1.nt > /tmp/wut.patch')
-
-        embed()
+        shell = Shell(self)
+        shell('shell')
 
     def sync(self):
         from flask_sqlalchemy import SQLAlchemy
@@ -161,6 +131,54 @@ class Main(clif.Dispatcher):
     def server(self):
         server = Server(self)
         server('server')
+
+
+class Shell(clif.Dispatcher):
+    def default(self):
+        from flask_sqlalchemy import SQLAlchemy
+        from interlex.uri import run_uri
+        from interlex.core import IdentityBNode
+        from interlex.load import TripleLoaderFactory
+        from interlex.dump import TripleExporter
+        from interlex.endpoints import Endpoints
+        te = TripleExporter()
+        def tripit(query_result):
+            return [te.triple(*r) for r in query_result]
+
+        app = run_uri()
+        # not sure why this is needed here but not
+        # runonce is called ...
+        app.config['SQLALCHEMY_ECHO'] = self.options.debug
+        db = SQLAlchemy(app)
+        endpoints = Endpoints(db)
+        session = db.session
+        queries = endpoints.queries
+
+        def diffthing():
+            h1, h2 = (''.join(sorted(r for s in f('tgbugs')
+                                     for rp in s
+                                     for r in rp))
+                      for f in (queries.dumpSciGraphNt, queries.dumpAllNt))
+
+            with open('/tmp/d1.nt', 'wt') as f1, open('/tmp/d2.nt', 'wt') as f2:
+                f1.write(h1), f2.write(h2)
+
+
+            os.system('diff -u /tmp/d2.nt /tmp/d1.nt > /tmp/wut.patch')
+
+        embed()
+
+    def alt(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm.session import sessionmaker
+        from interlex.alt import dbUri
+        from interlex.dump import MysqlExport
+        engine = create_engine(dbUri(), echo=True)
+        Session = sessionmaker()
+        Session.configure(bind=engine)
+        session = Session()
+        queries = MysqlExport(session)
+        embed()
 
 
 class Server(clif.Dispatcher):

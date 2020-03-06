@@ -32,6 +32,7 @@ class TripleRender:
     def __init__(self):
         self.mimetypes = {None:self.html,
                           'text/html':self.ttl_html,
+                          'text/vnd.scicrunch.interlex+html': self.ttl_html,
                           'application/json':self.json,
                           'application/ld+json':self.jsonld,
                           'text/turtle':self.ttl,
@@ -41,7 +42,7 @@ class TripleRender:
                           'application/vnd.scicrunch.interlex+json': self.jsonilx,
                           #'application/n-quads':self.rdf_ser  # TODO need qualifier context store
         }
-        self.extensions = {'html': 'text/html',
+        self.extensions = {'html': 'text/vnd.scicrunch.interlex+html',
                            'json': 'application/json',
                            'jsonilx': 'application/vnd.scicrunch.interlex+json',
                            'jsonld': 'application/ld+json',
@@ -54,21 +55,25 @@ class TripleRender:
         }
 
     def check(self, request):
-        mimetype = (request.accept_mimetypes.best if
-                    request.accept_mimetypes.best != '*/*' else
-                    'text/html')
+        best = request.accept_mimetypes.best
+        mimetype = (best if
+                    best != '*/*' and
+                    'application/signed-exchange' not in best
+                    else 'text/html')
         extension = (request.view_args['extension'] if
                      'extension' in request.view_args else
                      None)
 
+        mimetypes = [mimetype for mimetype, number in request.accept_mimetypes]
         if extension:
             try:
                 mimetype = self.extensions[extension]
             except KeyError as e:
                 raise exc.UnsupportedType(f"don't know what to do with {extension}", 415) from e
         elif (extension is None and
+              'text/vnd.scicrunch.interlex+html' not in mimetypes and
               'text/html' in request.accept_mimetypes and
-              '*/*' in [mimetype for mimetype, number in request.accept_mimetypes]):
+              '*/*' in mimetypes):
             # */* is 'in' but not really for text/html requests ...
             # if we get a browser request without an extension
             # then return the usual crappy page as if it were
@@ -84,7 +89,8 @@ class TripleRender:
         return extension, mimetype, func
 
     def __call__(self, request, graph, group, id, object_to_existing,
-                 title=None, labels=None, ontid=None, ranking=default_prefix_ranking):
+                 title=None, labels=None, ontid=None, ranking=default_prefix_ranking,
+                 redirect=True):
         extension, mimetype, func = self.check(request)
 
         if not graph:
@@ -98,7 +104,8 @@ class TripleRender:
 
         out = func(request, graph, group, id, object_to_existing,
                    title, mimetype, labels, ontid, ranking)
-        code = 303 if mimetype == 'text/html' and extension != 'html' else 200  # cool uris
+
+        code = 303 if redirect and mimetype == 'text/html' and extension != 'html' else 200  # cool uris
         to_plain = 'ttl', 'nt', 'n3', 'nq'
         headers = {'Content-Type': ('text/plain; charset=utf-8'
                                     if extension in to_plain

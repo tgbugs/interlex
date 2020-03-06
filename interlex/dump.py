@@ -28,6 +28,13 @@ class MysqlExport:
     def __init__(self, session):
         self.session = session
 
+    def getGroupCuries(self, group, epoch_verstr=None):
+        # NOTE no support for group in the mysql version, but match the api
+        sql = 'SELECT prefix, namespace FROM term_curie_catalog'
+        args = dict()
+        resp = self.session.execute(sql, args)
+        return {prefix:namespace for prefix, namespace in resp}
+
     def group_terms(self, group):
         name = self._group_community[group]
 
@@ -53,6 +60,20 @@ class MysqlExport:
                "   AND te_s.curie like 'ILX:%'")
         args = dict(ids=tuple(ids))
         yield from self.session.execute(sql, args)
+
+    def existing_in_namespace(self, namespace):
+        """ for now only check a single namespace at a time """
+        sql = ('SELECT te.iri, te_o.iri FROM term_existing_ids as te'
+               '  JOIN term_existing_ids as te_o '
+               '    ON te.tid = te_o.tid '
+               " WHERE te.iri LIKE CONCAT(:namespace, '%')"
+               "   AND te_o.curie like 'ILX:%'")
+        args = dict(namespace=namespace)
+        yield from self.session.execute(sql, args)
+
+    def index_triples(self, namespace):
+        for s, o in self.existing_in_namespace(namespace):
+            yield rdflib.URIRef(s), ilxtr.hasIlxId, rdflib.URIRef(o)
 
     def term(self, ilx_fragment):
         #args = dict(ilx=request.url.rsplit('/', 1)[-1])

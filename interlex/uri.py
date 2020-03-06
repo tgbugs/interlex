@@ -54,8 +54,10 @@ def uriStructure():
         '*uris_ont': 'uris',
         '*uris_version': 'version',
         '*<uris_filename>': '<filename>',
-        '*<path:uris_ont_path>': '<path:ont_path>',
+        '*<path:uris_ont_p>': '<path:ont_path>',
         '*ont_ilx_get': ilx_get,
+        '*contributions_ont': 'contributions',
+        '*external': 'external',  # FIXME TEMP
         #'*<other_group_diff>': '<other_group>',  # FIXME consider whether this is a good idea ...
     }
 
@@ -70,23 +72,23 @@ def uriStructure():
     intermediate_filename = ['<filename>.<extension>', '<filename>']
     uris_intermediate_filename = ['<filename>.<extension>', '*<uris_filename>']
     parent_child = {
-        '<group>':              basic + [ilx_get, 'lexical'] + branches + compare + ['contributions', 'upload', 'prov'],
-        '<other_group>':        branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
-        '<other_group_diff>':   basic + ['lexical'] + branches,
+        '<group>':             basic + [ilx_get, 'lexical'] + branches + compare + ['contributions', 'upload', 'prov', 'external'],
+        '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
+        '<other_group_diff>':  basic + ['lexical'] + branches,
         'lexical':             ['<label>'],
         'readable':            ['<word>'],
         'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
         '<epoch_verstr_id>':   versioned_ids + version_compare,
         #'ontologies':          [2, ilx_get, '*uris_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
-        'ontologies':          ['*ont_ilx_get', '*uris_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
+        'ontologies':          ['*ont_ilx_get', '*uris_ont', '*contributions_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
         #'collections':         [2, '<path:ont_path>'] + intermediate_filename,  # TODO more general than files, ontologies, or resources
         # TODO distinguish between ontology _files_ and 'ontologies' which are the import closure?
         # ya, identified vs unidentified imports, owl only supports unidentified imports
         '<path:ont_path>':     intermediate_filename,  # FIXME this would seem to only allow a single extension?
-        '*<path:uris_ont_path>':     uris_intermediate_filename,  # FIXME this would seem to only allow a single extension?
-        '*uris_ont':            uris_intermediate_filename + ['*<path:uris_ont_path>'],  # FIXME need the ability to dissociate node name from render name
-        '*<uris_filename>':     [None, '*uris_version'],
-        '*uris_version':        ['<epoch_verstr_ont>'],
+        '*<path:uris_ont_p>':  uris_intermediate_filename,  # FIXME this would seem to only allow a single extension?
+        '*uris_ont':           uris_intermediate_filename + ['*<path:uris_ont_p>'],  # FIXME need the ability to dissociate node name from render name
+        '*<uris_filename>':    [None, '*uris_version'],
+        '*uris_version':       ['<epoch_verstr_ont>'],
 
         '<filename>':          [None, 'version'],
         'version':             ['<epoch_verstr_ont>'],
@@ -95,12 +97,12 @@ def uriStructure():
         'uris':                ['<path:uri_path>'],  # TODO no ilx_ check here as well as in database
         'own':                 ['<other_group>'],
         'diff':                ['<other_group_diff>'],
-
         # TODO considerations here
         # TODO get ontologies by qualifier and by data subgraph? also allow direct access via and identities endpoint since we have those?
         #'upload':              [None],  # smart endpoint that hunts down bound names or tracks unbound sets
-        'contributions':       [None, 'interlex', 'external', 'curation'],  # None implies any direct to own
+        'contributions':       [None, 'interlex', '*external', 'curation'],  # None implies any direct to own
         'prov':                ['identities'],
+        'external':            ['mapped'],
         'identities':          ['<identity>'],  # current cypher (initally sha256)
         'qualifiers':          ['<qualifier>'],  # integer
         'triples':             ['<triple>'],  # integer
@@ -114,6 +116,7 @@ def uriStructure():
                     '<filename>.<extension>':['GET', 'POST'],
                     '<filename_terminal>':['GET', 'POST'],
                     '<filename_terminal>.<extension>':['GET', 'POST'],
+                    'mapped':['GET', 'POST'],
     }
     return parent_child, node_methods, path_to_route
 

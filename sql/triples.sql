@@ -3,6 +3,7 @@
 
 CREATE sequence if NOT exists interlex_ids_seq;
 
+-- TODO implement this so that there will be no gaps
 CREATE TABLE interlex_ids(
        -- these when used in http://uri.interlex.org/base/ilx_{id} are the reference ids for terms
        -- they can however be mapped to more than one since they cannot (usually) be bound
@@ -139,6 +140,7 @@ CREATE FUNCTION user_reference_name() RETURNS trigger AS $$
                   -- contributions that have no additional artifact
                   -- uploads are tied to bound name of the file
                   -- and can be tracked and computed separately
+                  -- FIXME vs /{group}/ontologies/contributions which would be more consistent
                   SELECT 'https://' || reference_host() || '/' || groupname || '/contributions', id
                   FROM groups WHERE id = NEW.id;
            RETURN NULL;

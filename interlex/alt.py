@@ -1,8 +1,9 @@
 import socket
 from flask import Flask, request, abort
 from flask_sqlalchemy import SQLAlchemy
+import ontquery as oq
 from pyontutils.utils import mysql_conn_helper, TermColors as tc
-from pyontutils.core import makeGraph
+from pyontutils.core import makeGraph, OntGraph
 from pyontutils.namespaces import PREFIXES as uPREFIXES  # FIXME
 from interlex import config
 from interlex import exc
@@ -33,7 +34,7 @@ def server_alt(db=None, dburi=dbUri()):
     object_to_existing = {}
 
     @app.route('/base/ilx_<id>')
-    def ilx(id):
+    def ilx(id, redirect=True):
         user = 'base'  # TODO
         if user == 'base':
             title = f'ILX:{id}'
@@ -45,10 +46,11 @@ def server_alt(db=None, dburi=dbUri()):
         except exc.UnsupportedType as e:
             return e.message, e.code
 
-        graph = makeGraph('base' + '_export_helper', prefixes=uPREFIXES).g
+        graph = OntGraph()
+        oq.OntCuries.populate(graph)
         [graph.add(t) for t in ilxexp(id)]
         try:
-            return tripleRender(request, graph, user, id, object_to_existing, title)
+            return tripleRender(request, graph, user, id, object_to_existing, title, redirect=redirect)
         except BaseException as e:
             print(tc.red('ERROR'), e)
             raise e
@@ -56,7 +58,7 @@ def server_alt(db=None, dburi=dbUri()):
 
     @app.route('/base/ilx_<id>.<extension>')
     def ilx_get(id, extension):
-        return ilx(id)
+        return ilx(id, redirect=False)
 
     @app.route('/base/ontologies/ilx_<id>')
     def ontologies_ilx(id):
@@ -64,7 +66,7 @@ def server_alt(db=None, dburi=dbUri()):
 
     @app.route('/base/ontologies/ilx_<id>.<extension>')
     def ontologies_ilx_get(id, extension):
-        return ilx(id)
+        return ilx(id, redirect=False)
 
     @app.route('/<group>/ontologies/community-terms')
     def group_ontologies_terms(group):
@@ -91,7 +93,7 @@ def server_alt(db=None, dburi=dbUri()):
         try:
             # FIXME TODO
             return tripleRender(request, graph, group, None, object_to_existing,
-                                title, ontid=ontid, **kwargs)
+                                title, ontid=ontid, **kwargs, redirect=False)
         except BaseException as e:
             print(tc.red('ERROR'), e)
             raise e
@@ -100,6 +102,49 @@ def server_alt(db=None, dburi=dbUri()):
     @app.route('/<group>/ontologies/community-terms.<extension>')
     def group_ontologies_terms_get(group, extension):
         return group_ontologies_terms(group)
+
+    @app.route('/<group>/external/mapped')
+    def group_external_mapped(group):
+        # semantics here need a review, but I think the sensible thing to do
+        # would just be to match the longest matching namespace and return
+        # everything that fits the pattern ... seems reasonable and already implemented
+
+        # FIXME supporting file extensions on a parameterized endpoint makes this pattern
+        # quite awkward, as is naming/retrieving the output ... naming of mappings to exernal
+        # systems almost certainly requires that we maintain a set of static unchanging curies
+        # that are used to deterministically make external namespaces url safe and invertible
+        # I think this means that these operations always need to map against base where no
+        # transformations will be made during rendering, and probably implementations like this
+        # one should be moved to those endpoints and then we can redirect ...
+        iri = request.args.get('iri', None)
+        curie = request.args.get('curie', None)
+        prefix = request.args.get('prefix', None)
+        vals = set(i for i in (iri, curie, prefix) if i)
+        if len(vals) > 1 or not vals:
+            return abort(400)  # maybe a clearer signal?
+
+        # ilxexp.getGroupCuries(group)  # TODO
+
+        for thing in (iri, curie, prefix):
+            if thing:
+                nses = oq.OntCuries.identifier_namespaces(thing)
+                if nses:
+                    ns = nses[-1]
+
+        # TODO handle unknown namespace case
+        prefix = oq.OntCuries.identifier_prefixes(ns)[-1]  # FIXME this needs to always expand in a consistent unchanging way
+
+        graph = OntGraph()
+        oq.OntCuries.populate(graph)
+
+        # TODO metadata section should match sneech index graph
+        graph.populate_from_triples(ilxexp.index_triples(ns))
+
+        ontid = f'http://uri.interlex.org/base/ontologies/indexes/{prefix}'  # FIXME in theory could change
+        title = f"External IRIs for {prefix}"
+        asdf = tripleRender(request, graph, group, None, object_to_existing,
+                            title, ontid=ontid, redirect=False)
+        return asdf
 
 
     return app
