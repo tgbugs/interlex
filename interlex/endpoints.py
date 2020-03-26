@@ -219,12 +219,17 @@ class Endpoints:
             'contributions':self.contributions,
             'upload':self.upload,
             'prov':self.prov,
+
+            'mapped':self.mapped,
         }
         for node in nodes[::-1]:
             if node in mapping:
                 return mapping[node]
         else:
             raise KeyError(f'could not find any value for {nodes}')
+
+    def mapped(self):
+        raise NotImplementedError('hrm')
 
     def isIlxIri(self, iri):
         # FIXME the is a horrible way to define valid uri structure
@@ -486,7 +491,7 @@ class Endpoints:
 
                         resp = self.queries.getBySubject(iri, group)
                         te = TripleExporter()
-                        _ = [g.g.add(te.triple(*r)) for r in resp]
+                        _ = [graph.add(te.triple(*r)) for r in resp]
                         object_to_existing = self.queries.getResponseExisting(resp, type='o')
                         # FIXME we need to abstract TripleRender to work with any ontology name
                         # FIXME we probably need a uri.interlex.org/base/iri/purl.obolibrary.org/obo/ trick ...
@@ -497,14 +502,14 @@ class Endpoints:
                             # FIXME getting additional content from the db based on file type
                             # leads to breakdown of separation of concerns due to statefulness
                             # slow but probably worth it for enhancing readability
-                            iris = set(e for t in g.g for e in t if isinstance(e, URIRef))
+                            iris = set(e for t in graph for e in t if isinstance(e, URIRef))
                             labels = {URIRef(s):label for s, label in self.queries.getLabels(group, iris)}
                         else:
                             labels = None
 
                         id = 'None-FIXMETODO'
                         title = 'InterLex local' + curie
-                        return tripleRender(request, g, group, id, object_to_existing, title, labels=labels)
+                        return tripleRender(request, graph, group, id, object_to_existing, title, labels=labels)
                         abort(404)
                         pass
 
