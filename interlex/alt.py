@@ -143,6 +143,7 @@ def server_alt(db=None, dburi=dbUri()):
         if request.method == 'POST':
             """ Accepts a newline separated list of uris """
             uris = request.data.decode().split('\n')
+            graph.bind('snchn', str(snch.snchn))
             graph.populate_from_triples(ilxexp.alreadyMapped(ns, uris))
             ontid = rdflib.URIRef(f'http://uri.interlex.org/base/resources/indexes/{prefix}#UnknownSubset')  # FIXME this breaks version iri generation
             title = f"Subset of Mapped IRIs for {prefix}"
