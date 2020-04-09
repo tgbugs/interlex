@@ -86,6 +86,9 @@ class TripleRender:
         except KeyError as e:
             raise exc.UnsupportedType(f"don't know what to do with {mimetype}", 415) from e
 
+        if mimetype == 'text/turtle+html':
+            mimetype = 'text/html; charset=utf-8'
+
         return extension, mimetype, func
 
     def __call__(self, request, graph, group, id, object_to_existing,

@@ -6,7 +6,7 @@ import ontquery as oq
 from pyontutils import sneechenator as snch  # FIXME why do we need to import this here this is an issue :/
 from pyontutils.utils import mysql_conn_helper, TermColors as tc
 from pyontutils.core import makeGraph, OntGraph
-from pyontutils.namespaces import PREFIXES as uPREFIXES, rdf  # FIXME should not need these here :/
+from pyontutils.namespaces import PREFIXES as uPREFIXES, rdf, rdfs  # FIXME should not need these here :/
 from interlex import exc
 from interlex import config
 from interlex import render
@@ -123,38 +123,57 @@ def server_alt(db=None, dburi=dbUri()):
         curie = request.args.get('curie', None)
         prefix = request.args.get('prefix', None)
         vals = set(i for i in (iri, curie, prefix) if i)
-        if len(vals) > 1 or not vals:
-            return abort(400)  # maybe a clearer signal?
+        if len(vals) > 1:
+            conflicting = [a for a, b in
+                           zip(('iri', 'curie', 'prefix'), (iri, curie, prefix))
+                           if b]
+            return abort(400, {'message':
+                               f'conflicting query params {conflicting}'})
+        elif vals:
+            # ilxexp.getGroupCuries(group)  # TODO
+            thing = next(iter(vals))
+            nses = oq.OntCuries.identifier_namespaces(thing)
+            if nses:
+                ns = nses[-1]
+            else:
+                return abort(400, {'message': f'Unknown prefix {next(iter(vals))}'})
 
-        # ilxexp.getGroupCuries(group)  # TODO
-
-        for thing in (iri, curie, prefix):
-            if thing:
-                nses = oq.OntCuries.identifier_namespaces(thing)
-                if nses:
-                    ns = nses[-1]
-
-        # TODO handle unknown namespace case
-        prefix = oq.OntCuries.identifier_prefixes(ns)[-1]  # FIXME this needs to always expand in a consistent unchanging way
+            # TODO handle unknown namespace case
+            # FIXME this needs to always expand in a consistent unchanging way
+            prefix = oq.OntCuries.identifier_prefixes(ns)[-1]
+            mprefix = f'/{prefix}'
+            tprefix = f' uri.interlex.org {prefix}'  # FIXME remove hardcoding of ref host
+        else:
+            ns = None
+            mprefix = ''
+            tprefix = f' uri.interlex.org'  # FIXME remove hardcoding of ref host
 
         graph = OntGraph()
         oq.OntCuries.populate(graph)
 
+        base = 'http://uri.interlex.org/base/resources'
         if request.method == 'POST':
             """ Accepts a newline separated list of uris """
             uris = request.data.decode().split('\n')
             graph.bind('snchn', str(snch.snchn))
-            graph.populate_from_triples(ilxexp.alreadyMapped(ns, uris))
-            ontid = rdflib.URIRef(f'http://uri.interlex.org/base/resources/indexes/{prefix}#UnknownSubset')  # FIXME this breaks version iri generation
-            title = f"Subset of Mapped IRIs for {prefix}"
-            tmet = ((s, rdf.type, snch.snchn.PartialIndexGraph) for s in (ontid,))
+            graph.populate_from_triples(ilxexp.alreadyMapped(uris, ns))
+            # FIXME fragment id breaks version iri generation
+            ontid = rdflib.URIRef(f'{base}/index{mprefix}#ArbitrarySubset')
+            title = f'Subset of Mapped IRIs for {tprefix}'
+            tmet = ((ontid, p, o) for p, o in
+                    ((rdf.type, snch.snchn.PartialIndexGraph),
+                     (rdfs.label, rdflib.Literal(title))))
 
         elif request.method == 'GET':
             # TODO metadata section should match sneech index graph
             graph.populate_from_triples(ilxexp.index_triples(ns))
-            ontid = rdflib.URIRef(f'http://uri.interlex.org/base/resources/indexes/{prefix}')  # FIXME in theory prefix could change make sure it wont ...
-            title = f"Mapped IRIs for {prefix}"
-            tmet = ((s, rdf.type, snch.snchn.IndexGraph) for s in (ontid,))
+            # FIXME in theory prefix could change make sure it wont ...
+            ontid = rdflib.URIRef(f'{base}/index{mprefix}')
+            title = f'Mapped IRIs for {tprefix}'
+            tmet = ((ontid, p, o) for p, o in
+                    ((rdf.type, snch.snchn.IndexGraph),
+                     (rdfs.label, rdflib.Literal(title))))
+
         else:
             return abort(501)
 
@@ -168,7 +187,7 @@ def server_alt(db=None, dburi=dbUri()):
         # and add a partialIndexGraph generator as well ...
         #, graph, group, None, object_to_existing, title, ontid=ontid, redirect=False)
         extension, mimetype, func = tripleRender.check(request)
-        graph.populate_from(tmet)  # FIXME I think the way to solve the neededing namespaces here is to move this inside the branches
+        graph.populate_from_triples(tmet)  # FIXME I think the way to solve the neededing namespaces here is to move this inside the branches
         # and the we move it into render and let render mediate the additional stream types beyond owl, interlex, neurdf etc
         return graph.asMimetype(mimetype)
 

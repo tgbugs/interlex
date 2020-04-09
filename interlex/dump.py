@@ -76,22 +76,25 @@ class MysqlExport:
         for s, o in self.existing_in_namespace(namespace):
             yield rdflib.URIRef(s), ilxtr.hasIlxId, rdflib.URIRef(o)
 
-    def existing_mapped(self, namespace, iris):
+    def existing_mapped(self, iris, namespace=None):
         sql = ('SELECT te.iri, te_o.iri FROM term_existing_ids as te'
-               '  JOIN term_existing_ids as te_o '
-               '    ON te.tid = te_o.tid '
-               " WHERE te.iri LIKE CONCAT(:namespace, '%')"
-               '   AND te.iri in :iris'
-               "   AND te_o.curie like 'ILX:%'")
+                '  JOIN term_existing_ids as te_o '
+                '    ON te.tid = te_o.tid '
+                ' WHERE te.iri in :iris'
+                "   AND te_o.curie LIKE 'ILX:%'")
+        args = dict(iris=tuple(iris))
+        if namespace is not None:
+            sql += " AND te.iri LIKE CONCAT(:namespace, '%')"
+            args['namespace'] = namespace
+
         # the user has to tell us namespace anyway so make use of it
         # yes we could implement a generic iri mapping facility
         # but to be efficient it probably makes more sense to create
         # an temporary index of the set of iris to map or something
-        args = dict(namespace=namespace, iris=tuple(iris))
         yield from self.session.execute(sql, args)
 
-    def alreadyMapped(self, namespace, iris):
-        for s, o in self.existing_mapped(namespace, iris):
+    def alreadyMapped(self, iris, namespace=None):
+        for s, o in self.existing_mapped(iris, namespace):
             yield rdflib.URIRef(s), ilxtr.hasIlxId, rdflib.URIRef(o)
 
     def term(self, ilx_fragment):
