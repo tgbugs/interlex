@@ -16,7 +16,9 @@ class MysqlExport:
              'annotation': owl.AnnotationProperty,
              'relationship': owl.ObjectProperty,
              'cde': owl.Class,
-             'fde': owl.Class,}
+             'fde': owl.Class,
+             'TermSet': ilxr.TermSet,
+             }
 
     _group_community = {
         'sparc': 'SPARC Anatomical Working Group',
@@ -277,7 +279,7 @@ class MysqlExport:
                     oo = str(oo)
                     log.warning(tc.red('bad iri {oo!r}'))
 
-            if p == '':  # we are in synonym space also FIXME because this is dumb
+            if p == '' or p is None:  # we are in synonym space also FIXME because this is dumb
                 p = NIFRID.synonym
             elif p == 'abbrev':
                 stype = synonym_types[p]
