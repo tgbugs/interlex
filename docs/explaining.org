@@ -1,120 +1,120 @@
 * Explaining InterLex
-  There are n central parts of interlex that are needed to understand what is going on
-  1. a set of globally unique reference names
-     https://uri.interlex.org/base/ilx_1234567
-  2. a set of locally unique user/group names back by a globally unique set of private keys/secrets
-     https://uri.interlex.org/{group}
-  3. a set of globally unique qualifiers
-     https://uri.interlex.org/qualifiers/{0..+inf.0}
-  4. a reference set of names for all discrete named collections of data
-     https://uri.interlex.org/base/ontologies/{0..+inf.0}
-     ILX.ONT:0
-  5. a single set of conventional locally readable names
-     https://uri.interlex.org/base/readable/{word}
-  6. per user locally unique human readable names
-     https://uri.interlex.org/{user}/uris/readable
+There are n central parts of interlex that are needed to understand what is going on
+1. a set of globally unique reference names
+   https://uri.interlex.org/base/ilx_1234567
+2. a set of locally unique user/group names back by a globally unique set of private keys/secrets
+   https://uri.interlex.org/{group}
+3. a set of globally unique qualifiers
+   https://uri.interlex.org/qualifiers/{0..+inf.0}
+4. a reference set of names for all discrete named collections of data
+   https://uri.interlex.org/base/ontologies/{0..+inf.0}
+   ILX.ONT:0
+5. a single set of conventional locally readable names
+   https://uri.interlex.org/base/readable/{word}
+6. per user locally unique human readable names
+   https://uri.interlex.org/{user}/uris/readable
 * v2
-  The set of all triples is immutable.
-  No triple is ever deleted, just ignored.
-  1. identities
-     pick your favorite identity function (e.g. sha256)
-     1. and atomic identity function for any piece or organization of data
-        1. a string
-        2. an integer
-        3. an ordered list of strings
-        4. an unordered list of strings
-        5. a byte string (aka raw data) or a bit string
-     2. a function with deterministic semantics that maps composite data structures to an identity
-        If I don't care about the order of the elements of strings then I('ab') == I('ba') is an
-        example of a semantically useful identity function. In RDF an identity function which
-        varies based on the serialization is bad, as is an identity function that varies based on
-        the identity of blank nodes.
-  2. reference names (a set of reference names for)
-     the set of all finite strings in all finite alphabets
-     1. qualifiers
-        proxies for context
-        a subset of these map 1:1 with users, and names, and possibly with entities, though the
-        semantics for individual entities is not as clear as it is for users and source names
-        users are treated as their own source and sources with bound names that match their name (pointer)
-        can be aggregated etc.
-     2. names (sources of data) source names?
-        the place where something was retrieved from, could be a local identifier + a user
-        consider whether we could reconcile a string that was the 1st edition of penguine shakespear
-        with a structured data equivalent? there is a intervening in
-     3. users, agents, or executors
-        in the prov model these are called agents, in protc I call them executors
-     4. entities
-        things in the world, beings, qualities, etc.,
-        as well as things outside the world, such as existences
-        subjects, predicates, and objects
-        owl:Class owl:ObjectProperty owl:AnnotationProperty etc...
-        things that can be named
-        for existences such as the thing pointed to by the symbol =1= they are as 'pan-universal'
-        in their meaning as the system that implements their behavior under a variety of functions 
-        most of these should not receive names, because, for example the real numbers ($\mathbb{R}$)
-        contain entities which cannot be named
-     5. local names
-        curies, or shortening rules/templates that are only locally unique but that are
-        accompanied by, or in a context where, a unique mapping from local -> global exists
-        and is specified
-  3. all names
-     equivalents for references names 2 and 4
-  4. relationships between names
-     mappings that have to be maintained because there is no more compact function that can be used
-     1. all entity names -> entity reference names
-     2. all source names -> source reference names
-     3. qualifier -> qualifier
-        derived from, next version of, etc. these provide operational semantics for inclusion/exclusion criteria
-        merge of
-        TODO how to prevent reuse of qualifiers that have temporal semantics? <<< !!!
-        transaction qualifiers vs source qualifiers
+The set of all triples is immutable.
+No triple is ever deleted, just ignored.
+1. identities
+   pick your favorite identity function (e.g. sha256)
+   1. and atomic identity function for any piece or organization of data
+      1. a string
+      2. an integer
+      3. an ordered list of strings
+      4. an unordered list of strings
+      5. a byte string (aka raw data) or a bit string
+   2. a function with deterministic semantics that maps composite data structures to an identity
+      If I don't care about the order of the elements of strings then I('ab') == I('ba') is an
+      example of a semantically useful identity function. In RDF an identity function which
+      varies based on the serialization is bad, as is an identity function that varies based on
+      the identity of blank nodes.
+2. reference names (a set of reference names for)
+   the set of all finite strings in all finite alphabets
+   1. qualifiers
+      proxies for context
+      a subset of these map 1:1 with users, and names, and possibly with entities, though the
+      semantics for individual entities is not as clear as it is for users and source names
+      users are treated as their own source and sources with bound names that match their name (pointer)
+      can be aggregated etc.
+   2. names (sources of data) source names?
+      the place where something was retrieved from, could be a local identifier + a user
+      consider whether we could reconcile a string that was the 1st edition of penguine shakespear
+      with a structured data equivalent? there is a intervening in
+   3. users, agents, or executors
+      in the prov model these are called agents, in protc I call them executors
+   4. entities
+      things in the world, beings, qualities, etc.,
+      as well as things outside the world, such as existences
+      subjects, predicates, and objects
+      owl:Class owl:ObjectProperty owl:AnnotationProperty etc...
+      things that can be named
+      for existences such as the thing pointed to by the symbol =1= they are as 'pan-universal'
+      in their meaning as the system that implements their behavior under a variety of functions 
+      most of these should not receive names, because, for example the real numbers ($\mathbb{R}$)
+      contain entities which cannot be named
+   5. local names
+      curies, or shortening rules/templates that are only locally unique but that are
+      accompanied by, or in a context where, a unique mapping from local -> global exists
+      and is specified
+3. all names
+   equivalents for references names 2 and 4
+4. relationships between names
+   mappings that have to be maintained because there is no more compact function that can be used
+   1. all entity names -> entity reference names
+   2. all source names -> source reference names
+   3. qualifier -> qualifier
+      derived from, next version of, etc. these provide operational semantics for inclusion/exclusion criteria
+      merge of
+      TODO how to prevent reuse of qualifiers that have temporal semantics? <<< !!!
+      transaction qualifiers vs source qualifiers
 * qualifier relations :noexport:
 ** 1-ary cardinality = 1
 *** isVersionOf
-    semantics -- bounds the set of all names for the computation of the current or preferred referent
-    there must be an ordering rule on all subjects sharing the same object
+semantics -- bounds the set of all names for the computation of the current or preferred referent
+there must be an ordering rule on all subjects sharing the same object
 
-    relation between a canonical source id e.g. http://purl.obolibrary.org/obo/uberon.owl
-    and some specific realization of the referent of that name, e.g. http://purl.obolibrary.org/obo/uberon/version/2018-01-01/uberon.owl
-    even bound version ids are useless because they cannot be independently verified
-   
-    note that these would be the 'source' of a qualifier since the qualifier would just be an integer
+relation between a canonical source id e.g. http://purl.obolibrary.org/obo/uberon.owl
+and some specific realization of the referent of that name, e.g. http://purl.obolibrary.org/obo/uberon/version/2018-01-01/uberon.owl
+even bound version ids are useless because they cannot be independently verified
+
+note that these would be the 'source' of a qualifier since the qualifier would just be an integer
 *** prevVersion
-    1. transitively retrieve all prior qualifiers
-    2. for each pair, remove any triples in the remove list
-       for example consider this remove table
-       | triple id | qualifier 1 | qualifier 2 |
-       |-----------+-------------+-------------|
-       |         1 | 1           | 2           |
-       |         2 | any         | any         |
-       |           |             |             |
-       this is inefficient because we don't actually need to know
-       q1 at all, we simply say that t1 should not be in q2 and
-       in many cases this would imply that t1 was in another qualifier
-       that has a temporally prior relationship with q2
-       
-       this exclude table is much more efficient
-       we simply list all triples that need to be explicitly excluded
-       from a qualifier based on its history
-       | qualifier | triple |
-       |-----------+--------|
-       |      1231 |    231 |
-       the 'latest' thus only has to maintain the list of most recently
-       removed triples, and we can get the list of all removed triples
-       (which can be added back by since removals do not propagate)
-       by pulling out all qualifiers with inclusion relations for a
-       given qualifier and then checking all those triple ids in the
-       qualifiers table to see if there is a qualifier greater than
-       the highest exclude qualifier for that triple
-       =SELECT * FROM exclude as e JOIN include as i ON e.triple = i.triple AND i.qualifier > e.qualifier WHERE e.triple=
-       or something like that. This is not quite correct.
+1. transitively retrieve all prior qualifiers
+2. for each pair, remove any triples in the remove list
+   for example consider this remove table
+   | triple id | qualifier 1 | qualifier 2 |
+   |-----------+-------------+-------------|
+   |         1 | 1           | 2           |
+   |         2 | any         | any         |
+   |           |             |             |
+   this is inefficient because we don't actually need to know
+   q1 at all, we simply say that t1 should not be in q2 and
+   in many cases this would imply that t1 was in another qualifier
+   that has a temporally prior relationship with q2
+   
+   this exclude table is much more efficient
+   we simply list all triples that need to be explicitly excluded
+   from a qualifier based on its history
+   | qualifier | triple |
+   |-----------+--------|
+   |      1231 |    231 |
+   the 'latest' thus only has to maintain the list of most recently
+   removed triples, and we can get the list of all removed triples
+   (which can be added back by since removals do not propagate)
+   by pulling out all qualifiers with inclusion relations for a
+   given qualifier and then checking all those triple ids in the
+   qualifiers table to see if there is a qualifier greater than
+   the highest exclude qualifier for that triple
+   =SELECT * FROM exclude as e JOIN include as i ON e.triple = i.triple AND i.qualifier > e.qualifier WHERE e.triple=
+   or something like that. This is not quite correct.
 *** nextVersion
 ** 1-ary cardinality = n
 *** hasVersion
 *** containedBy
-    subset-of
+subset-of
 *** contains
-    superset-of
+superset-of
 *** complement-of
 ** n-ary (in theory cardinality = n if there are multiple ways to construct)
 *** unionOf
@@ -124,11 +124,11 @@
 *** include
 **** includeAll
 **** includeOnly
-     singleton, equivalent to prior version
+singleton, equivalent to prior version
 *** exclude
-    in theory we could construct qualifiers for the set of all triples removed from a given
-    version, that way we would no longer need to have the exclude table at all, we would only
-    have an exclude relation between qualifiers... this seems like it would be a better way...
+in theory we could construct qualifiers for the set of all triples removed from a given
+version, that way we would no longer need to have the exclude table at all, we would only
+have an exclude relation between qualifiers... this seems like it would be a better way...
 *** null
 # *** 1-card
 # *** n-card
@@ -136,38 +136,37 @@
 *** 1-card
 *** n-card
 * qualifiers in the identity data model
-  This is basically just git.
-  The unbound qid is essentially a commit hash.
-  Question: is it safe to use the artifact id as the qualifier, knowing that in
-  the qualifier prov header there will be the artifact id, plus the prior qual ids
-  along with those relations.
-  # FIXME check how we are computing the data id, is it on the triples + csgids + fsgids
-  # or is the order of operations different? The spec for this needs to be extremely clear.
-  |---------------------+-----------------|
-  | qualifier prov      | unbound qid     |
-  |---------------------+-----------------|
-  | prior qual ids      | (in prov)       |
-  | artifact            | bound mid + did |
-  |---------------------+-----------------|
-  | metadata            | mid             |
-  | data (inc. csgids)  | did             |
-  |---------------------+-----------------|
-  | connected subgraphs | csgids          |
-  | free subgraphs      | fsgids          |
-  |---------------------+-----------------|
-
+This is basically just git.
+The unbound qid is essentially a commit hash.
+Question: is it safe to use the artifact id as the qualifier, knowing that in
+the qualifier prov header there will be the artifact id, plus the prior qual ids
+along with those relations.
+# FIXME check how we are computing the data id, is it on the triples + csgids + fsgids
+# or is the order of operations different? The spec for this needs to be extremely clear.
+|---------------------+-----------------|
+| qualifier prov      | unbound qid     |
+|---------------------+-----------------|
+| prior qual ids      | (in prov)       |
+| artifact            | bound mid + did |
+|---------------------+-----------------|
+| metadata            | mid             |
+| data (inc. csgids)  | did             |
+|---------------------+-----------------|
+| connected subgraphs | csgids          |
+| free subgraphs      | fsgids          |
+|---------------------+-----------------|
 * Red links
-  One of the most useful features for both expert and non-expert users of NeuroLex was the redlink.
-  The redlink was a fantastic bookmarking and compiling tool that allowed users to use lexical entities
-  as if they were proper ontological entities. Recreating this in InterLex is key to its success.
+One of the most useful features for both expert and non-expert users of NeuroLex was the redlink.
+The redlink was a fantastic bookmarking and compiling tool that allowed users to use lexical entities
+as if they were proper ontological entities. Recreating this in InterLex is key to its success.
 ** impl
-   redlinks have their own namespace in interlex. It is not the readable namespace and it is not in the uris
-   namespace. It is an a the =/lexical/= namespace which is automatically populated by all the labels that
-   are associated with any identifier and bans any labels that are used in the base readable namespace.
-   It also only allows entries that do not have an exact existing label match nor an exact readable match.
-   For each =/lexical/= entry we will attempt to suggest terms that fit. Red links WILL NOT BE SERIALIZED.
-   Red links MUST be mapped to an ilx_id just like everything else, and they will not resolve until someone
-   creates the page for them. Which is like the new term page but the workflow is a bit more strenuous.
+redlinks have their own namespace in interlex. It is not the readable namespace and it is not in the uris
+namespace. It is an a the =/lexical/= namespace which is automatically populated by all the labels that
+are associated with any identifier and bans any labels that are used in the base readable namespace.
+It also only allows entries that do not have an exact existing label match nor an exact readable match.
+For each =/lexical/= entry we will attempt to suggest terms that fit. Red links WILL NOT BE SERIALIZED.
+Red links MUST be mapped to an ilx_id just like everything else, and they will not resolve until someone
+creates the page for them. Which is like the new term page but the workflow is a bit more strenuous.
 * Temporary ids
 The =http://uri.interlex.org/temp/uris/= namespace sandboxes identifiers
 that are local to files and that will collide. All uris at this endpoint
@@ -175,29 +174,46 @@ shall 404, even if they return data and even if that data has a context
 that could be used to disambiguate it.
 * Ideas
 ** pure triple (quad)
-   quid should probably be sh256 of spo
-   1. triples + qid
-      quid, s, p, o
-   2. qualifiers
-      quid, qual-rel, other-qual
-   3. qualifiers to triples
-      IF qualifiers include information about the prior qualifieris
-      then we only need the NEW qualifiers
-
+quid should probably be sh256 of spo
+1. triples + qid
+   quid, s, p, o
+2. qualifiers
+   quid, qual-rel, other-qual
+3. qualifiers to triples
+   IF qualifiers include information about the prior qualifieris
+   then we only need the NEW qualifiers
 ** dmqp, tspq
-   1. data
-      the graph
-   2. metadata
-      a owl:Ontology
-   3. qualifier
-      a ilxtr:qualifier
-      this is the most complicated issue
-      the question is what the identifier should be
-      should it be the identity of everything or should be the identity of just the graph portion
-   4. prov
-      a ilxtr:prov
+1. data
+   the graph
+2. metadata
+   a owl:Ontology
+3. qualifier
+   a ilxtr:qualifier
+   this is the most complicated issue
+   the question is what the identifier should be
+   should it be the identity of everything or should be the identity of just the graph portion
+4. prov
+   a ilxtr:prov
 
-   1. triple
-   2. subgraph
-   3. qualifier
-   4. prov
+1. triple
+2. subgraph
+3. qualifier
+4. prov
+* Bugs
+** Implicit context based on api user
+On reflection having the context of the api shift based on what api
+user you are logged in as is a really bad idea.
+
+If we want that behavior it needs to be sandboxed in some way.  For
+example we could have uri.interlex.org/api-user/ provide a variable
+view for compactness sake, but for everything else I think that the
+user needs to be explicit in the paths so that the context is easily
+accessible.
+** Perspectives are not 1:1 with groups
+While there are user and group specific perspectives on a single file
+those represent only a tiny subset of all possible perspectives, which
+are orthogonal to the group and cross over in the default group
+perspective. This means that the API and diffs must be made
+independent of the user/group, however we do need a way to ensure that
+users and groups also claim their respective perspective name when
+dealing with collections/ontology files/termsets etc.
