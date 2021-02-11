@@ -40,6 +40,8 @@ class TripleRender:
                           'application/n-triples':self.rdf_ser,
                           'text/n3':self.rdf_ser,
                           'application/vnd.scicrunch.interlex+json': self.jsonilx,
+                          'text/csv': self.tabular,
+                          'text/tsv': self.tabular,
                           #'application/n-quads':self.rdf_ser  # TODO need qualifier context store
         }
         self.extensions = {'html': 'text/turtle+html',
@@ -220,7 +222,7 @@ class TripleRender:
             try:
                 preferred_iri = preferred_all[uri]
             except KeyError as e:
-                graph.debug()
+                #graph.debug()  # goes infinite due to ttlser bug
                 log.debug('printing graph one line above this')
                 log.exception(e)
                 log.error('the input graph probably has a bad structure '
@@ -304,3 +306,6 @@ class TripleRender:
                 title, mimetype, labels, ontid, ranking):
         # TODO
         return {}
+
+    def tabular(self, *args, **kwargs):
+        raise NotImplementedError('TODO')
