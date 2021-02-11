@@ -1,174 +1,175 @@
+# [[file:setup.pdf]]
 * Setting up a new InterLex
 ** Requirements
-   1. >=dev-db/postgresql-10
-   2. >=net-misc/rabbitmq-server-3.6.9
-   3. >=app-misc/elasticsearch-6.3.0
-   4. >=dev-lang/python-3.6
-   5. >=dev-python/pipenv-2018.6.25
-   6. dev-db/pguri
-      - Gentoo
-        =dev-db/pguri-9999.ebuild= is available in [[https://github.com/tgbugs/tgbugs-overlay]]
-        #+BEGIN_SRC bash
-          layman -a tgbugs-overlay
-          emerge pguri
-        #+END_SRC
-      - Ubuntu
-        #+BEGIN_SRC bash
-          sudo apt-get install build-essential pkg-config liburiparser-dev postgresql-server-dev-all
-          export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig
-          git clone https://github.com/petere/pguri.git
-          cd pguri
-          make PG_CONFIG=/usr/bin/pg_config
-          sudo make PG_CONFIG=/usr/bin/pg_config install
-        #+END_SRC
+See the ebuild in tgbugs-overlay.
+[[https://github.com/tgbugs/tgbugs-overlay/blob/master/dev-python/interlex/interlex-9999.ebuild]]
+*** Setup for =pguri= postgres module
+**** Gentoo
+A =dev-db/pguri-9999.ebuild= is available in [[https://github.com/tgbugs/tgbugs-overlay]]
+#+begin_src bash
+layman -a tgbugs-overlay
+emerge pguri
+#+end_src
+**** Ubuntu
+#+begin_src bash
+sudo apt-get install build-essential pkg-config liburiparser-dev postgresql-server-dev-all
+export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig
+git clone https://github.com/petere/pguri.git
+cd pguri
+make PG_CONFIG=/usr/bin/pg_config
+sudo make PG_CONFIG=/usr/bin/pg_config install
+#+end_src
 ** Set up a virtual environment
-   In the working directory of this repository (usually the 'outer' interlex folder)
-   1. run =pipenv install= (may complain about version issues)
-   2. run =pipenv shell=
-      NOTE: if you have a local development version of pyontutils installed
-      in =PYTHONPATH= pipenv will point to those files for the source, HOWEVER
-      the command line scripts installed by pipenv will point to the venv which
-      could cause major confusion. The simplest solution is to only run interlex
-      and interlex commands inside the venv and run any pyontutils commands outside
-      the venv.
+In the working directory of this repository (usually the 'outer' interlex folder)
+1. run =pipenv install= (may complain about version issues)
+2. run =pipenv shell=
+   NOTE: if you have a local development version of pyontutils installed
+   in =PYTHONPATH= pipenv will point to those files for the source, HOWEVER
+   the command line scripts installed by pipenv will point to the venv which
+   could cause major confusion. The simplest solution is to only run interlex
+   and interlex commands inside the venv and run any pyontutils commands outside
+   the venv.
 ** Set up the database
-   1. Set up postgres for your operating system.
-   2. From the working directly run =interlex-dbsetup $PORT $DBNAME=
-      NOTE: if you change =$DBNAME= from =interlex_test= make sure you also
-      change it in the python code since this has not been abstracted yet.
-   3. You will need to set the passwords for =interlex-admin= and =interlex-user= manually
-      and then run =interlex-dbsetup $PORT $DBNAME= again. To accomplish this run the following.
-      =su postgres= =psql= =\password interlex-admin= =\password interlex-user=.
-   4. Add the passwords for =interlex-admin= and =interlex-user= to =~/.pgpass=.
-   5. Run =interlex dbsetup= to add an initial 'authenticated' user.
+1. Set up postgres for your operating system.
+2. From the working directly run =interlex-dbsetup $PORT $DBNAME=
+   NOTE: if you change =$DBNAME= from =interlex_test= make sure you also
+   change it in the python code since this has not been abstracted yet.
+3. You will need to set the passwords for =interlex-admin= and =interlex-user= manually
+   and then run =interlex-dbsetup $PORT $DBNAME= again. To accomplish this run the following.
+   =su postgres= =psql= =\password interlex-admin= =\password interlex-user=.
+4. Add the passwords for =interlex-admin= and =interlex-user= to =~/.pgpass=.
+5. Run =interlex dbsetup= to add an initial 'authenticated' user.
 ** Set up the message broker
-   1. Install =rabbitmq= and add it and =epmd= to default services.
-   2. See =interlex-mqsetup=
+1. Install =rabbitmq= and add it and =epmd= to default services.
+2. See =interlex-mqsetup=
 * Bootstrapping a development environment on Gentoo
-  It is possible to run InterLex as a service as the =interlex= user and
-  use the =PYTHONPATH= option in [[file:/etc/conf.d/interlex]] (open as root)
-  to use the development codebase to run the daemon. There are a few steps required
-  to get everything working smoothly. *ONLY DO THIS IF YOU TRUST* =${DEV_USER}=.
-  #+BEGIN_SRC bash
-    # become interlex (probably via root)
-    su interlex
-    cd
-    # point interlex to dev packages
-    export PYTHONPATH=~DEV_USER/git/pyontutils:~DEV_USER/git/ontquery:~DEV_USER/git/interlex:~DEV_USER/git/pyontutils/ttlser:~DEV_USER/git/pyontutils/htmlfn:
-    # note that ~${DEV_USER} will not expand
+It is possible to run InterLex as a service as the =interlex= user and
+use the =PYTHONPATH= option in [[file:/etc/conf.d/interlex]] (open as root)
+to use the development codebase to run the daemon. There are a few steps required
+to get everything working smoothly. *ONLY DO THIS IF YOU TRUST* =${DEV_USER}=.
+#+begin_src bash
+# become interlex (probably via root)
+su interlex
+cd
+# point interlex to dev packages
+export PYTHONPATH=~DEV_USER/git/pyontutils:~DEV_USER/git/ontquery:~DEV_USER/git/interlex:~DEV_USER/git/pyontutils/ttlser:~DEV_USER/git/pyontutils/htmlfn:
+# note that ~${DEV_USER} will not expand
 
-    # set the location of devconfig.yaml
-    export PYONTUTILS_DEVCONFIG=~/devconfig.yaml
-    # create a new devconfig for the interlex user
-    /home/${DEV_USER}/bin/ontutils devconfig --write
-  #+END_SRC
+# set the location of devconfig.yaml
+export PYONTUTILS_DEVCONFIG=~/devconfig.yaml
+# create a new devconfig for the interlex user
+/home/${DEV_USER}/bin/ontutils devconfig --write
+#+end_src
 * Run tests
-  1. From the working directory run
-     =python -m unittest test/test_constraints.py=
-     (this is also run by =interlex-dbsetup=)
-  2. From the working directory run =pytest=
-     (you may need to install it first e.g. via =pipenv install pytest=)
-     NOTE: this will run stress tests.
+1. From the working directory run
+   =python -m unittest test/test_constraints.py=
+   (this is also run by =interlex-dbsetup=)
+2. From the working directory run =pytest=
+   (you may need to install it first e.g. via =pipenv install pytest=)
+   NOTE: this will run stress tests.
 * Load content
 ** Sync with mysql
-   At this point you should be able to synchronize the database with the existing mysql interlex installation.
-   *WARNING* There is a bug in the current loading process and the loaded records do not match those generated by
-   the [[./../interlex/alt.py][alt server]] via [[./../interlex/dump.py][MysqlExport]].
-   1. Make sure you create a =~/.mypass= file that conforms to the syntax of =~/.pgpass=
-      i.e. each line should look like =server.url.org:port:dbname:user:password=.
-   2. If you do not have direct access to the mysql database servers you may need to
-      set up ssh forwarding in which case you should add the hostname of your devbox
-      to =config.dev_remote_hosts= and forward to port =33060= to make use of [[https://github.com/tgbugs/interlex/blob/b458901a9abd2e3e36cd102caaf8e5c321a0e874/interlex/core.py#L528][core.py]].
-   3. Inside the venv run =interlex sync=
-   4. Once you drop into the IPython embed shell run =self.load()= and the load should commence.
-      NOTE: there is no user auth at the moment so the code pretends to be =tgbugs=.
+At this point you should be able to synchronize the database with the existing mysql interlex installation.
+*WARNING* There is a bug in the current loading process and the loaded records do not match those generated by
+the [[./../interlex/alt.py][alt server]] via [[./../interlex/dump.py][MysqlExport]].
+
+1. Make sure you create a =~/.mypass= file that conforms to the syntax of =~/.pgpass=
+   i.e. each line should look like =server.url.org:port:dbname:user:password=.
+2. If you do not have direct access to the mysql database servers you may need to
+   set up ssh forwarding in which case you should add the hostname of your devbox
+   to =config.dev_remote_hosts= and forward to port =33060= to make use of
+   [[https://github.com/tgbugs/interlex/blob/b458901a9abd2e3e36cd102caaf8e5c321a0e874/interlex/core.py#L528][core.py]].
+3. Inside the venv run =interlex sync=
+4. Once you drop into the IPython embed shell run =self.load()= and the load should commence.
+   NOTE: there is no user auth at the moment so the code pretends to be =tgbugs=.
 ** Start the uri server
 *** For development
-    run =interlex uri= in the venv.
+run =interlex uri= in the venv.
 *** For production
-    run =interlex-uri= in the venv.
-    *WARNING:* if you run in this way you will not be able to use =embed= to debug and you will
-    get strange errors.
+run =interlex-uri= in the venv.
+*WARNING:* if you run in this way you will not be able to use =embed= to debug and you will
+get strange errors.
 ** Load ontologies
-   If you are running interlex via =interlex-uri= replace the =-o= from these commands with =-c=.
-   1. In the venv run =interlex post resource http://purl.obolibrary.org/obo/bfo.owl -o -u $YOURUSERNAME=
-   2. Repeat for as many ontologies as you want, for example =http://ontology.neuinfo.org/NIF/ttl/nif.ttl=
-      NOTE: currently this does not pull in the transitive closure.
+If you are running interlex via =interlex-uri= replace the =-o= from these commands with =-c=.
+1. In the venv run =interlex post resource http://purl.obolibrary.org/obo/bfo.owl -o -u $YOURUSERNAME=
+2. Repeat for as many ontologies as you want, for example =http://ontology.neuinfo.org/NIF/ttl/nif.ttl=
+   NOTE: currently this does not pull in the transitive closure.
 ** Load curies
-   1. In the venv run =interlex post curies -o base= and then =interlex post curies -o $YOURUSERNAME=
+1. In the venv run =interlex post curies -o base= and then =interlex post curies -o $YOURUSERNAME=
 * Performance notes
-  On =orpheus= the primary bottleneck seems to be the number of gunicorn workers.
-  For total failures to respond in within 5 seconds when confronted 8 workers
-  set at 50hz full blast. What is very strange is that the same set of failures
-  shows up for every worker on output, so I think something is funky with how
-  errors are getting passed back out. A different set do fail when looking at the
-  printout. HyperThreading doesn't seem to help here. Load seems split evenly between
-  the guni workers and postgres. Failures seem to happen in bursts at higher guni worker
-  counts.
-  | workers | avg failure % | cpu % sat all cores | effective rate Hz |
-  |---------+---------------+---------------------+-------------------|
-  |       2 |            50 |                  25 |                10 |
-  |       4 |             4 |                  60 |                16 |
-  |       4 |             9 |                  60 |                15 |
-  |       5 |             5 |                  80 |                18 |
-  |       8 |           4.5 |                 100 |                19 |
-  |       8 |             4 |                 100 |              19.5 |
-  
-  Checking the logs, the ~20 Hz over 8 workers is indeed translating to about
-  160 requests per second, which still seems really low I should be able to generate
-  way more requests than 20/worker.
-  
-  url_blaster is a ... bad piece of code.
-  
-  #+BEGIN_SRC bash
-    for id in {0100000..0120000};
-    do echo -e $id;
-    done | xargs -P 50 -r -n 1 curl -s "http://localhost:8606/base/ilx_${id}" > /dev/null
-  #+END_SRC
-  
-  hits nearly 800 rps of 404s and
+On =orpheus= the primary bottleneck seems to be the number of gunicorn workers.
+For total failures to respond in within 5 seconds when confronted 8 workers
+set at 50hz full blast. What is very strange is that the same set of failures
+shows up for every worker on output, so I think something is funky with how
+errors are getting passed back out. A different set do fail when looking at the
+printout. HyperThreading doesn't seem to help here. Load seems split evenly between
+the guni workers and postgres. Failures seem to happen in bursts at higher guni worker
+counts.
 
-  #+BEGIN_SRC bash
-    for id in {0100000..0101000};
-    do echo -e "http://localhost:8606/base/ilx_${id}";
-    done | xargs -L 1 -P 100 curl -s > /dev/null
-  #+END_SRC
-  
-  hits 180 rps running guni and db on the same server with 8 workers
-  (when requesting from not the server)
-  hits 140 rps running guni and db on the same server with 4 workers
-  
-  tornado seems pretty fast for 8 as well? who knows
-  
-  measuring with =time= from both the server and a remote shows that
-  we are hitting between 100 and 140 rps
+| workers | avg failure % | cpu % sat all cores | effective rate Hz |
+|---------+---------------+---------------------+-------------------|
+|       2 |            50 |                  25 |                10 |
+|       4 |             4 |                  60 |                16 |
+|       4 |             9 |                  60 |                15 |
+|       5 |             5 |                  80 |                18 |
+|       8 |           4.5 |                 100 |                19 |
+|       8 |             4 |                 100 |              19.5 |
 
-  who knows, maybe a materialized memory view would help for some of this,
-  though somehow I think the issue is probably in the python
+Checking the logs, the ~20 Hz over 8 workers is indeed translating to about
+160 requests per second, which still seems really low I should be able to generate
+way more requests than 20/worker.
+
+url_blaster is a ... bad piece of code.
+
+#+begin_src bash
+for id in {0100000..0120000};
+do echo -e $id;
+done | xargs -P 50 -r -n 1 curl -s "http://localhost:8606/base/ilx_${id}" > /dev/null
+#+end_src
   
-  pypy3 with sync worker has roughly the same performance, gevent is monstrously slow
-  gthread is about 20 rps slower than sync (1s over 1k requests), sync can get up to
-  ~150rps, don't forget the cold boot effect on the first run which adds a second to everything
-  eventlet is about ~12rps or so slower than sync
-  (all for 8 workers, 4 workers is ~25rps slower for sync, 6 workers for sync seems
-  to get fairly close to performance with 8 and the total cpu usage is fairly close as well)
-  tornado with 6 workers seems to push the limits and is a bit faster than sync at ~155rps
-  taking it to 8 shows a slowdown to ~145 rps 4 workers drops it to 133rps 5 hits 150rps
-  so it seems that tornado with 6 is about the best for pypy3
+hits nearly 800 rps of 404s and
+
+#+begin_src bash
+for id in {0100000..0101000};
+do echo -e "http://localhost:8606/base/ilx_${id}";
+done | xargs -L 1 -P 100 curl -s > /dev/null
+#+end_src
   
-  pypy3 clearly faster with tornado than anything running 3.6, bonus is that rdflib +will
-  be way faster too if we can get the memory leak during serialization worked out+ is now
-  way faster since fixing the "turns out that allocating hundreds of thousands of empty
-  lists just looks like a memory leak" bug. pypy3 is also about 4x faster when dumping nt
-  straight from the database, peaking at about 80MBps to disk on the same computer while
-  python3.6 hits ~20MBps.
+hits 180 rps running guni and db on the same server with 8 workers
+(when requesting from not the server)
+hits 140 rps running guni and db on the same server with 4 workers
+  
+tornado seems pretty fast for 8 as well? who knows
+  
+measuring with =time= from both the server and a remote shows that
+we are hitting between 100 and 140 rps
 
-  most of the pypy3 numbers are tainted by the fact that they were tested from the server
-  remotely there seems to be some cycling in the cpu usage, not sure why, but tornado at 8
-  seems like the best setup, eventlet might be ok too, more systematic testing would be needed
+who knows, maybe a materialized memory view would help for some of this,
+though somehow I think the issue is probably in the python
+  
+pypy3 with sync worker has roughly the same performance, gevent is monstrously slow
+gthread is about 20 rps slower than sync (1s over 1k requests), sync can get up to
+~150rps, don't forget the cold boot effect on the first run which adds a second to everything
+eventlet is about ~12rps or so slower than sync
+(all for 8 workers, 4 workers is ~25rps slower for sync, 6 workers for sync seems
+to get fairly close to performance with 8 and the total cpu usage is fairly close as well)
+tornado with 6 workers seems to push the limits and is a bit faster than sync at ~155rps
+taking it to 8 shows a slowdown to ~145 rps 4 workers drops it to 133rps 5 hits 150rps
+so it seems that tornado with 6 is about the best for pypy3
+  
+pypy3 clearly faster with tornado than anything running 3.6, bonus is that rdflib +will
+be way faster too if we can get the memory leak during serialization worked out+ is now
+way faster since fixing the "turns out that allocating hundreds of thousands of empty
+lists just looks like a memory leak" bug. pypy3 is also about 4x faster when dumping nt
+straight from the database, peaking at about 80MBps to disk on the same computer while
+python3.6 hits ~20MBps.
 
-  turning --log-level to critical gives maybe an extra second over 1000 requests
+most of the pypy3 numbers are tainted by the fact that they were tested from the server
+remotely there seems to be some cycling in the cpu usage, not sure why, but tornado at 8
+seems like the best setup, eventlet might be ok too, more systematic testing would be needed
 
-  tested bjoern but got issues with hung processes and there is still quite high cpu usage
-  best approach seems like it will be to cache things since the issue is likely that we
-  are hitting python code to retrieve mostly static content anyway
+turning --log-level to critical gives maybe an extra second over 1000 requests
+
+tested bjoern but got issues with hung processes and there is still quite high cpu usage
+best approach seems like it will be to cache things since the issue is likely that we
+are hitting python code to retrieve mostly static content anyway
