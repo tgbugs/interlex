@@ -217,3 +217,7 @@ perspective. This means that the API and diffs must be made
 independent of the user/group, however we do need a way to ensure that
 users and groups also claim their respective perspective name when
 dealing with collections/ontology files/termsets etc.
+
+NOTE: perspective names have to be qualified by group otherwise someone
+could register to control a perspective that would eventually become a
+user name for someone else.
