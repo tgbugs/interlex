@@ -1,39 +1,38 @@
 import os
+import orthauth as oa
 
-debug = False
-ilx_pattern = 'ilx_<regex("[0-9]{7}"):id>'
+auth = oa.configure_here('auth-config.py', __name__)
 
+# basics
+debug = auth.get('debug')
+ilx_pattern = auth.get('ilx-pattern')
 
 # ports
-port_api = 8500
-port_uri = 8505
-port_curies = 8510
-port_alt = 8515
+port_api = auth.get('port-api')
+port_uri = auth.get('port-uri')
+port_curies = auth.get('port-curies')
+port_alt = auth.get('port-alt')
 
 ## WARNING if you change one of these update the file in bin/
-port_guni_uri = 8606       # interlex-uri
-port_guni_curies = 8612    # interlex-curies
-port_guni_alt = 8618       # interlex-alt
+port_guni_uri = auth.get('port-guni-uri')        # interlex-uri
+port_guni_curies = auth.get('port-guni-curies')  # interlex-curies
+port_guni_alt = auth.get('port-guni-alt')        # interlex-alt
 
 # dev
-dev_remote_hosts = 'athena', 'arachne'
+dev_remote_hosts = auth.get('dev-remote-hosts')
 
 # testing
-test_host = 'localhost'
+test_host = auth.get('test-host')
 test_port = port_uri
 test_stress_port = port_guni_uri
-test_database = '__interlex_testing'
+test_database = auth.get('test-database')
 
 # db
-user = 'interlex-user'
-database = os.environ.get('INTERLEX_DATABASE', test_database)
+user = auth.get('db-user')
+database = auth.get('db-database')
 
 # mq
-vhost = 'interlex'
-broker_url = os.environ.get('CELERY_BROKER_URL',
-                            os.environ.get('BROKER_URL',
-                                           'amqp://guest:guest@localhost:5672//'))
-broker_backend = os.environ.get('CELERY_BROKER_BACKEND',
-                                os.environ.get('BROKER_BACKEND',
-                                               'rpc://'))
-accept_content = ('pickle', 'json')
+vhost = auth.get('mq-vhost')
+broker_url = auth.get('mq-broker-url')
+broker_backend = auth.get('mq-broker-backend')
+accept_content = auth.get('mq-accept-content')
