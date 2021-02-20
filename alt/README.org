@@ -1,3 +1,4 @@
+# -*- org-babel-tangle-use-relative-file-links: t -*-
 #+TITLE: InterLex alternate resolver setup
 #+OPTIONS: num:nil
 
@@ -36,17 +37,17 @@ You should also run =shellcheck= on the tangled files if you make any changes.
 The build machine will work with any version of python, however it that
 version does need to have =wheel= installed e.g. via =pip install wheel=.
 ** Install python on server
-Install =python3.6-devel= (or greater), =pip=, and =pipenv= on the server that
+Install =python3.7-devel= (or greater), =pip=, and =pipenv= on the server that
 will run InterLex Alt. For example on CentOS
 
 #+begin_src bash
-sudo yum install python36-devel python36-pip
+sudo yum install python37-devel python37-pip
 sudo pip install pipenv
 #+end_src
 ** Set environment variables
-Set =INTERLEX_USER= and =INTERLEX_SERVER= environment variables.
-The =INTERLEX_USER= should have =sudo= access. NOTE: this is probably
-bad security practice since =INTERLEX_USER= also runs the server.
+Set =INTERLEX_DEPLOY_USER=, =INTERLEX_USER=, and =INTERLEX_SERVER=
+environment variables.  The =INTERLEX_DEPLOY_USER= should have =sudo=
+access, =INTERLEX_USER= should NOT have =sudo= or =wheel= access.
 ** Build and deploy code and config
 Get the absolute path to the script and use it to find the alt folder.
 #+name: &alt-path
@@ -67,7 +68,7 @@ Go to the alt folder and clean out any existing build files.
 #+begin_src bash
 pushd ${ALT_PATH} &&
 git clean -dfx &&  # cleans only the alt subdir
-git checkout HEAD -- deploy_files/  # prevent stale user
+git checkout HEAD -- resources/filesystem/  # prevent stale user
 #+end_src
 
 Build python wheels and package them for deployment.
@@ -84,10 +85,15 @@ zip -r alt.zip README.org &&
 zip -r alt.zip run/ &&
 #+end_src
 
+# FIXME can't assume that INTERLEX_USER and INTERLEX_RUNTIME_USER are the same (sigh)
+# FIXME look at scigraph deploy for the right way to do this ?? no that doesn't quite
+# work because I hack around the permissioning issue by having two separate ssh
+# connections, which makes the code clearer on the one hand but the connections more
+# complex on the other (sigh)
 Deploy the build artifact to the server.
 #+name: &scp-zip
 #+begin_src bash
-scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
+rsync --archive --verbose alt.zip ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER}:${TEAMPTARGET}
 popd || exit 1
 #+end_src
 
@@ -99,9 +105,9 @@ The first time InterLex Alt is set up on a server run [[file:./bin/config-build.
 #+begin_src bash :tangle ./bin/config-build.sh :comments noweb
 <<&alt-path>>
 <<&pushd-clean>>
-grep -rl interlex deploy_files/ | xargs sed -i "s/{interlex-user}/${INTERLEX_USER}/g" &&
+grep -rl interlex resources/filesystem/ | xargs sed -i "s/{:interlex-user}/${INTERLEX_USER}/g" &&
 <<&build-alt-zip>>
-zip -r alt.zip deploy_files/  # first time only add deploy files
+zip -r alt.zip resources/filesystem/  # first time only add deploy files
 <<&scp-zip>>
 #+end_src
 
@@ -127,22 +133,27 @@ If you do not a warning will appear and the server will not start.
 The first time run [[file:./bin/config-remote.sh]].
 #+name: &config-remote-command
 #+begin_src bash :noweb yes
+# TODO interlex user account creation
+if [ ! -d /var/lib/ilxalt ]; then
+    sudo mkdir /var/lib/ilxalt
+fi
+pushd /var/lib/ilxalt  # FIXME SIGH
 rm -rf run/
-rm -rf deploy_files/
+rm -rf resources/filesystem/
 unzip -o alt.zip || exit 1
-sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.service /etc/systemd/system/ || exit 2
-sudo /bin/cp -f deploy_files/etc/systemd/system/ilxalt.socket /etc/systemd/system/ || exit 3
-sudo /bin/cp -f deploy_files/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ || exit 4
-sudo /bin/cp -f deploy_files/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ || exit 5  # carful here
+sudo /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.service /etc/systemd/system/ || exit 2
+sudo /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.socket /etc/systemd/system/ || exit 3
+sudo /bin/cp -f resources/filesystem/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ || exit 4
+sudo /bin/cp -f resources/filesystem/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ || exit 5  # carful here
 sudo unlink /etc/nginx/sites-enabled/uri.interlex.org.conf
 sudo ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf || exit 6
 sudo systemd-tmpfiles --create || exit 7
 sudo systemctl daemon-reload || exit 8
 sudo systemctl enable ilxalt || exit 9
-cd run  || exit 10
+pushd run  || exit 10
 pipenv --rm  # the very first time this can fail
 pipenv install || exit 11
-cd ~/ || exit 12
+popd || exit 12
 touch .mypass || exit 13
 chmod 0600 .mypass || exit 14
 if [ ! -s .mypass ]; then
@@ -167,7 +178,7 @@ fi
 #+name: config-remote.sh
 #+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/config-remote.sh :comments noweb
-ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "
+ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "
 <<&config-remote-command>>
 "
 SSH_EXIT=$?
@@ -184,6 +195,7 @@ fi
 Subsequently run [[file:./bin/remote.sh]].
 #+name: &remote-command
 #+begin_src bash :noweb yes
+pushd /var/lib/ilxalt  # FIXME SIGH
 mv -f run/*.whl .
 rm run/Pipenv.lock
 unzip -o alt.zip || exit 1
@@ -196,7 +208,7 @@ pipenv install *.whl || exit 3
 #+name: remote.sh
 #+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/remote.sh :comments noweb
-ssh ${INTERLEX_USER}@${INTERLEX_SERVER} "
+ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "
 <<&remote-command>>
 "
 SSH_EXIT=$?
