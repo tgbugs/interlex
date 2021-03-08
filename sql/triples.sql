@@ -1,5 +1,4 @@
 -- CONNECT TO interlex_test USER "interlex-admin";
--- see notes in new-schema.sql
 
 CREATE sequence if NOT exists interlex_ids_seq;
 
@@ -157,7 +156,7 @@ CREATE TRIGGER user_reference_name AFTER INSERT
 CREATE TYPE named_type AS ENUM ('serialization',
                                 'local_naming_conventions',  -- aka curies
                                 -- bound to bound_name incidentally so they are ranked higher
-                                -- FIXME hashing bound names for this is stupid
+                                -- FIXME hashing bound names for this is stupid ? or is it if you have very long names
                                 'bound_name',  -- just use the string itself? might be more space efficient to hash? we will want to be able to
                                          --   create name equivalences e.g. for mapping user iris to interlex iris?
                                          --   but probably not using the qualifier system... probably...
@@ -168,9 +167,9 @@ CREATE TYPE named_type AS ENUM ('serialization',
                                 -- 'source',  -- (name, metadata_identity, data_identity) but could be any subset of those, and we can reconstruct using the load data
                                 'metadata',  -- pairs, includes the type
                                 'data',  -- triples s p o type + lang
-                                'subgraph' -- FIXME how is this any different from data? unnamed subgraphs
+                                'subgraph', -- FIXME how is this any different from data? unnamed subgraphs
                                 'qualifier',
-                                'load',
+                                'load'
                                 -- singletion identified by hash on triple set  these are not named, that is the whole point, so they don't need to be here
                                 -- 'name-metadata' -- (name, metadata_identity)
                                 -- 'name-data' -- (name, data_identity)

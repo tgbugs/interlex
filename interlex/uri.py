@@ -242,7 +242,10 @@ def setup_runonce(app, endpoints, echo):
 def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
     # app setup and database binding
     app = Flask('InterLex uri server')
-    app.config['SQLALCHEMY_DATABASE_URI'] = dbUri()  # use os.environ.update
+    kwargs = {k:config.auth.get(f'db-{k}')  # TODO integrate with cli options
+              for k in ('user', 'host', 'port', 'database')}
+    kwargs['dbuser'] = kwargs.pop('user')
+    app.config['SQLALCHEMY_DATABASE_URI'] = dbUri(**kwargs)  # use os.environ.update
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['CELERY_BROKER_URL'] = config.broker_url
     app.config['CELERY_RESULT_BACKEND'] = config.broker_backend

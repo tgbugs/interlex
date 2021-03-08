@@ -19,7 +19,7 @@ port_guni_curies = auth.get('port-guni-curies')  # interlex-curies
 port_guni_alt = auth.get('port-guni-alt')        # interlex-alt
 
 # dev
-dev_remote_hosts = auth.get('dev-remote-hosts')
+dev_remote_hosts = auth.get_list('dev-remote-hosts')
 
 # testing
 test_host = auth.get('test-host')

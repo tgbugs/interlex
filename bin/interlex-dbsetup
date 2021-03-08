@@ -19,7 +19,7 @@ else
 fi
 
 if [ -z $2 ]; then
-    DATABASE=interlex_test
+    DATABASE=$(python -c 'from interlex.config import auth; print(auth.get("test-database"))')
 else
     DATABASE=$2
 fi
@@ -29,11 +29,11 @@ psql -U postgres -h localhost -p $PORT -d postgres  -f "${SQL}/postgres.sql" -v 
 psql -U postgres -h localhost -p $PORT -d $DATABASE -f "${SQL}/extensions.sql" &&
 
 # interlex-admin setup
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/schemas.sql"
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/groups.sql"
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/triples.sql"
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/user-uris.sql"
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/inserts.sql" -v resources=${RESOURCES} 
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/schemas.sql" &&
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/groups.sql" &&
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/triples.sql" &&
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/user-uris.sql" &&
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/inserts.sql" -v resources=${RESOURCES}  &&
 psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/permissions.sql" -v database=$DATABASE
 
 # tests

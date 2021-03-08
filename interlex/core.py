@@ -60,8 +60,6 @@ class uri(types.UserDefinedType):
 
 
 def dbUri(dbuser=config.user, host='localhost', port=5432, database=config.database):
-    if socket.gethostname() in config.dev_remote_hosts:
-        port = 54321
     if hasattr(sys, 'pypy_version_info'):
         dialect = 'psycopg2cffi'
     else:

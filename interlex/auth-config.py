@@ -22,13 +22,27 @@
      'test-host': 'localhost',
      'test-database': '__interlex_testing',
 
+     # alt
+     'alt-db-user': 'nif_eelg_secure',
+     'alt-db-host': 'nif-mysql.crbs.ucsd.edu',
+     'alt-db-port': 3306,
+     'alt-db-database': 'nif_eelg',
+
      # db
-     'db-user': 'interlex-user',
+     'db-user': {
+         'default': 'interlex-user',
+         'environment-variables': 'INTERLEX_DB_USER'},
+     'db-host': {
+         'default': 'localhost',
+         'environment-variables': 'INTERLEX_DB_HOST'},
+     'db-port': {
+         'default': 5432,
+         'environment-variables': 'INTERLEX_DB_PORT'},
      'db-database': {
          # we don't set a default here to prevent
          # accidental operations on a default db
          'default': None,
-         'environment-variables': 'INTERLEX_DATABASE',},
+         'environment-variables': 'INTERLEX_DB_DATABASE INTERLEX_DATABASE',},
 
      # mq
      'mq-vhost': 'interlex',

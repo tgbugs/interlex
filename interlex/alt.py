@@ -16,11 +16,7 @@ from interlex.render import TripleRender  # FIXME need to move the location of t
 
 def dbUri(user='nif_eelg_secure', host='nif-mysql.crbs.ucsd.edu', port=3306, database='nif_eelg'):
     DB_URI = 'mysql+pymysql://{user}:{password}@{host}:{port}/{db}'  # FIXME db => pyontutils refactor
-    if socket.gethostname() in config.dev_remote_hosts:
-        db_cfg_kwargs = mysql_conn_helper('localhost', database, user, 33060)  # see .ssh/config
-    else:
-        db_cfg_kwargs = mysql_conn_helper(host, database, user, port)
-
+    db_cfg_kwargs = mysql_conn_helper(host, database, user, port)
     return DB_URI.format(**db_cfg_kwargs)
 
 
@@ -196,13 +192,17 @@ def server_alt(db=None, dburi=dbUri()):
 
 
 def run_alt():
-    return server_alt(db=SQLAlchemy())
+    kwargs = {k:config.auth.get(f'alt-db-{k}')  # TODO integrate with cli options
+              for k in ('user', 'host', 'port', 'database')}
+    return server_alt(db=SQLAlchemy(), dburi=dbUri(**kwargs))
 
 
 def main():
     from sqlalchemy import create_engine
     from sqlalchemy.orm.session import sessionmaker
-    engine = create_engine(dbUri(), echo=True)
+    kwargs = {k:config.auth.get(f'alt-db-{k}')
+              for k in ('user', 'host', 'port', 'database')}
+    engine = create_engine(dbUri(**kwargs), echo=True)
     Session = sessionmaker()
     Session.configure(bind=engine)
     session = Session()
