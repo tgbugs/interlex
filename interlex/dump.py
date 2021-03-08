@@ -42,8 +42,15 @@ class MysqlExport:
         name = self._group_community[group]
 
         sql = ('SELECT * from terms WHERE '
-               'status != -2 AND '  # FIXME deleted terms :/
-               'orig_cid = (SELECT id FROM communities WHERE name = :name)')
+               'status != -2 AND '
+               'orig_cid = (SELECT id FROM communities WHERE name = :name) '
+               'UNION '
+               'SELECT * from terms WHERE '
+               'status != -2 AND '
+               'terms.id IN (SELECT * FROM (SELECT tc.tid FROM term_communities AS tc '
+               'JOIN communities AS c ON '
+               'tc.cid = c.id WHERE c.name = :name AND tc.status = "approved") AS subquery)')
+
         args = dict(name=name)
         yield from self.session.execute(sql, args)
 
