@@ -25,6 +25,8 @@ class TripleRender:
                               'FMA',
                               'EMAPA',
                               'BIRNLEX',
+                              'SCR',
+                              'RRID',
                               'NLX',
                               # FIXME TODO much more complex than this and source group rankings from db ...
                               'NDA.CDE',

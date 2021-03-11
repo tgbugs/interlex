@@ -59,6 +59,10 @@ def server_alt(db=None, dburi=dbUri()):
     def ilx_get(id, extension):
         return ilx(id, redirect=False)
 
+    @app.route('/base/curies')
+    def curies():
+        return ilxexp.getGroupCuries('base')
+
     @app.route('/base/ontologies/ilx_<id>')
     def ontologies_ilx(id):
         return ilx(id)

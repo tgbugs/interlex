@@ -247,7 +247,7 @@ class MysqlExport:
             id, baseiri, preferred_iri, type, ilxtype, ilx_fragment = basics(term)
             ids.add(id)
             done.add(baseiri)
-            preferred_iri = baseiri  # XXX dealt with by render prefs instead
+            preferred_iri = baseiri  # XXX dealt with by render prefs instead i.e. TripleRender.default_prefix_ranking
             yield preferred_iri, rdf.type, type
             yield preferred_iri, ilxr.type, ilxtype
             yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
@@ -328,7 +328,7 @@ class MysqlExport:
                 id, baseiri, preferred_iri, type, ilxtype, ilx_fragment = basics(term)
                 ids.add(id)
                 done.add(baseiri)
-                preferred_iri = baseiri  # XXX dealt with by render prefs instead
+                preferred_iri = baseiri  # XXX dealt with by render prefs instead i.e. TripleRender.default_prefix_ranking
                 yield preferred_iri, rdf.type, type
                 yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
 
