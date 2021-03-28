@@ -15,8 +15,7 @@ from pyontutils.namespaces import definition
 from pyontutils.namespaces import makeNamespaces, ILX, NIFRID, ilxtr
 from pyontutils.namespaces import rdf, owl
 from pyontutils.combinators import annotation
-from interlex import exc
-from interlex.exc import hasErrors
+from interlex import exceptions as exc
 from interlex.auth import Auth
 from interlex.core import printD, makeParamsValues
 from interlex.utils import log
@@ -971,7 +970,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         # TODO expected filesize to determine live or batch load
         return False
 
-    @hasErrors(exc.LoadError)
+    @exc.hasErrors(exc.LoadError)
     def __call__(self, expected_bound_name):
         if not self.times:
             self.times = {'begin':time.time()}
@@ -1064,7 +1063,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
         return bde_switch
 
-    @hasErrors(exc.LoadError)
+    @exc.hasErrors(exc.LoadError)
     def load(self):
         output = ''
         try:
@@ -1545,7 +1544,7 @@ class FileFromIRIFactory(FileFromBaseFactory):
 
         return super().check(name)
 
-    @hasErrors(exc.LoadError)
+    @exc.hasErrors(exc.LoadError)
     def __call__(self, expected_bound_name=None):
         if 'begin' not in self.times:
             self.times['begin'] = time.time()
@@ -1657,7 +1656,7 @@ class FileFromPostFactory(FileFromIRIFactory):
         # since there is additional form data
         return not (self.content_length_mb < self.immediate_loading_limit_mb)
 
-    @hasErrors(exc.LoadError)
+    @exc.hasErrors(exc.LoadError)
     def __call__(self, file_meta, serialization, create):
         if not self.times:
             self.times = {'begin':time.time()}

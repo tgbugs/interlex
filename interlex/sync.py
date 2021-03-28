@@ -1,16 +1,27 @@
-import socket
 from collections import defaultdict
+import rdflib
 from sqlalchemy import create_engine, inspect
+from pyontutils import combinators as cmb
+from pyontutils.core import OntId
+from pyontutils.namespaces import ILX, ilxtr, oboInOwl, owl, rdf, rdfs
+from pyontutils.namespaces import definition
+from interlex import alt
 from interlex import config
-from interlex.exc import bigError
-from interlex.core import synonym_types, dbUri
-from interlex.dump import Queries
+from interlex import exceptions as exc
+from interlex.core import synonym_types, dbUri, makeParamsValues
+from interlex.dump import Queries, MysqlExport
 from interlex.load import TripleLoaderFactory
+from interlex.utils import log as _log
+from interlex.namespaces import ilxr
+
+log = _log.getChild('sync')
 
 
 # get interlex
 class InterLexLoad:
+
     stype_lookup = synonym_types
+
     def __init__(self, db, do_cdes=False, debug=False):
         TripleLoader = TripleLoaderFactory(db.session)
         self.loader = TripleLoader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex')
@@ -20,13 +31,13 @@ class InterLexLoad:
         self.debug = debug
         self.admin_engine = create_engine(dbUri(dbuser='interlex-admin'), echo=True)
         self.admin_exec = self.admin_engine.execute
-        from pyontutils.utils import mysql_conn_helper
-        DB_URI = 'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}'
-        if socket.gethostname() in config.dev_remote_hosts:
-            dbconfig = mysql_conn_helper('localhost', 'nif_eelg', 'nif_eelg_secure', 33060)  # see .ssh/config
-        else:
-            dbconfig = mysql_conn_helper('nif-mysql.crbs.ucsd.edu', 'nif_eelg', 'nif_eelg_secure')
-        self.engine = create_engine(DB_URI.format(**dbconfig), echo=True)
+        kwargs = {k: config.auth.get(f'alt-db-{k}')
+                  for k in ('user', 'host', 'port', 'database')}
+        if kwargs['database'] is None:
+            msg = 'alt-db-database is None, did you remember to set one?'
+            raise ValueError(msg)
+
+        self.engine = create_engine(alt.dbUri(**kwargs), echo=True)
         dbconfig = None
         del(dbconfig)
         self.insp = inspect(self.engine)
@@ -38,7 +49,7 @@ class InterLexLoad:
         self.make_triples()
         self.ids()
 
-    @bigError
+    @exc.bigError
     def local_load(self):
         from pyontutils.core import makeGraph
         loader = self.loader
@@ -61,12 +72,12 @@ class InterLexLoad:
         setup_ok = self.loader(expected_bound_name)
 
         if setup_ok is not None:
-            raise LoadError(setup_ok)
+            raise exc.LoadError(setup_ok)
 
-    @bigError
+    @exc.bigError
     def remote_load(self):
         self.loader.load()
-        printD('Yay!')
+        log.debug('Yay!')
 
     def load(self):
         self.local_load()
@@ -78,7 +89,7 @@ class InterLexLoad:
         vt, self.ilx_params = makeParamsValues(values)
         self.ilx_sql = 'INSERT INTO interlex_ids VALUES ' + vt + ' ON CONFLICT DO NOTHING'  # FIXME BAD
         self.current = int(values[-1][0].strip('0'))
-        printD(self.current)
+        log.debug(self.current)
 
     def cull_bads(self, eternal_screaming, values, ind):
         verwat = defaultdict(list)
@@ -95,11 +106,11 @@ class InterLexLoad:
                 ver_curies[iri][0] = ilx
                 ver_curies[iri][1].add(curie)
 
-        mult_curies = {k:v for k, v in ver_curies.items() if len(v[1]) > 1}
+        mult_curies = {k: v for k, v in ver_curies.items() if len(v[1]) > 1}
 
         maybe_mult = defaultdict(list)
         versions = defaultdict(list)
-        for ilx, iri, ver in sorted(values, key=lambda t:t[-1], reverse=True):
+        for ilx, iri, ver in sorted(values, key=lambda t: t[-1], reverse=True):
             versions[ilx].append(ver)
             maybe_mult[iri].append(ilx)
 
@@ -110,8 +121,10 @@ class InterLexLoad:
         dupe_report = {k:tuple(f'http://uri.interlex.org/base/ilx_{i}' for i in v)
                        for k, v in maybe_mult.items()
                        if len(set(v)) > 1}
-        readable_report = {OntId(k):tuple(OntId(e) for e in v) for k, v in dupe_report.items()}
-        _ = [print(repr(k), '\t', *(f'{e!r}' for e in v)) for k, v in sorted(readable_report.items())]
+        readable_report = {OntId(k):tuple(OntId(e) for e in v)
+                           for k, v in dupe_report.items()}
+        _ = [print(repr(k), '\t', *(f'{e!r}' for e in v))
+             for k, v in sorted(readable_report.items())]
 
         dupes = tuple(dupe_report) + tuple(mult_curies)
 
@@ -190,7 +203,7 @@ class InterLexLoad:
         self.eid_skips = skips
         self.eid_user_iris = user_iris
         if self.debug:
-            printD(bads)
+            log.debug(bads)
         return sql, params
 
     def user_iris(self):
@@ -198,6 +211,7 @@ class InterLexLoad:
             self.existing_ids()
 
         bads = []
+
         def iri_to_group_uripath(iri):
             if 'interlex.org' not in iri:
                 raise ValueError(f'goofed {iri}')
@@ -222,12 +236,17 @@ class InterLexLoad:
             return user, path
 
         _values = [(ilx_id, *iri_to_group_uripath(iri))
-                    for ilx_id, iri in self.eid_user_iris]
+                   for ilx_id, iri in self.eid_user_iris]
 
         if bads:
             raise ValueError('\n'.join(bads))
 
         gidmap = self.queries.getGroupIds(*sorted(set(u for _, u, _ in _values)))
+        # XXX if you encounter an error here it is probably because
+        # new groups were used by convention in the ontology and
+        # loaded into interlex as existing ids and we don't have them
+        # listed here
+
         print(gidmap)
         values = [(ilx_id, gidmap[g], uri_path)
                   for ilx_id, g, uri_path in _values]
@@ -256,16 +275,12 @@ class InterLexLoad:
             queries['terms'] = 'SELECT * FROM terms'
         else:
             queries['cde_ids'] = 'SELECT id, ilx FROM terms where type = "cde"'
-        data = {name:engine.execute(query).fetchall()
+        data = {name:engine.execute(query).fetchall()  # FIXME yeah this is gonna be big right?
                 for name, query in queries.items()}
         ilx_index = {}
         id_type = {}
-        triples = [(ILX[ilx], oboInOwl.hasDbXref, iri) for ilx, iri in self.eid_skips]
-        type_to_owl = {'term':owl.Class,
-                       'cde':owl.Class,
-                       'fde':owl.Class,
-                       'annotation':owl.AnnotationProperty,
-                       'relationship':owl.ObjectProperty}
+        triples = [(ILX[ilx], oboInOwl.hasDbXref, iri) for ilx, iri in self.eid_skips]  # FIXME broken for new fragment prefixes
+        type_to_owl = MysqlExport.types
 
         def addToIndex(id, ilx, class_):
             if ilx not in ilx_index:
@@ -308,11 +323,10 @@ class InterLexLoad:
             addToIndex(row.id, ilx, class_)
 
         versions = {k:v for k, v in ilx_index.items() if len(v) > 1}  # where did our dupes go!?
-        tid_to_ilx = {v:k
-                    for k, vs in ilx_index.items()
-                    for v in vs}
+        tid_to_ilx = {v:k for k, vs in ilx_index.items() for v in vs}
 
-        multi_type = {tid_to_ilx[id]:types for id, types in id_type.items() if len(types) > 1}
+        multi_type = {tid_to_ilx[id]:types for id, types in id_type.items()
+                      if len(types) > 1}
 
         def baseUri(e):
             return f'http://uri.interlex.org/base/ilx_{tid_to_ilx[e]}'
@@ -327,8 +341,9 @@ class InterLexLoad:
                 t = baseUri(tid), ilxr.synonym, rdflib.Literal(literal)
                 triples.append(t)
                 if type:  # yay for empty string! >_<
-                    stype =  self.stype_lookup[type]
-                    triples.extend(annotation(t, (ilxtr.synonymType, stype)).value)
+                    stype = self.stype_lookup[type]
+                    triples.extend(
+                        cmb.annotation(t, (ilxtr.synonymType, stype)).value)
 
         WTF = []
         for row in data['object_properties']:
@@ -366,9 +381,9 @@ class InterLexLoad:
         self.triples = triples
         self.wat = bads, WTF, WTF2
         if self.debug and (bads or WTF or WTF2):
-            printD(bads[:10])
-            printD(WTF[:10])
-            printD(WTF2[:10])
+            log.debug(bads[:10])
+            log.debug(WTF[:10])
+            log.debug(WTF2[:10])
             breakpoint()
             raise ValueError('BADS HAVE ENTERED THE DATABASE AAAAAAAAAAAA')
         return triples

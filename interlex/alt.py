@@ -7,7 +7,7 @@ from pyontutils import sneechenator as snch  # FIXME why do we need to import th
 from pyontutils.utils import mysql_conn_helper, TermColors as tc
 from pyontutils.core import makeGraph, OntGraph
 from pyontutils.namespaces import PREFIXES as uPREFIXES, rdf, rdfs  # FIXME should not need these here :/
-from interlex import exc
+from interlex import exceptions as exc
 from interlex import config
 from interlex import render
 from interlex.dump import MysqlExport
@@ -206,6 +206,9 @@ def main():
     from sqlalchemy.orm.session import sessionmaker
     kwargs = {k:config.auth.get(f'alt-db-{k}')
               for k in ('user', 'host', 'port', 'database')}
+    if kwargs['database'] is None:
+        raise ValueError('alt-db-database is None, did you remember to set one?')
+
     engine = create_engine(dbUri(**kwargs), echo=True)
     Session = sessionmaker()
     Session.configure(bind=engine)

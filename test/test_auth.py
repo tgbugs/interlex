@@ -1,6 +1,6 @@
 import unittest
 import pytest
-from interlex.exc import NotGroup
+from interlex import exceptions as exc
 from interlex.load import UnsafeBasicDBFactory
 from .setup_testing_db import getSession
 
@@ -14,7 +14,7 @@ class TestAuth(unittest.TestCase):
             try:
                 UnsafeBasicDB('not a group', 'not a user')
                 raise AssertionError('this should have failed due to not being group')
-            except NotGroup as e:
+            except exc.NotGroup as e:
                 pass
         finally:
             session.close()

@@ -11,21 +11,23 @@ from pyontutils.utils import TermColors as tc
 from pyontutils.namespaces import makePrefixes, definition
 from interlex import tasks
 from interlex import config
-from interlex import exc
+from interlex import exceptions as exc
 from interlex.auth import Auth
-from interlex.core import printD, diffCuries, makeParamsValues, default_prefixes
+from interlex.core import diffCuries, makeParamsValues, default_prefixes
 from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
-from interlex.utils import log
+from interlex.utils import log as _log
 from interlex.config import ilx_pattern
 from interlex.render import TripleRender  # FIXME need to move the location of this
 from IPython import embed
+
+log = _log.getChild('endpoints')
 
 tripleRender = TripleRender()
 
 
 def getBasicDB(self, group, request):
-    #printD(f'{group}\n{request.method}\n{request.url}\n{request.headers}')
+    #log.debug(f'{group}\n{request.method}\n{request.url}\n{request.headers}')
     try:
         auth_group, auth_user, scope, auth_token = self.auth.authenticate_request(request)
     except self.auth.ExpiredTokenError:
@@ -162,7 +164,7 @@ class Endpoints:
             # we keep the user for provenance and auditing purposes
             return self.UnsafeBasicDB(group, auth_user, read_only=True)
         except exc.NotGroup:
-            printD('not group?')
+            log.debug('not group?')
             return None
 
     def getGroupCuries(self, group, epoch_verstr=None,
@@ -174,7 +176,7 @@ class Endpoints:
                     for cp, ip in PREFIXES.items()}
         if not PREFIXES:  # we get the base elsewhere
             PREFIXES = default
-        #printD(PREFIXES)
+        #log.debug(PREFIXES)
         graph = makeGraph(group + '_curies_helper', prefixes=PREFIXES if PREFIXES else default_prefixes).g
         return PREFIXES, graph
 
@@ -258,7 +260,7 @@ class Endpoints:
     def _ilx(self, group, id, func):
         PREFIXES, graph = self.getGroupCuries(group)
         resp = self.queries.getById(id, group)
-        #printD(resp)
+        #log.debug(resp)
         # TODO formatting rules for subject and objects
         object_to_existing = self.queries.getResponseExisting(resp, type='o')
 
@@ -433,7 +435,7 @@ class Endpoints:
     @basic
     def curies(self, group, prefix_iri_curie, db=None):
         # FIXME confusion between group (aka group) and logged in group :/
-        #printD(prefix_iri_curie)
+        #log.debug(prefix_iri_curie)
         PREFIXES, graph = self.getGroupCuries(group)
         if prefix_iri_curie.startswith('http') or prefix_iri_curie.startswith('file'):  # TODO decide about urlencoding
             iri = prefix_iri_curie
@@ -670,12 +672,12 @@ class Ontologies(Endpoints):
         # response needs to include warnings about any parts of the file that could not be lifted to interlex
         # TODO for ?iri=external-iri validate that uri_host(external-iri) and /ontologies/... ... match
         # we should be able to track file 'renames' without too much trouble
-        #printD(group, filename, extension, ont_path)
+        #log.debug(group, filename, extension, ont_path)
         dbuser = db.user  # FIXME make sure that the only way that db.user can be set is if it was an auth user
                         # the current implementation does not gurantee that, probably easiest to pass the token
                         # again for insurance ...
         #if user not in getUploadUsers(group):
-        #printD(request.headers)
+        #log.debug(request.headers)
 
         if request.method == 'HEAD':
             # TODO return bound_name + metadata
@@ -739,19 +741,19 @@ class Ontologies(Endpoints):
             # check what is being posted
             #embed()
             #if requests.args:
-                #printD(request.args)
+                #log.debug(request.args)
             #elif request.json is not None:  # jsonld u r no fun
-                #printD(request.json)
+                #log.debug(request.json)
                 #{'iri':'http://purl.obolibrary.org/obo/uberon.owl'}
             #elif request.data:
-                #printD(request.data)
+                #log.debug(request.data)
 
             if not existing:
                 if request.files:
                     # TODO retrieve and if existing-iri make sure stuff matches
-                    printD(request.files)
+                    log.debug(request.files)
                 if request.json is not None:  # jsonld u r no fun
-                    printD(request.json)
+                    log.debug(request.json)
                     if 'name' in request.json:
                         name = request.json['name']  # FIXME not quite right?
                         if name.startswith('file://'):
@@ -807,7 +809,7 @@ class Ontologies(Endpoints):
                         # TODO get actual user from the api key
                         # out = f(user, filepath, ontology_iri, new=True)
                         #embed()
-                        printD('should be done running?')
+                        log.debug('should be done running?')
 
                         # TODO return loading stats etc
                         return out

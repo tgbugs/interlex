@@ -53,6 +53,9 @@ Examples:
     interlex id -u base -n tgbugs ilxtr:brain
 
 Options:
+    -t --test               run with config used for testing
+    --production            run with config used for production
+
     -g --group=GROUP        the group whose data should be returned [default: api]
     -u --user=USER          alias for --group
     -n --names-group=NG     the group whose naming conventions should be used [default: api]
@@ -345,8 +348,15 @@ def main():
     options = Options(args, defaults)
     # run all database settings through the environment
     # just have to make sure to set it before config is imported
-    if options.database:
-        os.environ.update({'INTERLEX_DATABASE':args['<database>']})
+    if options.test:
+        # FIXME I think this default for this is backwards, the test database
+        # should be the default if no options are provided
+        from interlex.config import auth
+        os.environ['INTERLEX_DATABASE'] = auth.get('test-database')
+        # FIXME this is super janky probably also need to update the host
+        # it also destroys the provenance for the config setting
+    elif options.database:
+        #os.environ.update({'INTERLEX_DATABASE':args['<database>']})
         os.environ['INTERLEX_DATABASE'] = args['<database>']#.update({'INTERLEX_DATABASE':args['<database>']})
 
     main = Main(options)

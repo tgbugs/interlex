@@ -245,6 +245,9 @@ def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
     kwargs = {k:config.auth.get(f'db-{k}')  # TODO integrate with cli options
               for k in ('user', 'host', 'port', 'database')}
     kwargs['dbuser'] = kwargs.pop('user')
+    if kwargs['database'] is None:
+        raise ValueError('db-database is None, did you remember to set one?')
+
     app.config['SQLALCHEMY_DATABASE_URI'] = dbUri(**kwargs)  # use os.environ.update
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['CELERY_BROKER_URL'] = config.broker_url

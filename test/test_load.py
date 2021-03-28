@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 from pathlib import Path
 from pyontutils.config import devconfig  # FIXME this will cause issues down the line
-from interlex.exc import LoadError, NotGroup
+from interlex import exceptions as exc
 from interlex.core import FakeSession
 from interlex.load import FileFromFileFactory, FileFromIRIFactory
 from test.setup_testing_db import getSession
@@ -54,7 +54,7 @@ class TestLoader(unittest.TestCase):
             check_not_ok = fff.check(name)
             setup_ok = fff(ebn)
             if setup_ok is not None:
-                raise LoadError(setup_ok)
+                raise exc.LoadError(setup_ok)
             #fff.process_graph()  # load calls this, but this is what is needed if you want the graph loaded but not sent to interlex
             #fff.subgraph_identities  # after calling process_graph this will work
             out = fff.load()  # TODO raise error on this one
@@ -74,7 +74,7 @@ class TestLoader(unittest.TestCase):
         check_not_ok = fff.check(self.nasty)
         setup_ok = fff(self.nastyebn)
         if setup_ok is not None:
-            raise LoadError(setup_ok)
+            raise exc.LoadError(setup_ok)
 
         out = fff.load()
 

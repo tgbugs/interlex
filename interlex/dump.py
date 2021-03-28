@@ -6,7 +6,7 @@ from pyontutils.utils_extra import check_value
 from pyontutils.namespaces import NIFRID, ilxtr, definition
 from pyontutils.namespaces import rdf, rdfs, owl, skos
 from pyontutils.combinators import annotation
-from interlex.exc import ShouldNotHappenError
+from interlex import exceptions as exc
 from interlex.core import log, makeParamsValues, synonym_types
 from interlex.namespaces import ilxr, ilxrtype
 
@@ -17,7 +17,8 @@ class MysqlExport:
              'relationship': owl.ObjectProperty,
              'cde': owl.Class,
              'fde': owl.Class,
-             'TermSet': ilxr.TermSet,
+             'pde': owl.Class,  # FIXME or is it a named individual?
+             'TermSet': ilxr.TermSet,  # FIXME vs owl:Ontology view
              }
 
     _group_community = {
@@ -115,7 +116,7 @@ class MysqlExport:
         term = next(rp)
         try:
             next(rp)
-            raise ShouldNotHappenError(f'too many results for {ilx_fragment}')
+            raise exc.ShouldNotHappenError(f'too many results for {ilx_fragment}')
         except StopIteration:
             pass
 

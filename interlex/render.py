@@ -11,7 +11,7 @@ from pyontutils.core import OntId, OntGraph
 from pyontutils.qnamefix import cull_prefixes
 from pyontutils.namespaces import isAbout, ilxtr
 from pyontutils.closed_namespaces import rdf, rdfs, owl
-from interlex import exc
+from interlex import exceptions as exc
 from interlex.utils import log
 
 class TripleRender:
