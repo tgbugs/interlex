@@ -47,8 +47,10 @@ INSERT INTO groups (groupname) VALUES
        ('paxinos'),
        ('waxholm'),
        ('berman'),
+       ('npo'),
        ('neurons'),
        ('neuinfo'),
+       ('swanson'),
        ('NeuroLex'),
        ('InterLex');
 
@@ -81,10 +83,13 @@ INSERT INTO groups (own_role, groupname)
                          'maryann',
 
                          -- compact
+                         'h',  -- hashes XXX not sure if want
                          'l',  -- loads
+                         'o',  -- ontologies
                          'q',  -- qualifiers
                          'r',  -- readable
                          't',  -- triples
+                         'u',  -- uris
                          'hq',  -- hasQualifier
                          'ht',  -- hasTriple
                          'pq',  -- parentQualifier
