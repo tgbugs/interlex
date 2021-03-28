@@ -21,18 +21,22 @@ from ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
 from pyontutils.core import makeGraph, OntId
 from pyontutils.utils import TermColors as tc, injective_dict
 from pyontutils.config import devconfig
-from pyontutils.namespaces import PREFIXES as uPREFIXES, ilxtr, rdf, rdfs, owl, oboInOwl
+from pyontutils.namespaces import PREFIXES as uPREFIXES
+from pyontutils.namespaces import ilxtr, rdf, rdfs, owl, oboInOwl, NIFRID
 from pyontutils.combinators import annotation
 from pyontutils.identity_bnode import IdentityBNode, IdLocalBNode
 from interlex import config
 from interlex.utils import printD, log
+from interlex.namespaces import fma
 from IPython import embed
 
 synonym_types = {'abbrev':ilxtr['synonyms/abbreviation'],
-                 'oboInOwl:hasBroadSynonym': ilxtr['synonyms/broad'],
+                 'oboInOwl:hasBroadSynonym': ilxtr['synonyms/broad'],  # FIXME just use oboInOwl?
                  'oboInOwl:hasExactSynonym': ilxtr['synonyms/exact'],
                  'oboInOwl:hasNarrowSynonym': ilxtr['synonyms/narrow'],
                  'oboInOwl:hasRelatedSynonym': ilxtr['synonyms/related'],
+                 'fma:synonym': fma.synonym,  # perserved for prov
+                 'NIFRID:synonym': NIFRID.synonym,
 }
 default_prefixes = {'rdf':str(rdf),
                     'rdfs':str(rdfs),

@@ -277,6 +277,7 @@ class InterLexLoad:
             queries['cde_ids'] = 'SELECT id, ilx FROM terms where type = "cde"'
         data = {name:engine.execute(query).fetchall()  # FIXME yeah this is gonna be big right?
                 for name, query in queries.items()}
+        #breakpoint()  # XXX break here
         ilx_index = {}
         id_type = {}
         triples = [(ILX[ilx], oboInOwl.hasDbXref, iri) for ilx, iri in self.eid_skips]  # FIXME broken for new fragment prefixes
@@ -329,6 +330,7 @@ class InterLexLoad:
                       if len(types) > 1}
 
         def baseUri(e):
+            # FIXME this is wrong for fde cde pde
             return f'http://uri.interlex.org/base/ilx_{tid_to_ilx[e]}'
 
         synWTF = []
@@ -356,6 +358,7 @@ class InterLexLoad:
                 WTF.append(row)
 
         WTF2 = []
+        WTF3 = []
         for row in data['subClassOf']:
             _, s_id, o_id, *rest = row
             try:
@@ -367,6 +370,10 @@ class InterLexLoad:
             # TODO for multi type properties we only need the overlap
             s_type = id_type[s_id][0]
             o_type = id_type[o_id][0]
+            if s_type != o_type:
+                WTF3.append(row)
+                continue
+
             assert s_type == o_type, f'types do not match! {s_type} {o_type}'
             # FIXME XXX it was possible to insert subPropertyOf on Classes :/ and the errors were silent
             if s_type == owl.Class:
