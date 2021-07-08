@@ -294,7 +294,7 @@ class MysqlExport:
                 p = NIFRID.synonym
                 triple = preferred_iri, p, oo
                 yield from annotation(triple, (ilxtr.synonymType, stype))()
-            elif p.startswith('oboInOwl:'):
+            elif [_ for _ in ('fma:', 'NIFRID:', 'oboInOwl:') if p.startswith(_)]:
                 p = OntId(p).u
             else:
                 p = rdflib.URIRef(p)
