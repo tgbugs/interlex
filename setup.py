@@ -16,7 +16,7 @@ __version__ = find_version('interlex/__init__.py')
 with open('README.md', 'rt') as f:
     long_description = f.read()
 
-tests_require = ['pytest', 'pytest-runner']
+tests_require = ['pytest',]
 setup(name='InterLex',
       version=__version__,
       description='A terminology management system.',
@@ -32,6 +32,7 @@ setup(name='InterLex',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
       ],
       keywords='interlex neurolex lexicon quadstore rdf owl linked-data',
       packages=['interlex'],
@@ -39,17 +40,17 @@ setup(name='InterLex',
       tests_require=tests_require,
       install_requires=[
           'celery',
-          'elasticsearch',
           'flask',
           'flask-restx',
           'flask_sqlalchemy',
           'orthauth',
-          'rdflib-jsonld>=0.5.0',
+          'rdflib>=6.0.2',
           "psycopg2; implementation_name != 'pypy'",
           "psycopg2cffi; implementation_name == 'pypy'",
           'pyontutils>=0.1.27',
       ],
       extras_require={'dev': ['mysql-connector'],
+                      'elasticsearch': ['elasticsearch'],
                       'test': tests_require,
                      },
       scripts=['bin/interlex-uri', 'bin/interlex-curies', 'bin/interlex-dbsetup'],
