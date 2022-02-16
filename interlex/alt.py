@@ -15,6 +15,7 @@ from interlex.render import TripleRender  # FIXME need to move the location of t
 
 
 def dbUri(user='nif_eelg_secure', host='nif-mysql.crbs.ucsd.edu', port=3306, database='nif_eelg'):
+    # NOTE we MUST use pymysql here because mysqlconnector cannot convert tuples like in :ids
     DB_URI = 'mysql+pymysql://{user}:{password}@{host}:{port}/{db}'  # FIXME db => pyontutils refactor
     db_cfg_kwargs = mysql_conn_helper(host, database, user, port)
     return DB_URI.format(**db_cfg_kwargs)
