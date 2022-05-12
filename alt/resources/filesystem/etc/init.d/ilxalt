@@ -1,0 +1,67 @@
+#!/sbin/openrc-run
+# Copyright 1999-2018 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+: ${LOG_LEVEL:=info}
+: ${SVCGROUP:=interlex}
+: ${SVCUSER:=interlex}
+: ${LOG_LOC:="/var/log/${SVCNAME}"}
+
+run_dir=${run_dir:-/run}
+LOG="${LOG_LOC}/sysout.log"
+
+socket="unix:/run/${SVCNAME}/socket"
+pidfile="${run_dir}/${SVCNAME}/pid"
+start_stop_daemon_args="
+--group ${SVCGROUP}
+--user ${SVCUSER}
+--wait 1500"
+command="/usr/bin/gunicorn"
+command_args="--bind ${socket}
+--daemon
+--pid ${pidfile}
+--name ${SVCNAME}
+--workers 2
+--worker-class gevent
+--timeout 30
+--group ${SVCGROUP}
+--user ${SVCUSER}
+--log-level ${LOG_LEVEL}
+--log-file ${LOG}
+--capture-output
+interlex.alt_server:app"
+retry='TERM/30/KILL/5'
+
+command_owner="${SVCUSER}:${SVCGROUP}"
+
+configcheck() {
+    OOPS=0
+    MYPASS=$(eval echo "~${SVCUSER}/.mypass")
+    if [ ! -f ${MYPASS} ]; then
+        eend 1 "${MYPASS} does not exist!"
+        OOPS=1
+    fi
+    if [ $(stat -c %a ${MYPASS}) != 600 ]; then
+        eend 1 "${MYPASS} is readable by others! Please chmod 0600 ${MYPASS}"
+        OOPS=1
+    fi
+
+    if [ ${OOPS} -ne 0 ]; then
+        return 1
+    fi
+
+    checkpath --directory --owner ${command_owner} --mode 0775 "${run_dir}/${SVCNAME}"
+    checkpath --directory --owner ${command_owner} --mode 0775 "${LOG_LOC}"
+}
+
+start_pre() {
+	if [ "${RC_CMD}" != "restart" ]; then
+		configcheck || return 1
+	fi
+}
+
+stop_pre() {
+	if [ "${RC_CMD}" = "restart" ]; then
+		configcheck || return 1
+	fi
+}

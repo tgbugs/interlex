@@ -1,0 +1,5 @@
+# gunicorn log level
+LOG_LEVEL=
+# log location
+LOG_LOC=
+

@@ -45,7 +45,6 @@ retry='TERM/30/KILL/5'
 command_owner="${SVCUSER}:${SVCGROUP}"
 
 depend() {
-    need net
     if [[ "${BROKER_URL}" == *"@localhost"* ]]; then
         # only run if not using a remote broker
         use celery
