@@ -22,7 +22,7 @@ class MysqlExport:
              }
 
     _group_community = {
-        'sparc': 'SPARC Anatomical Working Group',
+        'sparc': 'SPARC Anatomical Working Group',  # 504
     }
     _group_include_full_objects = {
         'sparc': (OntId('ILX:0738400').u,  # ilx.includeForSPARC
@@ -42,11 +42,16 @@ class MysqlExport:
     def group_terms(self, group):
         name = self._group_community[group]
 
+        # XXX NOTE this explicitly EXCLUDES TermSet, which may be
+        # confusing, because technically communities can adopt term sets
+        # however, the double counting is worse in this case
         sql = ('SELECT * from terms WHERE '
+               'terms.type != "TermSet" AND '
                'status != -2 AND '
                'orig_cid = (SELECT id FROM communities WHERE name = :name) '
                'UNION '
                'SELECT * from terms WHERE '
+               'terms.type != "TermSet" AND '
                'status != -2 AND '
                'terms.id IN (SELECT * FROM (SELECT tc.tid FROM term_communities AS tc '
                'JOIN communities AS c ON '

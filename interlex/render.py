@@ -8,6 +8,7 @@ from htmlfn import atag, htmldoc
 from htmlfn import table_style, render_table, ttl_html_style
 from ttlser import CustomTurtleSerializer
 from pyontutils.core import OntId, OntGraph
+from pyontutils.utils import isoformat
 from pyontutils.qnamefix import cull_prefixes
 from pyontutils.namespaces import isAbout, ilxtr
 from pyontutils.closed_namespaces import rdf, rdfs, owl
@@ -243,9 +244,10 @@ class TripleRender:
               title, mimetype, ontid, ranking=default_prefix_ranking):
         # FIXME abstract to replace id with ontology name ... local ids are hard ...
         preferred_iri, rgraph = self.renderPreferences(group, graph, id, ranking)
+        # FIXME nowish should come from the last change or the last transitive change
         nowish = datetime.utcnow()  # request doesn't have this
-        epoch = nowish.timestamp()
-        iso = nowish.isoformat()
+        epoch = int(nowish.timestamp())  # truncate to second to match iso
+        iso = isoformat(nowish)
         if ontid is None:
             ontid = rdflib.URIRef(f'http://uri.interlex.org/{group}'
                                 f'/ontologies/ilx_{id}')

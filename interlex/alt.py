@@ -5,7 +5,7 @@ from flask_sqlalchemy import SQLAlchemy
 import ontquery as oq
 from pyontutils import sneechenator as snch  # FIXME why do we need to import this here this is an issue :/
 from pyontutils.utils import mysql_conn_helper, TermColors as tc
-from pyontutils.core import makeGraph, OntGraph
+from pyontutils.core import OntGraph
 from pyontutils.namespaces import PREFIXES as uPREFIXES, rdf, rdfs  # FIXME should not need these here :/
 from interlex import exceptions as exc
 from interlex import config
@@ -87,7 +87,8 @@ def server_alt(db=None, dburi=dbUri()):
         except exc.UnsupportedType as e:
             return e.message, e.code
 
-        graph = makeGraph(group + '_export_helper', prefixes=uPREFIXES).g
+        graph = OntGraph()
+        graph.namespace_manager.populate_from(uPREFIXES)
         [graph.add(t) for t in ilxexp._call_group(group)]
         ontid = f'http://uri.interlex.org/{group}/ontologies/community-terms'  # FIXME
         kwargs = {}  # FIXME indicates a design flaw ...
