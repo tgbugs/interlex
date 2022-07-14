@@ -8,7 +8,7 @@ from htmlfn import atag, htmldoc
 from htmlfn import table_style, render_table, ttl_html_style
 from ttlser import CustomTurtleSerializer
 from pyontutils.core import OntId, OntGraph
-from pyontutils.utils import isoformat
+from pyontutils.utils import isoformat, utcnowtz
 from pyontutils.qnamefix import cull_prefixes
 from pyontutils.namespaces import isAbout, ilxtr
 from pyontutils.closed_namespaces import rdf, rdfs, owl
@@ -220,6 +220,16 @@ class TripleRender:
             t = (ns, np, no)
             new_graph.add(t)
 
+        if not hasIlxId:
+            # handle old case where pref and ilx were not present
+            cands = list(graph.subjects(rdf.type, owl.Class))
+            if len(cands) == 1:
+                s = OntId(cands[0])
+                if s.prefix == 'ILX':
+                    new_graph.add((s.u, ilxtr.hasIlxId, s.u))
+                    new_graph.add((s.u, ilxtr.hasIlxPreferredId, s.u))
+                    hasIlxId[s.u] = True
+
         for k, v in hasIlxId.items():
             if not v:
                 new_graph.add((k, ilxtr.MISSING_ILX_ID, rdflib.Literal(True)))
@@ -245,12 +255,12 @@ class TripleRender:
         # FIXME abstract to replace id with ontology name ... local ids are hard ...
         preferred_iri, rgraph = self.renderPreferences(group, graph, id, ranking)
         # FIXME nowish should come from the last change or the last transitive change
-        nowish = datetime.utcnow()  # request doesn't have this
+        nowish = utcnowtz()  # request doesn't have this
         epoch = int(nowish.timestamp())  # truncate to second to match iso
         iso = isoformat(nowish)
         if ontid is None:
             ontid = rdflib.URIRef(f'http://uri.interlex.org/{group}'
-                                f'/ontologies/ilx_{id}')
+                                  f'/ontologies/ilx_{id}')
             ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/ilx_{id}')
         else:
             po = PurePosixPath(ontid)
@@ -265,7 +275,7 @@ class TripleRender:
         if preferred_iri is not None:
             rgraph.add((ontid, isAbout, preferred_iri))
             rgraph.add((ontid, rdfs.comment, rdflib.Literal('InterLex single term result for '
-                                                           f'{group}/ilx_{id} at {iso}')))
+                                                            f'{group}/ilx_{id} at {iso}')))
 
         # TODO consider data identity?
         return cull_prefixes(rgraph, {k:v for k, v in rgraph.namespaces()}).g  # ICK as usual
