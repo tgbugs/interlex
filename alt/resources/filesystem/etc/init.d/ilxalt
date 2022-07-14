@@ -15,9 +15,13 @@ pidfile="${run_dir}/${SVCNAME}/pid"
 start_stop_daemon_args="
 --group ${SVCGROUP}
 --user ${SVCUSER}
---wait 1500"
-command="/usr/bin/gunicorn"
-command_args="--bind ${socket}
+--wait 1500
+--env PYTHONBREAKPOINT=0
+"
+command="/usr/bin/python"
+command_args="
+-m gunicorn
+--bind ${socket}
 --daemon
 --pid ${pidfile}
 --name ${SVCNAME}
@@ -29,7 +33,8 @@ command_args="--bind ${socket}
 --log-level ${LOG_LEVEL}
 --log-file ${LOG}
 --capture-output
-interlex.alt_server:app"
+interlex.alt_server:app
+"
 retry='TERM/30/KILL/5'
 
 command_owner="${SVCUSER}:${SVCGROUP}"
