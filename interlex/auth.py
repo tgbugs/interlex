@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta
 from interlex.utils import log
-from IPython import embed
 
 
 class Auth:
@@ -13,7 +12,7 @@ class Auth:
             # ah class scope
             # TODO make sure access route has the actual source not nginx
             # FIXME use extra
-            embed()
+            breakpoint()
             ll = getattr(Auth.log, self.log_level)
             ll(f'{self.__class__.__name__} - {extra_info} - {request.remote_address} - {request.url} - \n{request.headers}')
             super().__init__(*args, **kwargs)

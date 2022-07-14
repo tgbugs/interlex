@@ -5,7 +5,6 @@ from celery.signals import worker_process_init, worker_process_shutdown
 from interlex import config
 from interlex.core import getScopedSession
 from interlex.load import FileFromIRIFactory, FileFromPostFactory
-from IPython import embed
 from pprint import pprint
 
 
@@ -74,7 +73,7 @@ def multiple(self, loader, name, expected_bound_name, small=True):
         return task.id
 
     # if our quick checks don't pass
-    #embed()
+    #breakpoint()
 
 class FakeSelf:
     def update_state(self, *args, **kwargs):

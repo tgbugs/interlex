@@ -19,7 +19,6 @@ from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderF
 from interlex.utils import log as _log
 from interlex.config import ilx_pattern
 from interlex.render import TripleRender  # FIXME need to move the location of this
-from IPython import embed
 
 log = _log.getChild('endpoints')
 
@@ -479,7 +478,7 @@ class Endpoints:
                         resp = next(self.session.execute(sql, args))
                         id = resp.ilx_id
                     except AttributeError as e:
-                        embed()
+                        breakpoint()
                         raise e
                     except StopIteration:
                         # FIXME this breaks the semantics, but it seems to be the only
@@ -739,7 +738,7 @@ class Ontologies(Endpoints):
 
             existing = False  # TODO check if the file already exists
             # check what is being posted
-            #embed()
+            #breakpoint()
             #if requests.args:
                 #log.debug(request.args)
             #elif request.json is not None:  # jsonld u r no fun
@@ -808,7 +807,7 @@ class Ontologies(Endpoints):
 
                         # TODO get actual user from the api key
                         # out = f(user, filepath, ontology_iri, new=True)
-                        #embed()
+                        #breakpoint()
                         log.debug('should be done running?')
 
                         # TODO return loading stats etc

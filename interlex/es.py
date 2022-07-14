@@ -9,7 +9,6 @@ from interlex.dump import TripleExporter
 from pyontutils.core import makeGraph, OntId, qname, PREFIXES as uPREFIXES  # FIXME get base prefixes...
 from pyontutils.core import NIFRID, rdf, rdfs, skos, definition, ilxtr, oboInOwl
 from dump import Queries
-from IPython import embed
 
 if False:
     from desc.prof import profile_me
@@ -44,7 +43,7 @@ with open('es-settings.json', 'rt') as f:
     # TODO consider using not_analyzed for curies
     index_settings = json.load(f)
 
-#embed()
+#breakpoint()
 es.indices.close('test_index')
 es.indices.put_settings(index_settings, 'test_index')
 es.indices.open('test_index')
@@ -339,7 +338,7 @@ def main():
     # reindex
     #g = thing.reindex()
 
-    embed()
+    breakpoint()
 
 if __name__ == '__main__':
     main()

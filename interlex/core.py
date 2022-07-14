@@ -28,7 +28,6 @@ from pyontutils.identity_bnode import IdentityBNode, IdLocalBNode
 from interlex import config
 from interlex.utils import printD, log
 from interlex.namespaces import fma
-from IPython import embed
 
 synonym_types = {'abbrev':ilxtr['synonyms/abbreviation'],
                  'oboInOwl:hasBroadSynonym': ilxtr['synonyms/broad'],  # FIXME just use oboInOwl?
@@ -311,7 +310,7 @@ def server_api(db=None, dburi=dbUri()):
         sql = sql_base + values_template
         """
 
-        #embed()
+        #breakpoint()
         printD('starting execution')
         """
         thing = (Core.__table__.insert(),

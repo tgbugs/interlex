@@ -82,7 +82,6 @@ from pyontutils import clifun as clif
 from pyontutils.utils import setPS1
 from pyontutils.namespaces import PREFIXES as uPREFIXES
 from interlex.utils import printD
-from IPython import embed
 
 
 class Options(clif.Options):
@@ -108,7 +107,7 @@ class Main(clif.Dispatcher):
         il.setup()
         # il.load()  # do this one yourself  WARNING high memory usage ~ 17 gigs
         self = il
-        embed()
+        breakpoint()
 
     def dbsetup(self):
         from flask_sqlalchemy import SQLAlchemy
@@ -125,7 +124,7 @@ class Main(clif.Dispatcher):
                              email='tgbugs@gmail.com', email_primary=True)
         session.execute(sql_verify_user, args_verify_user)
         session.commit()
-        embed()
+        breakpoint()
 
     def post(self):
         post = Post(self)
@@ -169,7 +168,7 @@ class Shell(clif.Dispatcher):
 
             os.system('diff -u /tmp/d2.nt /tmp/d1.nt > /tmp/wut.patch')
 
-        embed()
+        breakpoint()
 
     def alt(self):
         from sqlalchemy import create_engine
@@ -181,7 +180,7 @@ class Shell(clif.Dispatcher):
         Session.configure(bind=engine)
         session = Session()
         queries = MysqlExport(session)
-        embed()
+        breakpoint()
 
 
 class Server(clif.Dispatcher):
