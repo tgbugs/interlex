@@ -225,10 +225,12 @@ class TripleRender:
             cands = list(graph.subjects(rdf.type, owl.Class))
             if len(cands) == 1:
                 s = OntId(cands[0])
+                su = s.u
                 if s.prefix == 'ILX':
-                    new_graph.add((s.u, ilxtr.hasIlxId, s.u))
-                    new_graph.add((s.u, ilxtr.hasIlxPreferredId, s.u))
-                    hasIlxId[s.u] = True
+                    new_graph.add((su, ilxtr.hasIlxId, su))
+                    new_graph.add((su, ilxtr.hasIlxPreferredId, su))
+                    hasIlxId[su] = True
+                    preferred_all[su] = su
 
         for k, v in hasIlxId.items():
             if not v:
