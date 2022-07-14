@@ -220,7 +220,7 @@ class TripleRender:
             t = (ns, np, no)
             new_graph.add(t)
 
-        if not hasIlxId:
+        if not [k for k, v in hasIlxId.items() if v]:
             # handle old case where pref and ilx were not present
             cands = list(graph.subjects(rdf.type, owl.Class))
             if len(cands) == 1:
@@ -241,8 +241,6 @@ class TripleRender:
             try:
                 preferred_iri = preferred_all[uri]
             except KeyError as e:
-                log.debug(f'\n{list(preferred_all)}')
-                log.debug('printing preferred_all one line above this')
                 graph.debug()
                 log.debug('printing graph one line above this')
                 log.exception(e)
