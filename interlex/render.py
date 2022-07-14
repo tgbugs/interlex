@@ -241,7 +241,9 @@ class TripleRender:
             try:
                 preferred_iri = preferred_all[uri]
             except KeyError as e:
-                #graph.debug()  # goes infinite due to ttlser bug
+                log.debug(f'\n{list(preferred_all)}')
+                log.debug('printing preferred_all one line above this')
+                graph.debug()
                 log.debug('printing graph one line above this')
                 log.exception(e)
                 log.error('the input graph probably has a bad structure '
