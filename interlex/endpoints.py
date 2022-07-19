@@ -439,7 +439,7 @@ class Endpoints:
         if prefix_iri_curie.startswith('http') or prefix_iri_curie.startswith('file'):  # TODO decide about urlencoding
             iri = prefix_iri_curie
             try:
-                curie = graph.namespace_manager.qname
+                curie = graph.namespace_manager.qname(iri)
                 return curie, 200
             except KeyError:
                 return f'Unknown iri {iri}', 404

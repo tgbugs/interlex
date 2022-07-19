@@ -1,6 +1,6 @@
 import socket
 import rdflib  # FIXME FIXME FIXME BAD DESIGN DETECTED
-from flask import Flask, request, abort
+from flask import Flask, request, abort, redirect
 from flask_sqlalchemy import SQLAlchemy
 import ontquery as oq
 from pyontutils import sneechenator as snch  # FIXME why do we need to import this here this is an issue :/
@@ -61,8 +61,38 @@ def server_alt(db=None, dburi=dbUri()):
         return ilx(id, redirect=False)
 
     @app.route('/base/curies')
-    def curies():
+    def curies_():
         return ilxexp.getGroupCuries('base')
+
+    @app.route('/base/curies/<prefix_iri_curie>')
+    def curies(prefix_iri_curie):
+        # FIXME it looks like it is not actually possible to pass the iri here for some reason :/
+        # TODO args to match ?local=true
+        iri_ilx = ilxexp.expandPrefixIriCurie('base', prefix_iri_curie)
+        if iri_ilx is None:
+            return abort(404)
+        elif len(iri_ilx) == 1:  # FIXME so dumb
+            return iri_ilx  # expanded prefix case
+        else:
+            iri, ilx = iri_ilx
+
+        if iri.u == prefix_iri_curie:
+            return iri.curie
+
+        elif 'local' in request.args and request.args['local'].lower() == 'true':
+            if ilx is None:  # never happens in the mysql version
+                return abort(501)
+            return redirect(ilx, code=302)
+        else:
+            return redirect(iri, code=302)
+
+        return
+        g = OntGraph()
+        g.namespace_manager.populate_from(prefixes)
+        try:
+            iri = g.namespace_manager.expand(prefix_iri_curie)
+        except ValueError:
+            iri = prefix_iri_curie
 
     @app.route('/base/ontologies/ilx_<id>')
     def ontologies_ilx(id):

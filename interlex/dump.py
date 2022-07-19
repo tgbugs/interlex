@@ -1,4 +1,5 @@
 import rdflib
+import ontquery as oq
 from pyontutils import sneechenator as snch
 from pyontutils.core import OntId
 from pyontutils.utils import TermColors as tc
@@ -38,6 +39,35 @@ class MysqlExport:
         args = dict()
         resp = self.session.execute(sql, args)
         return {prefix:namespace for prefix, namespace in resp}
+
+    def expandPrefixIriCurie(self, group, prefix_iri_curie):
+        # FIXME takes +two+ two database calls
+        log.debug(prefix_iri_curie)
+        prefixes = self.getGroupCuries('base')
+        oc = oq.OntCuries.new()
+        oc(prefixes)
+        OntIdx = type('OntIdSigh', (OntId,), dict(_namespaces=oc))
+        if ':' not in prefix_iri_curie:
+            # assume prefix
+            try:
+                i = OntIdx(prefix_iri_curie + ':')
+                return i,
+            except OntIdx.UnknownPrefixError as e:
+                return
+        else:
+            try:
+                i = OntIdx(prefix_iri_curie)
+            except OntIdx.UnknownPrefixError as e:
+                # TODO logu.error(e)
+                # FIXME it is REALLY annoying that there is no sane way
+                # to avoid either having to have the web know about the
+                # internal errors here OR having this manage the aborts
+                return
+
+            res = list(self.existing_mapped((i.u,)))
+            if res:
+                (iri_res, ilx), = res
+                return OntIdx(iri_res), OntIdx(ilx)
 
     def group_terms(self, group):
         name = self._group_community[group]
