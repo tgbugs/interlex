@@ -1,11 +1,13 @@
 import rdflib
 import ontquery as oq
+from itertools import chain
 from pyontutils import sneechenator as snch
 from pyontutils.core import OntId
 from pyontutils.utils import TermColors as tc
 from pyontutils.utils_extra import check_value
 from pyontutils.namespaces import NIFRID, ilxtr, definition
 from pyontutils.namespaces import rdf, rdfs, owl, skos
+from pyontutils.namespaces import ilx_includesTerm, ilx_includesTermSet
 from pyontutils.combinators import annotation
 from interlex import exceptions as exc
 from interlex.core import log, makeParamsValues, synonym_types
@@ -253,6 +255,9 @@ class MysqlExport:
 
     def _call_fragment(self, ilx_fragment):
         term = self.term(ilx_fragment)  # FIXME handle value error or no?
+        if term.type == 'TermSet':  # XXX design flaw to have to branch here but oh well
+            return self._termset_triples((term,))
+
         return self._terms_triples((term,))
 
     def _call_fragments(self, ilx_fragments):
@@ -263,6 +268,96 @@ class MysqlExport:
         include_full_object_predicates = self._group_include_full_objects[group]
         yield from self._terms_triples(self.group_terms(group),
                                        include_full_object_predicates=include_full_object_predicates)
+
+    def _termset_triples(self, terms, done=None, recurse=False):
+        if done is None:
+            done = list(terms)
+            not_done_terms = list(terms)
+        elif done:
+            not_done_terms = []
+            for term in terms:
+                if term in done:
+                    logd.error('CYCLE DETECTED IN TERMSET !!!!')
+                    continue
+                done.append(term)
+                not_done_terms.append(term)
+
+        i_terms = []
+        i_termsets = []
+        sit = str(ilx_includesTerm)
+        sits = str(ilx_includesTermSet)
+        rest = tuple()
+        for s, p, o in self.id_triples([t.id for t in not_done_terms]):
+            if p == sit:
+                i_terms.append(o)
+            elif p == sits:
+                i_termsets.append(o)
+            else:
+                t, _rest = self._convert_trip((s, p, o), set())
+                # usually a mistake to have anything but a label and definition here
+                # but sometimes there are legitimate cases
+                if recurse:
+                    rest = chain(rest, (t,), _rest)
+                else:
+                    # TODO need basics
+                    yield t
+                    yield from _rest
+
+        t_frags = [o.rsplit('/',1)[-1] for o in i_terms]
+
+        ts_frags = [o.rsplit('/',1)[-1] for o in i_termsets]
+        if ts_frags:
+            ts_termset_terms = list(self.terms(ts_frags))
+        else:
+            ts_termset_terms = []
+
+        all_termsets = list(ts_termset_terms)
+        rests = [rest]
+        if ts_termset_terms:
+            for r_t_frags, r_ts_termset_terms, r_rest in self._termset_triples(
+                    ts_termset_terms, done=done, recurse=True):
+                t_frags.extend(r_t_frags)
+                all_termsets.extend(r_ts_termset_terms)
+                rests.extend(r_rest)
+
+        if recurse:
+            yield t_frags, all_termsets, rests
+            return
+
+        if t_frags:
+            t_terms = list(self.terms(t_frags))
+            yield from self._terms_triples(t_terms)
+
+        for r in rests:
+            log.debug(r)
+            yield from r
+
+    def _convert_trip(self, t, predobjs):
+        rest = tuple()
+        preferred_iri, p, o = t
+        preferred_iri = rdflib.URIRef(preferred_iri)
+        oo = check_value(o)
+        if isinstance(oo, rdflib.URIRef):
+            predobjs.add(oo)
+            if ' ' in oo:
+                # there are a few wiki urls that have spaces in them >_< sigh
+                oo = str(oo)
+                log.warning(tc.red('bad iri {oo!r}'))
+
+        if p == '' or p is None:  # we are in synonym space also FIXME because this is dumb
+            p = NIFRID.synonym
+        elif p == 'abbrev':
+            stype = synonym_types[p]
+            p = NIFRID.synonym
+            triple = preferred_iri, p, oo
+            rest = annotation(triple, (ilxtr.synonymType, stype))()
+        elif [_ for _ in ('fma:', 'NIFRID:', 'oboInOwl:') if p.startswith(_)]:
+            p = OntId(p).u
+        else:
+            p = rdflib.URIRef(p)
+
+        return (preferred_iri, p, oo), rest
+
 
     def _terms_triples(self, terms, include_full_object_predicates=tuple(), done=tuple()):
         def basics(term):
@@ -313,27 +408,7 @@ class MysqlExport:
 
         more_terms_ilx_fragments = set()
         for preferred_iri, p, o in self.id_triples(ids):  # FIXME not actually preferred
-            preferred_iri = rdflib.URIRef(preferred_iri)
-            oo = check_value(o)
-            if isinstance(oo, rdflib.URIRef):
-                predobjs.add(oo)
-                if ' ' in oo:
-                    # there are a few wiki urls that have spaces in them >_< sigh
-                    oo = str(oo)
-                    log.warning(tc.red('bad iri {oo!r}'))
-
-            if p == '' or p is None:  # we are in synonym space also FIXME because this is dumb
-                p = NIFRID.synonym
-            elif p == 'abbrev':
-                stype = synonym_types[p]
-                p = NIFRID.synonym
-                triple = preferred_iri, p, oo
-                yield from annotation(triple, (ilxtr.synonymType, stype))()
-            elif [_ for _ in ('fma:', 'NIFRID:', 'oboInOwl:') if p.startswith(_)]:
-                p = OntId(p).u
-            else:
-                p = rdflib.URIRef(p)
-
+            (preferred_iri, p, oo), rest = self._convert_trip((preferred_iri, p, o), predobjs)
             predobjs.add(p)
             #print(p, oo)
             if p == rdf.type:
@@ -345,6 +420,7 @@ class MysqlExport:
                     p = rdfs.subPropertyOf
 
             yield preferred_iri, p, oo
+            yield from rest
 
             if p in include_full_object_predicates:
                 # this can be vastly more efficient in 

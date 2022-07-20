@@ -65,7 +65,10 @@ class TestRoutes(unittest.TestCase):
                    cde='0301431',
                    term='0101431',
                    annotation='0381355',
-                   relation='0381385')
+                   relation='0381385',
+                   #termset='0770272',
+                   termset='0774501',  # gnarly multiply nested case
+                   )
 
         for type, id in ids.items():
             url = f'{self.scheme}://{self.host}:{self.port}/base/ilx_{id}'

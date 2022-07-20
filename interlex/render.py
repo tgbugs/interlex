@@ -233,14 +233,15 @@ class TripleRender:
                     preferred_all[su] = su
 
         for k, v in hasIlxId.items():
-            if not v:
+            if not v and not isinstance(k, rdflib.BNode):
                 new_graph.add((k, ilxtr.MISSING_ILX_ID, rdflib.Literal(True)))
 
-        if id is not None:
+        if id is not None:  # FIXME and not termset
             uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/ilx_{id}')  # FIXME reference_host from db ...
             try:
                 preferred_iri = preferred_all[uri]
             except KeyError as e:
+                log.debug('printing graph one line below this')
                 graph.debug()
                 log.debug('printing graph one line above this')
                 log.exception(e)
