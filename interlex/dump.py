@@ -249,8 +249,8 @@ class MysqlExport:
 
         yield from self.session.execute(sql, args)
 
-    def __call__(self, ilx_id):
-        ilx_fragment = 'ilx_' + ilx_id
+    def __call__(self, fragment_prefix, id):
+        ilx_fragment = fragment_prefix + '_' + id
         return self._call_fragment(ilx_fragment)
 
     def _call_fragment(self, ilx_fragment):

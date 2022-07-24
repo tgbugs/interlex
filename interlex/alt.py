@@ -33,13 +33,23 @@ def server_alt(db=None, dburi=dbUri()):
     tripleRender = TripleRender()
     object_to_existing = {}
 
-    @app.route('/base/ilx_<id>')
-    def ilx(id, redirect=True):
+    @app.route('/base/<fragment_prefix>_<id>')
+    def ilx(fragment_prefix, id, redirect=True):
         user = 'base'  # TODO
+        try:
+            prefix = {
+                'ilx': 'ILX',
+                'cde': 'ILX.CDE',
+                'pde': 'PDE',
+                'fde': 'FDE',
+            }[fragment_prefix]
+        except KeyError:
+            return abort(404)
+
         if user == 'base':
-            title = f'ILX:{id}'
+            title = f'{prefix}:{id}'
         else:
-            title = f'ilx.{user}:ilx_{id}'
+            title = f'ilx.{user}:{fragment_prefix}_{id}'
 
         try:
             tripleRender.check(request)
@@ -48,7 +58,7 @@ def server_alt(db=None, dburi=dbUri()):
 
         graph = OntGraph()
         oq.OntCuries.populate(graph)
-        [graph.add(t) for t in ilxexp(id)]
+        [graph.add(t) for t in ilxexp(fragment_prefix, id)]
         try:
             return tripleRender(request, graph, user, id, object_to_existing, title, redirect=redirect)
         except BaseException as e:
@@ -56,9 +66,9 @@ def server_alt(db=None, dburi=dbUri()):
             raise e
             return abort(404)
 
-    @app.route('/base/ilx_<id>.<extension>')
-    def ilx_get(id, extension):
-        return ilx(id, redirect=False)
+    @app.route('/base/<fragment_prefix>_<id>.<extension>')
+    def ilx_get(fragment_prefix, id, extension):
+        return ilx(fragment_prefix, id, redirect=False)
 
     @app.route('/base/curies')
     def curies_():
@@ -247,10 +257,11 @@ def main():
     session = Session()
 
     ilxexp = MysqlExport(session)
+    fragment_prefix = 'ilx'
     ilx_id = '0101431'
-    ilx_fragment = 'ilx_' + ilx_id
+    ilx_fragment = fragment_prefix + '_' + ilx_id
     term = ilxexp.term(ilx_fragment)
-    trips = list(ilxexp(ilx_id))
+    trips = list(ilxexp(fragment_prefix, ilx_id))
 
 
 if __name__ == '__main__':
