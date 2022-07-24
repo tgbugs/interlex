@@ -1,4 +1,5 @@
 import os
+import re
 import json
 from functools import wraps
 import sqlalchemy as sa
@@ -144,7 +145,7 @@ class Endpoints:
 
     @property
     def link_to_new_token(self):
-        return 'TODO url_for'
+        return 'TODO url_for', 501
 
     def getBasicInfo(self, group, auth_user, token):
         try:
@@ -218,6 +219,8 @@ class Endpoints:
 
             'contributions_':self.contributions_,
             'contributions':self.contributions,
+            '*contributions_ont':self.ontologies_contributions,
+
             'upload':self.upload,
             'prov':self.prov,
 
@@ -229,19 +232,28 @@ class Endpoints:
         else:
             raise KeyError(f'could not find any value for {nodes}')
 
-    def mapped(self):
-        raise NotImplementedError('hrm')
+    def mapped(self, group):
+        # see the alt implementation of external/mapped for use case
+        return request.path, 501
 
+    rx_pref = re.compile('^(ilx|cde|fde|pde)_')  # TODO configure
     def isIlxIri(self, iri):
         # FIXME the is a horrible way to define valid uri structure
         scheme, rest = iri.split('://', 1)
         prefix, maybe_ilx = rest.rsplit('/', 1)
-        if prefix.startswith(self.reference_host) and maybe_ilx.startswith('ilx_'):  # TODO allow configurable prefix here
+        rx_pref = re.compile()
+        if (prefix.startswith(self.reference_host) and
+            re.match(self.rx_pref, maybe_ilx)):  # TODO allow configurable prefix here
             _, group, _ = (prefix + '/').split('/', 2)  # at trailing in case group was terminal
-            _, id = maybe_ilx.split('_')
-            return group, id
+            frag_pref, id = maybe_ilx.split('_')
+            return group, frag_pref, id
 
-    def _even_more_basic(self, group, id, db):
+    def _even_more_basic(self, group, frag_pref, id, db):
+        # FIXME multiple fragment prefixes makes for a FUN TIME
+        # do we have separate tables for each fragment? seems bad
+        # or do we add a frag_pref = :frag_pref and then have to deal
+        # with creating a new primary sequence whenever we create a new
+        # fragment prefix? ... SIGH
         if group != 'base' and group != 'latest':
             sql = 'SELECT id FROM interlex_ids WHERE id = :id'
             try:
@@ -256,7 +268,7 @@ class Endpoints:
         except exc.UnsupportedType as e:
             abort(e.code, {'message': e.message})
 
-    def _ilx(self, group, id, func):
+    def _ilx(self, group, frag_pref, id, func):
         PREFIXES, graph = self.getGroupCuries(group)
         resp = self.queries.getById(id, group)
         #log.debug(resp)
@@ -286,17 +298,19 @@ class Endpoints:
 
     # TODO PATCH
     @basic
-    def ilx(self, group, id, db=None):
+    def ilx(self, group, frag_pref_id, db=None):
+        frag_pref, id = frag_pref_id.split('_')
         # TODO allow PATCH here with {'add':[triples], 'delete':[triples]}
-        func = self._even_more_basic(group, id, db)
-        graph, object_to_existing, title, labels = self._ilx(group, id, func)
-        return tripleRender(request, graph, group, id, object_to_existing, title, labels=labels)
+        func = self._even_more_basic(group, frag_pref, id, db)
+        graph, object_to_existing, title, labels = self._ilx(group, frag_pref, id, func)
+        return tripleRender(request, graph, group, frag_pref, id,
+                            object_to_existing, title, labels=labels)
 
     @basic
-    def ilx_get(self, group, id, extension, db=None):
+    def ilx_get(self, group, frag_pref_id, extension, db=None):
         # TODO these are not cool uris
         # TODO move this lookup to config?
-        return self.ilx(group=group, id=id, db=db)
+        return self.ilx(group=group, frag_pref_id=frag_pref_id, db=db)
         #return tripleRender(request, g, group, id, object_to_existing, title)
 
     @basic
@@ -357,11 +371,11 @@ class Endpoints:
     @basic
     def contributions_(self, group, db=None):
         # without at type lands at the additions and deletions page
-        return 'TODO identity for group contribs directly to interlex'
+        return 'TODO identity for group contribs directly to interlex', 501
 
     @basic
     def contributions(self, *args, **kwargs):
-        return 'TODO slicing on contribs ? or use versions?'
+        return 'TODO slicing on contribs ? or use versions?', 501
 
     # TODO POST ?private if private PUT (to change mapping) PATCH like readable
     @basic
@@ -386,7 +400,7 @@ class Endpoints:
             te = TripleExporter()
             _ = [graph.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
 
-            return tripleRender(request, graph, group, id, object_to_existing)
+            return tripleRender(request, graph, group, frag_pref, id, object_to_existing)
 
     # TODO POST PUT PATCH
     # just overload post? don't allow changing? hrm?!?!
@@ -436,6 +450,7 @@ class Endpoints:
         # FIXME confusion between group (aka group) and logged in group :/
         #log.debug(prefix_iri_curie)
         PREFIXES, graph = self.getGroupCuries(group)
+        frag_pref = None
         if prefix_iri_curie.startswith('http') or prefix_iri_curie.startswith('file'):  # TODO decide about urlencoding
             iri = prefix_iri_curie
             try:
@@ -448,6 +463,7 @@ class Endpoints:
             curie = prefix_iri_curie
             prefix, suffix = curie.split(':', 1)
             if prefix == 'ILX':  # TODO more matches?
+                frag_pref = 'ilx'
                 id = suffix
             else:
                 id = None
@@ -460,7 +476,7 @@ class Endpoints:
 
             maybe_ilx = self.isIlxIri(iri)
             if not suffix and maybe_ilx:
-                group, id = maybe_ilx
+                group, frag_pref, id = maybe_ilx
                 # overwrite user here because there are (admittedly strange)
                 # cases where someone will have a curie that points to another
                 # user's namespace, and we already controlled for the requesting user
@@ -509,13 +525,15 @@ class Endpoints:
                             labels = None
 
                         id = 'None-FIXMETODO'
+                        frag_pref = 'nil'
                         title = 'InterLex local' + curie
-                        return tripleRender(request, graph, group, id, object_to_existing, title, labels=labels)
+                        return tripleRender(request, graph, group, frag_pref, id,
+                                            object_to_existing, title, labels=labels)
                         abort(404)
                         pass
 
                 return redirect(url_for(f'Endpoints.ilx /<group>/{ilx_pattern}',
-                                        group=group, id=id), code=302)
+                                        group=group, frag_pref_id=frag_pref + '_' + id), code=302)
 
                 #return redirect('https://curies.interlex.org/' + curie, code=302)  # TODO abstract
             return redirect(iri, code=302)
@@ -604,7 +622,7 @@ class Endpoints:
         # reference_name, bound_name, identity, date, triple_count, parts
         # if org: uploading_user
         # if user: contribs per group
-        return 'TODO\n'
+        return 'TODO\n', 501
 
     @basic
     def ontologies_(self, group, db=None):
@@ -612,8 +630,8 @@ class Endpoints:
         return json.dumps('your list sir')
 
     @basic
-    def ontologies_ilx(self, group, id, extension, db=None):
-        return self.ilx(group=group, id=id, db=db)
+    def ontologies_ilx(self, group, frag_pref_id, extension, db=None):
+        return self.ilx(group=group, frag_pref_id=frag_pref_id, db=db)
 
     @basic
     def ontologies(self, *args, **kwargs):
@@ -632,6 +650,11 @@ class Endpoints:
 
     @basic
     def ontologies_uris_version(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_contributions(self, *args, **kwargs):
         """ needed because ontologies appear under other routes """
         raise NotImplementedError('should not be hitting this')
 
@@ -664,6 +687,10 @@ class Ontologies(Endpoints):
                                        extension=extension,
                                        ont_path='uris/' + ont_path,
                                        db=db)
+
+    @basic
+    def ontologies_contributions(self, group, db=None):
+        return 'TODO list of ontology contributions', 501
 
     @basic
     def ontologies(self, group, filename, extension=None, ont_path='', db=None):
@@ -838,12 +865,12 @@ class Ontologies(Endpoints):
 class Versions(Endpoints):
     # TODO own/diff here could make it much easier to view changes
     @basic
-    def ilx(self, group, epoch_verstr_id, id, db=None):
+    def ilx(self, group, epoch_verstr_id, frag_pref_id, db=None):
         # TODO epoch and reengineer how ilx is implemented
         # so that queries can be conducted at a point in time
         # sigh dataomic
         # or just give up on the reuseabilty of the query structure?
-        return super().ilx(group=group, id=id, db=db)  # have to use kwargs for basic
+        return super().ilx(group=group, frag_pref_id=frag_pref_id, db=db)  # have to use kwargs for basic
 
     @basic
     def readable(self, group, epoch_verstr_id, word, db=None):
@@ -889,7 +916,7 @@ class Own(Ontologies):
         return request.path, 501
 
     @basic2
-    def ontologies_ilx(self, group, other_group, id, extension, db=None):
+    def ontologies_ilx(self, group, other_group, frag_pref_id, extension, db=None):
         abort(404)  # this doesn't really exist but would be a pain to remove from the path gen
 
     @basic2
@@ -912,10 +939,14 @@ class Own(Ontologies):
         else:
             return request.path, 501
 
+    @basic2
+    def ontologies_contributions(self, *args, **kwargs):
+        return abort(404)  # doesn't exist but hard to remove from generation
+
 
 class OwnVersions(Own, Versions):
     @basic2
-    def ilx(self, group, other_group, epoch_verstr_id, id, db=None):
+    def ilx(self, group, other_group, epoch_verstr_id, frag_pref_id, db=None):
         return request.path, 501
 
     @basic2
@@ -940,11 +971,12 @@ class OwnVersions(Own, Versions):
 
 class Diff(Ontologies):
     @basic2
-    def ilx(self, group, other_group_diff, id, db=None):
-        funcs = [self._even_more_basic(grp, id, db)
+    def ilx(self, group, other_group_diff, frag_pref_id, db=None):
+        frag_pref, id = frag_pref_id.split('_')
+        funcs = [self._even_more_basic(grp, frag_pref, id, db)
                  for grp in (group, other_group_diff)]
 
-        stuff = [self._ilx(grp, id, func) for grp, func in
+        stuff = [self._ilx(grp, frag_pref, id, func) for grp, func in
                  zip((group, other_group_diff), funcs)]
 
         this = stuff[0][0]
@@ -1015,8 +1047,8 @@ class Diff(Ontologies):
         return request.path, 501
 
     @basic2
-    def ontologies_ilx(self, group, other_group_diff, id, extension, db=None):
-        return self.ilx(group=group, other_group_diff=other_group_diff, id=id, db=db)
+    def ontologies_ilx(self, group, other_group_diff, frag_pref_id, extension, db=None):
+        return self.ilx(group=group, other_group_diff=other_group_diff, frag_pref_id=frag_pref_id, db=db)
 
     @basic2
     def ontologies_version(self, group, other_group_diff, filename,
@@ -1038,10 +1070,14 @@ class Diff(Ontologies):
         else:
             return request.path, 501
 
+    @basic2
+    def ontologies_contributions(self, *args, **kwargs):
+        return abort(404)  # doesn't exist but hard to remove from generation
+
 
 class DiffVersions(Diff, Versions):
     @basic2
-    def ilx(self, group, other_group_diff, epoch_verstr_id, id, db=None):
+    def ilx(self, group, other_group_diff, epoch_verstr_id, frag_pref_id, db=None):
         return request.path, 501
 
     @basic2

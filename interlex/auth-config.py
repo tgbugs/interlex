@@ -4,7 +4,7 @@
      'debug': {
          'default': False,
          'environment-variables': 'INTERLEX_DEBUG',},
-     'ilx-pattern': 'ilx_<regex("[0-9]{7}"):id>',  # FIXME abstract this probably
+     'ilx-pattern': '<regex("((ilx|cde|fde)_[0-9]{7})|(pde_[0-9]{8})"):frag_pref_id>',
 
      # ports
      'port-api': 8500,

@@ -105,7 +105,7 @@ class MysqlExport:
                '  JOIN term_existing_ids as te_s '
                '    ON te.tid = te_s.tid '
                ' WHERE te.tid in :ids'
-               "   AND te_s.curie like 'ILX:%'")
+               "   AND te_s.iri like 'http://uri.interlex.org/base/%'")
         args = dict(ids=tuple(ids))
         yield from self.session.execute(sql, args)
 
@@ -115,7 +115,7 @@ class MysqlExport:
                '  JOIN term_existing_ids as te_o '
                '    ON te.tid = te_o.tid '
                " WHERE te.iri LIKE CONCAT(:namespace, '%')"
-               "   AND te_o.curie like 'ILX:%'")
+               "   AND te_o.iri like 'http://uri.interlex.org/base/%'")
         args = dict(namespace=namespace)
         yield from self.session.execute(sql, args)
 
@@ -128,7 +128,7 @@ class MysqlExport:
                 '  JOIN term_existing_ids as te_o '
                 '    ON te.tid = te_o.tid '
                 ' WHERE te.iri in :iris'
-                "   AND te_o.curie LIKE 'ILX:%'")
+                "   AND te_o.iri LIKE 'http://uri.interlex.org/base/%'")
         args = dict(iris=tuple(iris))
         if namespace is not None:
             sql += " AND te.iri LIKE CONCAT(:namespace, '%')"
@@ -169,14 +169,14 @@ class MysqlExport:
             return
 
         args = dict(ids=tuple(ids))
-        # FIXME urg the ILX:%
+        # FIXME urg the ILX:% ... maybe fixed now, but is matching iri bad too?
         sql = f'''
         SELECT te.iri, ts.type, ts.literal FROM term_synonyms as ts
           JOIN term_existing_ids AS te
             ON te.tid = ts.tid
          WHERE ts.tid in :ids
            AND ts.literal != ''
-           AND te.curie like 'ILX:%'
+           AND te.iri like 'http://uri.interlex.org/base/%'
         UNION
         SELECT te1.iri, te2.iri, value FROM term_annotations AS ta
           JOIN term_existing_ids AS te1
@@ -184,8 +184,8 @@ class MysqlExport:
           JOIN term_existing_ids AS te2
             ON ta.annotation_tid = te2.tid
          WHERE ta.tid in :ids
-           AND te1.curie like 'ILX:%'
-           AND te2.curie like 'ILX:%'
+           AND te1.iri like 'http://uri.interlex.org/base/%'
+           AND te2.iri like 'http://uri.interlex.org/base/%'
         UNION
         SELECT te.iri, te1.iri, te2.iri FROM term_relationships AS tr
           JOIN term_existing_ids AS te
@@ -196,9 +196,9 @@ class MysqlExport:
             ON te2.tid = tr.term2_id
          WHERE tr.term1_id in :ids
            AND tr.withdrawn != '1'
-           AND te.curie like 'ILX:%'
-           AND te1.curie like 'ILX:%'
-           AND te2.curie like 'ILX:%'
+           AND te.iri like 'http://uri.interlex.org/base/%'
+           AND te1.iri like 'http://uri.interlex.org/base/%'
+           AND te2.iri like 'http://uri.interlex.org/base/%'
         UNION
         SELECT te1.iri, {str(ilxtr.subThingOf)!r}, te2.iri FROM term_superclasses AS tsc
           JOIN term_existing_ids AS te1
@@ -206,15 +206,15 @@ class MysqlExport:
           JOIN term_existing_ids AS te2
             ON te2.tid = tsc.superclass_tid
          WHERE tsc.tid in :ids
-           AND te1.curie like 'ILX:%'
-           AND te2.curie like 'ILX:%'
+           AND te1.iri like 'http://uri.interlex.org/base/%'
+           AND te2.iri like 'http://uri.interlex.org/base/%'
         '''
 
         yield from self.session.execute(sql, args)
 
     def predicate_objects(self, id):
         args = dict(id=id)
-        # FIXME urg the ILX:%
+        # FIXME urg the ILX:% ok now?
         sql = f'''
         SELECT type, literal FROM term_synonyms
          WHERE literal != ''
@@ -224,7 +224,7 @@ class MysqlExport:
           JOIN term_existing_ids AS te
             ON ta.annotation_tid = te.tid
          WHERE ta.tid = :id
-           AND te.curie like 'ILX:%'
+           AND te.iri like 'http://uri.interlex.org/base/%'
            -- AND te.preferred = '1'
         UNION
         SELECT te1.iri, te2.iri FROM term_relationships AS tr
@@ -234,16 +234,16 @@ class MysqlExport:
             ON te2.tid = tr.term2_id
          WHERE tr.term1_id = :id
            AND tr.withdrawn != '1'
-           AND te1.curie like 'ILX:%'
+           AND te1.iri like 'http://uri.interlex.org/base/%'
            -- AND te1.preferred = '1'
-           AND te2.curie like 'ILX:%'
+           AND te2.iri like 'http://uri.interlex.org/base/%'
            -- AND te2.preferred = '1'
         UNION
         SELECT {str(ilxtr.subThingOf)!r}, te.iri FROM term_superclasses AS tsc
           JOIN term_existing_ids AS te
             ON te.tid = tsc.superclass_tid
          WHERE tsc.tid = :id
-           AND te.curie like 'ILX:%'
+           AND te.iri like 'http://uri.interlex.org/base/%'
            -- AND te.preferred = '1'
         '''
 

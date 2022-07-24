@@ -100,7 +100,7 @@ class TripleRender:
 
         return extension, mimetype, func
 
-    def __call__(self, request, graph, group, id, object_to_existing,
+    def __call__(self, request, graph, group, frag_pref, id, object_to_existing,
                  title=None, labels=None, ontid=None, ranking=default_prefix_ranking,
                  redirect=True):
         extension, mimetype, func = self.check(request)
@@ -114,7 +114,7 @@ class TripleRender:
         if labels is None:
             labels = {}
 
-        out = func(request, graph, group, id, object_to_existing,
+        out = func(request, graph, group, frag_pref, id, object_to_existing,
                    title, mimetype, labels, ontid, ranking)
 
         code = 303 if redirect and mimetype == 'text/html' and extension != 'html' else 200  # cool uris
@@ -139,7 +139,7 @@ class TripleRender:
     def curie_selection_logic(self):
         """ Same as iri selection but for curies """
 
-    def html(self, request, graph, group, id, object_to_existing,
+    def html(self, request, graph, group, frag_pref, id, object_to_existing,
              title, mimetype, labels, ontid, ranking):
         cts = CustomTurtleSerializer(graph)
         gsortkey = cts._globalSortKey
@@ -158,7 +158,7 @@ class TripleRender:
                        title=title,
                        styles=(table_style,))
 
-    def renderPreferences(self, group, graph, id, ranking=default_prefix_ranking):
+    def renderPreferences(self, group, graph, frag_pref, id, ranking=default_prefix_ranking):
         # list of predicates where objects should not be rewritten
         # TODO maybe make it possible to add to this?
         # and/or make it possible to get the raw unrendered form more easily
@@ -237,7 +237,7 @@ class TripleRender:
                 new_graph.add((k, ilxtr.MISSING_ILX_ID, rdflib.Literal(True)))
 
         if id is not None:  # FIXME and not termset
-            uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/ilx_{id}')  # FIXME reference_host from db ...
+            uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/{frag_pref}_{id}')  # FIXME reference_host from db ...
             try:
                 preferred_iri = preferred_all[uri]
             except KeyError as e:
@@ -253,18 +253,18 @@ class TripleRender:
 
         return preferred_iri, new_graph
 
-    def graph(self, request, graph, group, id, object_to_existing,
+    def graph(self, request, graph, group, frag_pref, id, object_to_existing,
               title, mimetype, ontid, ranking=default_prefix_ranking):
         # FIXME abstract to replace id with ontology name ... local ids are hard ...
-        preferred_iri, rgraph = self.renderPreferences(group, graph, id, ranking)
+        preferred_iri, rgraph = self.renderPreferences(group, graph, frag_pref, id, ranking)
         # FIXME nowish should come from the last change or the last transitive change
         nowish = utcnowtz()  # request doesn't have this
         epoch = int(nowish.timestamp())  # truncate to second to match iso
         iso = isoformat(nowish)
         if ontid is None:
             ontid = rdflib.URIRef(f'http://uri.interlex.org/{group}'
-                                  f'/ontologies/ilx_{id}')
-            ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/ilx_{id}')
+                                  f'/ontologies/{frag_pref}_{id}')
+            ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/{frag_pref}_{id}')
         else:
             po = PurePosixPath(ontid)
             base, rest = ontid.rsplit('/', 1)
@@ -278,20 +278,20 @@ class TripleRender:
         if preferred_iri is not None:
             rgraph.add((ontid, isAbout, preferred_iri))
             rgraph.add((ontid, rdfs.comment, rdflib.Literal('InterLex single term result for '
-                                                            f'{group}/ilx_{id} at {iso}')))
+                                                            f'{group}/{frag_pref}_{id} at {iso}')))
 
         # TODO consider data identity?
         return cull_prefixes(rgraph, {k:v for k, v in rgraph.namespaces()}).g  # ICK as usual
 
-    def ttl(self, request, graph, group, id, object_to_existing,
+    def ttl(self, request, graph, group, frag_pref, id, object_to_existing,
             title, mimetype, labels, ontid, ranking):
-        rgraph = self.graph(request, graph, group, id,
+        rgraph = self.graph(request, graph, group, frag_pref, id,
                             object_to_existing, title, mimetype, ontid, ranking)
         return rgraph.serialize(format='nifttl')
 
-    def ttl_html(self, request, graph, group, id, object_to_existing,
+    def ttl_html(self, request, graph, group, frag_pref, id, object_to_existing,
                  title, mimetype, labels, ontid, ranking):
-        rgraph = self.graph(request, graph, group, id,
+        rgraph = self.graph(request, graph, group, frag_pref, id,
                             object_to_existing, title, mimetype, ontid, ranking)
         body = rgraph.serialize(format='htmlttl', labels=labels).decode()
         # TODO owl:Ontology -> <head><meta> prov see if there is a spec ...
@@ -299,19 +299,19 @@ class TripleRender:
                        title=title,
                        styles=(table_style, ttl_html_style))
 
-    def rdf_ser(self, request, graph, group, id, object_to_existing,
+    def rdf_ser(self, request, graph, group, frag_pref, id, object_to_existing,
                 title, mimetype, labels, ontid, ranking, **kwargs):
-        rgraph = self.graph(request, graph, group, id,
+        rgraph = self.graph(request, graph, group, frag_pref, id,
                             object_to_existing, title, mimetype, ontid, ranking)
         return rgraph.serialize(format=mimetype, **kwargs)
 
-    def jsonld(self, request, graph, group, id, object_to_existing,
+    def jsonld(self, request, graph, group, frag_pref, id, object_to_existing,
                title, mimetype, labels, ontid, ranking):
-        return self.rdf_ser(request, graph, group, id,
+        return self.rdf_ser(request, graph, group, frag_pref, id,
                             object_to_existing, title, mimetype, labels, ontid, ranking,
                             auto_compact=True)
 
-    def json(self, request, graph, group, id, object_to_existing,
+    def json(self, request, graph, group, frag_pref, id, object_to_existing,
              title, mimetype, labels, ontid, ranking):
         # lol
         rgraph = cull_prefixes(graph, {k:v for k, v in graph.namespaces()}).g  # ICK as usual
@@ -323,7 +323,7 @@ class TripleRender:
                            for t in graph]}
         return json.dumps(out)
 
-    def jsonilx(self, request, graph, group, id, object_to_existing,
+    def jsonilx(self, request, graph, group, frag_pref, id, object_to_existing,
                 title, mimetype, labels, ontid, ranking):
         # TODO
         return {}

@@ -7,7 +7,9 @@ from interlex.uri import run_uri
 from interlex.tasks import cel, multiple, bigload, add
 
 if config.database != config.test_database:
-    raise ValueError('Wrong environment for testing!')
+    msg = ('Wrong environment for testing!\n'
+           f'{config.database} {config.test_database}')
+    raise ValueError(msg)
 
 
 class TestTasks(unittest.TestCase):

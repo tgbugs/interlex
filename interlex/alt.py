@@ -33,8 +33,8 @@ def server_alt(db=None, dburi=dbUri()):
     tripleRender = TripleRender()
     object_to_existing = {}
 
-    @app.route('/base/<fragment_prefix>_<id>')
-    def ilx(fragment_prefix, id, redirect=True):
+    @app.route('/base/<frag_pref>_<id>')
+    def ilx(frag_pref, id, redirect=True):
         user = 'base'  # TODO
         try:
             prefix = {
@@ -42,14 +42,14 @@ def server_alt(db=None, dburi=dbUri()):
                 'cde': 'ILX.CDE',
                 'pde': 'PDE',
                 'fde': 'FDE',
-            }[fragment_prefix]
+            }[frag_pref]
         except KeyError:
             return abort(404)
 
         if user == 'base':
             title = f'{prefix}:{id}'
         else:
-            title = f'ilx.{user}:{fragment_prefix}_{id}'
+            title = f'ilx.{user}:{frag_pref}_{id}'
 
         try:
             tripleRender.check(request)
@@ -58,17 +58,18 @@ def server_alt(db=None, dburi=dbUri()):
 
         graph = OntGraph()
         oq.OntCuries.populate(graph)
-        [graph.add(t) for t in ilxexp(fragment_prefix, id)]
+        [graph.add(t) for t in ilxexp(frag_pref, id)]
         try:
-            return tripleRender(request, graph, user, id, object_to_existing, title, redirect=redirect)
+            return tripleRender(request, graph, user, frag_pref, id,
+                                object_to_existing, title, redirect=redirect)
         except BaseException as e:
             print(tc.red('ERROR'), e)
             raise e
             return abort(404)
 
-    @app.route('/base/<fragment_prefix>_<id>.<extension>')
-    def ilx_get(fragment_prefix, id, extension):
-        return ilx(fragment_prefix, id, redirect=False)
+    @app.route('/base/<frag_pref>_<id>.<extension>')
+    def ilx_get(frag_pref, id, extension):
+        return ilx(frag_pref, id, redirect=False)
 
     @app.route('/base/curies')
     def curies_():
@@ -137,7 +138,7 @@ def server_alt(db=None, dburi=dbUri()):
             kwargs['ranking'] = _pr
         try:
             # FIXME TODO
-            return tripleRender(request, graph, group, None, object_to_existing,
+            return tripleRender(request, graph, group, 'ilx', None, object_to_existing,
                                 title, ontid=ontid, **kwargs, redirect=False)
         except BaseException as e:
             print(tc.red('ERROR'), e)
@@ -257,11 +258,11 @@ def main():
     session = Session()
 
     ilxexp = MysqlExport(session)
-    fragment_prefix = 'ilx'
+    frag_pref = 'ilx'
     ilx_id = '0101431'
-    ilx_fragment = fragment_prefix + '_' + ilx_id
+    ilx_fragment = frag_pref + '_' + ilx_id
     term = ilxexp.term(ilx_fragment)
-    trips = list(ilxexp(fragment_prefix, ilx_id))
+    trips = list(ilxexp(frag_pref, ilx_id))
 
 
 if __name__ == '__main__':
