@@ -49,6 +49,25 @@ sudo pip install pipenv
 Set =INTERLEX_DEPLOY_USER=, =INTERLEX_USER=, and =INTERLEX_SERVER=
 environment variables.  The =INTERLEX_DEPLOY_USER= should have =sudo=
 access, =INTERLEX_USER= should NOT have =sudo= or =wheel= access.
+
+=TEMP_DIR= must also be created and set before running any of the
+scripts and should be cleaned up after everything is finished.
+
+An example would be
+#+begin_src bash
+INTERLEX_DEPLOY_USER=user
+INTERLEX_USER=interlex
+INTERLEX_SERVER=localhost
+TEMP_DIR=$(ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "mktemp -d")
+#+end_src
+** Create interlex runtime user account
+Do this manually right now for sanity.
+The =GID= is matched to the conventions we use for gentoo docker images.
+#+begin_src bash
+GID=839
+groupadd -g ${GID} interlex
+useradd -m -k /etc/skel -u ${GID} -g ${GID} -d /var/lib/interlex interlex
+#+end_src
 ** Build and deploy code and config
 Get the absolute path to the script and use it to find the alt folder.
 #+name: &alt-path
@@ -70,11 +89,13 @@ Go to the alt folder and clean out any existing build files.
 pushd ${ALT_PATH} &&
 git clean -dfx &&  # cleans only the alt subdir
 git checkout HEAD -- resources/filesystem/  # prevent stale user
+popd || exit 1
 #+end_src
 
 Build python wheels and package them for deployment.
 #+name: &build-alt-zip
 #+begin_src bash
+pushd ${ALT_PATH} &&
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&
 rm -rf *.egg-info &&
@@ -84,6 +105,7 @@ rmdir dist &&
 rm alt.zip;
 zip -r alt.zip README.org &&
 zip -r alt.zip run/ &&
+popd || exit 2
 #+end_src
 
 # FIXME can't assume that INTERLEX_USER and INTERLEX_RUNTIME_USER are the same (sigh)
@@ -94,8 +116,11 @@ zip -r alt.zip run/ &&
 Deploy the build artifact to the server.
 #+name: &scp-zip
 #+begin_src bash
-rsync --archive --verbose alt.zip ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER}:${TEAMPTARGET}
-popd || exit 1
+pushd ${ALT_PATH} &&
+# yeah teamptarget is because we have to sync to somewhere the ssh user can deploy and only then move alt to
+# the runtime user
+rsync --archive --verbose alt.zip ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER}:${TEMP_DIR}/alt.zip || exit 20
+popd || exit 3
 #+end_src
 
 The first time InterLex Alt is set up on a server run [[file:./bin/config-build.sh]].
@@ -132,35 +157,61 @@ and should have read write permission only for your user (=chmod 0600=).
 If you do not a warning will appear and the server will not start.
 
 The first time run [[file:./bin/config-remote.sh]].
-#+name: &config-remote-command
-#+begin_src bash :noweb yes
-# TODO interlex user account creation
-if [ ! -d /var/lib/ilxalt ]; then
-    sudo mkdir /var/lib/ilxalt
-fi
-pushd /var/lib/ilxalt  # FIXME SIGH
+
+#+name: &sudo-runtime-user
+#+begin_src bash :exports none
+sudo -u ${INTERLEX_USER}
+#+end_src
+
+#+name: &config-remote-root-commands-0
+#+begin_src bash
+mv ${TEMP_DIR}/alt.zip /var/lib/interlex/alt.zip
+chown ${INTERLEX_USER}:${INTERLEX_USER} /var/lib/interlex/alt.zip
+#+end_src
+#+name: &config-remote-runtime-user-commands-1
+#+begin_src bash
 rm -rf run/
 rm -rf resources/filesystem/
 unzip -o alt.zip || exit 1
-sudo /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.service /etc/systemd/system/ || exit 2
-sudo /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.socket /etc/systemd/system/ || exit 3
-sudo /bin/cp -f resources/filesystem/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ || exit 4
-sudo /bin/cp -f resources/filesystem/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ || exit 5  # carful here
-sudo unlink /etc/nginx/sites-enabled/uri.interlex.org.conf
-sudo ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf || exit 6
-sudo systemd-tmpfiles --create || exit 7
-sudo systemctl daemon-reload || exit 8
-sudo systemctl enable ilxalt || exit 9
-pushd run  || exit 10
+#+end_src
+#+name: &config-remote-root-commands-1
+#+begin_src bash
+/bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.service /etc/systemd/system/ || exit 2
+/bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.socket /etc/systemd/system/ || exit 3
+/bin/cp -f resources/filesystem/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ || exit 4
+/bin/cp -f resources/filesystem/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ || exit 5  # carful here
+unlink /etc/nginx/sites-enabled/uri.interlex.org.conf
+ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf || exit 6
+systemd-tmpfiles --create || exit 7
+systemctl daemon-reload || exit 8
+systemctl enable ilxalt || exit 9
+#+end_src
+#+name: &config-remote-runtime-user-commands-2
+#+begin_src bash
 pipenv --rm  # the very first time this can fail
 pipenv install || exit 11
-popd || exit 12
+#+end_src
+#+name: &config-remote-runtime-user-commands-3
+#+begin_src bash
 touch .mypass || exit 13
 chmod 0600 .mypass || exit 14
+#+end_src
+
+#+name: &config-remote-command
+#+begin_src bash :noweb yes
+sudo <<&config-remote-root-commands-0>>
+pushd /var/lib/interlex || exit 22
+<<&sudo-runtime-user>> <<&config-remote-runtime-user-commands-1>>
+sudo <<&config-remote-root-commands-1>>
+pushd run  || exit 10
+<<&sudo-runtime-user>> <<&config-remote-runtime-user-commands-2>>
+popd || exit 12
+<<&sudo-runtime-user>> <<&config-remote-runtime-user-commands-3>>
 if [ ! -s .mypass ]; then
     echo ~/.mypass has no records
     exit 15
 fi
+popd || exit 16
 <<&restart-ilxalt>>
 sudo systemctl restart nginx
 #+end_src
@@ -194,15 +245,26 @@ fi
 #+end_src
 
 Subsequently run [[file:./bin/remote.sh]].
-#+name: &remote-command
-#+begin_src bash :noweb yes
-pushd /var/lib/ilxalt  # FIXME SIGH
+#+name: &remote-command-runtime-user-commands-1
+#+begin_src bash
 mv -f run/*.whl .
 rm run/Pipenv.lock
 unzip -o alt.zip || exit 1
-cd run || exit 2
+#+end_src
+#+name: &remote-command-runtime-user-commands-2
+#+begin_src bash
 pipenv --rm
 pipenv install *.whl || exit 3
+#+end_src
+
+#+name: &remote-command
+#+begin_src bash :noweb yes
+pushd /var/lib/interlex
+<<&sudo-runtime-user>> <<&remote-command-runtime-user-commands-1>>
+pushd run || exit 2
+<<&sudo-runtime-user>> <<&remote-command-runtime-user-commands-2>>
+popd || exit 4
+popd || exit 5
 <<&restart-ilx>>
 #+end_src
 
