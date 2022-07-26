@@ -68,7 +68,20 @@ class MysqlExport:
 
             res = list(self.existing_mapped((i.u,)))
             if res:
-                (iri_res, ilx), = res
+                # FIXME HACK ensures lowest first, common denominator last
+                def key(iri_ilx, fpr=('cde', 'fde', 'pde', 'set', 'ilx')):  # FIXME hardcoded
+                    iri, ilx = iri_ilx
+                    for i, frag_pref in enumerate(fpr):
+                        if frag_pref + '_' in ilx:
+                            return i, ilx
+
+                    return 4, ilx  # XXX unknown prefix
+
+                rr = sorted([ii for ii in res], key=key)
+                (iri_res, ilx), *rest = rr
+                if rest:
+                    log.debug(f'multiple ilx iris: {rr}')
+
                 return OntIdx(iri_res), OntIdx(ilx)
 
     def group_terms(self, group):
