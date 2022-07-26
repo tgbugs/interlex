@@ -1,6 +1,22 @@
-# -*- org-babel-tangle-use-relative-file-links: t -*-
+# -*- org-babel-tangle-use-relative-file-links: t; orgstrap-cypher: sha256; orgstrap-norm-func-name: orgstrap-norm-func--dprp-1-0; orgstrap-block-checksum: dcf44c89657e9c69deb39063d830bdda453810cd0f19e4e0ba838404f97c089e; -*-
+# [[orgstrap][jump to the orgstrap block for this file]]
 #+TITLE: InterLex alternate resolver setup
 #+OPTIONS: num:nil
+
+
+#+name: orgstrap-shebang
+#+begin_src bash :eval never :results none :exports none
+{ __p=$(mktemp -d);touch ${__p}/=;chmod +x ${__p}/=;__op=$PATH;PATH=${__p}:$PATH;} > ${null="/dev/null"}
+$file= $MyInvocation.MyCommand.Source
+$ErrorActionPreference= "silentlycontinue"
+file=$0
+args=$@
+$ErrorActionPreference= "Continue"
+{ PATH=$__op;rm ${__p}/=;rmdir ${__p};} > $null
+emacs -batch -no-site-file -eval "(let (vc-follow-symlinks) (defun orgstrap--confirm-eval (l _) (not (memq (intern l) '(elisp emacs-lisp)))) (let ((file (pop argv)) enable-local-variables) (find-file-literally file) (end-of-line) (when (eq (char-before) ?\^m) (let ((coding-system-for-read 'utf-8)) (revert-buffer nil t t)))) (let ((enable-local-eval t) (enable-local-variables :all) (major-mode 'org-mode)) (require 'org) (org-set-regexps-and-options) (hack-local-variables)))" "${file}" -- $args
+exit
+<# powershell open
+#+end_src
 
 InterLex =alt= is a reduced set of the InterLex codebase for serving
 directly from the mysql database. The necessary subset of the code
@@ -11,23 +27,8 @@ main interlex source.
 :PROPERTIES:
 :VISIBILITY: folded
 :END:
-You can either [[https://orgmode.org/manual/Extracting-Source-Code.html][tangle]]
-this file in emacs using =C-c C-v t= or you can tangle
-the whole file from the command line using with the following.
-#+name: tangle-this-file
-#+header: :tangle ./bin/tangle-readme
-#+header: :shebang "#!/usr/bin/env bash" :tangle-mode (identity #o755)
-#+begin_src bash :eval never :results none :noweb yes
-<<&alt-path>>
-THIS_FILE=${ALT_PATH}/README.org
-emacs --batch \
-      --quick \
-      --load ~/git/orgstrap/init.el \
-      --load org \
-      --load ob-shell \
-      --eval "(org-babel-tangle-file \"${THIS_FILE}\")"
-#+end_src
-The core functionality is tangled to files in [[file:./bin/]].
+To update the contents of [[file:./bin/]] to match this file run =./README.org tangle=.
+Alternately from inside emacs run =C-c C-v t= aka ~org-babel-tangle~.
 You should also run =shellcheck= on the tangled files if you make any changes.
 * Setup
 :PROPERTIES:
@@ -229,3 +230,23 @@ deploy scripts for the test server? Simple testing
 TEST_HOST=test.host; curl --header 'Host: uri.interlex.org' http://${TEST_HOST}/base/ilx_0109470.ttl
 TEST_HOST=test.host; curl --header 'Host: uri.interlex.org' http://${TEST_HOST}/sparc/ontologies/community-terms.ttl
 #+end_src
+* Bootstrap :noexport:
+
+#+name: orgstrap
+#+begin_src elisp :results none :exports none :lexical yes
+(when noninteractive
+  (let ((tangle (member "tangle" argv)))
+    (when tangle
+      (let (enable-local-eval)
+        ;; this pattern is required when tangling to avoid infinite loops
+        (revert-buffer nil t nil)
+        (setq-local find-file-literally nil))
+      (org-babel-tangle))))
+#+end_src
+
+** Local Variables :ARCHIVE:
+
+# close powershell comment #>
+# Local Variables:
+# eval: (progn (setq-local orgstrap-min-org-version "8.2.10") (let ((a (org-version)) (n orgstrap-min-org-version)) (or (fboundp #'orgstrap--confirm-eval) (not n) (string< n a) (string= n a) (error "Your Org is too old! %s < %s" a n))) (defun orgstrap-norm-func--dprp-1-0 (body) (let ((p (read (concat "(progn\n" body "\n)"))) (m '(defun defun-local defmacro defvar defvar-local defconst defcustom)) print-quoted print-length print-level) (cl-labels ((f (b) (cl-loop for e in b when (listp e) do (or (and (memq (car e) m) (let ((n (nthcdr 4 e))) (and (stringp (nth 3 e)) (or (cl-subseq m 3) n) (f n) (or (setcdr (cddr e) n) t)))) (f e))) p)) (prin1-to-string (f p))))) (unless (boundp 'orgstrap-norm-func) (defvar-local orgstrap-norm-func orgstrap-norm-func-name)) (defun orgstrap-norm-embd (body) (funcall orgstrap-norm-func body)) (unless (fboundp #'orgstrap-norm) (defalias 'orgstrap-norm #'orgstrap-norm-embd)) (defun orgstrap-org-src-coderef-regexp (_fmt &optional label) (let ((fmt org-coderef-label-format)) (format "\\([:blank:]*\\(%s\\)[:blank:]*\\)$" (replace-regexp-in-string "%s" (if label (regexp-quote label) "\\([-a-zA-Z0-9_][-a-zA-Z0-9_ ]*\\)") (regexp-quote fmt) nil t)))) (unless (fboundp #'org-src-coderef-regexp) (defalias 'org-src-coderef-regexp #'orgstrap-org-src-coderef-regexp)) (defun orgstrap--expand-body (info) (let ((coderef (nth 6 info)) (expand (if (org-babel-noweb-p (nth 2 info) :eval) (org-babel-expand-noweb-references info) (nth 1 info)))) (if (not coderef) expand (replace-regexp-in-string (org-src-coderef-regexp coderef) "" expand nil nil 1)))) (defun orgstrap--confirm-eval-portable (lang _body) (not (and (member lang '("elisp" "emacs-lisp")) (let* ((body (orgstrap--expand-body (org-babel-get-src-block-info))) (body-normalized (orgstrap-norm body)) (content-checksum (intern (secure-hash orgstrap-cypher body-normalized)))) (eq orgstrap-block-checksum content-checksum))))) (unless (fboundp #'orgstrap--confirm-eval) (defalias 'orgstrap--confirm-eval #'orgstrap--confirm-eval-portable)) (let (enable-local-eval) (vc-find-file-hook)) (let ((ocbe org-confirm-babel-evaluate) (obs (org-babel-find-named-block "orgstrap"))) (if obs (unwind-protect (save-excursion (setq-local orgstrap-norm-func orgstrap-norm-func-name) (setq-local org-confirm-babel-evaluate #'orgstrap--confirm-eval) (goto-char obs) (org-babel-execute-src-block)) (when (eq org-confirm-babel-evaluate #'orgstrap--confirm-eval) (setq-local org-confirm-babel-evaluate ocbe)) (org-set-visibility-according-to-property)) (warn "No orgstrap block."))))
+# End:
