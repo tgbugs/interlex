@@ -50,15 +50,11 @@ Set =INTERLEX_DEPLOY_USER=, =INTERLEX_USER=, and =INTERLEX_SERVER=
 environment variables.  The =INTERLEX_DEPLOY_USER= should have =sudo=
 access, =INTERLEX_USER= should NOT have =sudo= or =wheel= access.
 
-=TEMP_DIR= must also be created and set before running any of the
-scripts and should be cleaned up after everything is finished.
-
 An example would be
 #+begin_src bash
 INTERLEX_DEPLOY_USER=user
 INTERLEX_USER=interlex
 INTERLEX_SERVER=localhost
-TEMP_DIR=$(ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "mktemp -d")
 #+end_src
 ** Create interlex runtime user account
 Do this manually right now for sanity.
@@ -114,8 +110,9 @@ popd || exit 2
 # connections, which makes the code clearer on the one hand but the connections more
 # complex on the other (sigh)
 Deploy the build artifact to the server.
-#+name: &scp-zip
+#+name: &rsync-zip
 #+begin_src bash
+TEMP_DIR=$(ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "mktemp -d")
 pushd ${ALT_PATH} &&
 # yeah teamptarget is because we have to sync to somewhere the ssh user can deploy and only then move alt to
 # the runtime user
@@ -134,7 +131,6 @@ The first time InterLex Alt is set up on a server run [[file:./bin/config-build.
 grep -rl interlex resources/filesystem/ | xargs sed -i "s/{:interlex-user}/${INTERLEX_USER}/g" &&
 <<&build-alt-zip>>
 zip -r alt.zip resources/filesystem/  # first time only add deploy files
-<<&scp-zip>>
 #+end_src
 
 Subsequently run [[file:./bin/build.sh]].
@@ -146,7 +142,6 @@ Subsequently run [[file:./bin/build.sh]].
 <<&alt-path>>
 <<&pushd-clean>>
 <<&build-alt-zip>>
-<<&scp-zip>>
 #+end_src
 ** Remote commands
 After deploying the files to the server run the following remote
@@ -158,14 +153,33 @@ If you do not a warning will appear and the server will not start.
 
 The first time run [[file:./bin/config-remote.sh]].
 
+#+name: config-remote.sh
+#+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
+#+begin_src bash :tangle ./bin/config-remote.sh :comments noweb
+<<&rsync-zip>>
+ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "
+<<&config-remote-command>>
+"
+SSH_EXIT=$?
+if [ $SSH_EXIT -eq 15 ]; then
+    echo you need to edit ~/.mypass on ${INTERLEX_SERVER} as ${INTERLEX_USER} to complete setup
+    echo the pattern used to set the password is deocumented in step five of README.org on the server
+    exit $SSH_EXIT
+elif [ $SSH_EXIT -ne 0 ]; then
+    echo remote command failed with $SSH_EXIT
+    exit $SSH_EXIT
+fi
+#+end_src
+
 #+name: &sudo-runtime-user
 #+begin_src bash :exports none
 sudo -u ${INTERLEX_USER}
 #+end_src
 
-#+name: &config-remote-root-commands-0
+#+name: &remote-root-commands-0
 #+begin_src bash
 mv ${TEMP_DIR}/alt.zip /var/lib/interlex/alt.zip
+rmdir ${TEMP_DIR}
 chown ${INTERLEX_USER}:${INTERLEX_USER} /var/lib/interlex/alt.zip
 #+end_src
 #+name: &config-remote-runtime-user-commands-1
@@ -199,7 +213,7 @@ chmod 0600 .mypass || exit 14
 
 #+name: &config-remote-command
 #+begin_src bash :noweb yes
-sudo <<&config-remote-root-commands-0>>
+sudo <<&remote-root-commands-0>>
 pushd /var/lib/interlex || exit 22
 <<&sudo-runtime-user>> <<&config-remote-runtime-user-commands-1>>
 sudo <<&config-remote-root-commands-1>>
@@ -227,23 +241,6 @@ if [ $? -ne 0 ]; then
 fi
 #+end_src
 
-#+name: config-remote.sh
-#+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
-#+begin_src bash :tangle ./bin/config-remote.sh :comments noweb
-ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "
-<<&config-remote-command>>
-"
-SSH_EXIT=$?
-if [ $SSH_EXIT -eq 15 ]; then
-    echo you need to edit ~/.mypass on ${INTERLEX_SERVER} as ${INTERLEX_USER} to complete setup
-    echo the pattern used to set the password is deocumented in step five of README.org on the server
-    exit $SSH_EXIT
-elif [ $SSH_EXIT -ne 0 ]; then
-    echo remote command failed with $SSH_EXIT
-    exit $SSH_EXIT
-fi
-#+end_src
-
 Subsequently run [[file:./bin/remote.sh]].
 #+name: &remote-command-runtime-user-commands-1
 #+begin_src bash
@@ -259,6 +256,7 @@ pipenv install *.whl || exit 3
 
 #+name: &remote-command
 #+begin_src bash :noweb yes
+sudo <<&remote-root-commands-0>>
 pushd /var/lib/interlex
 <<&sudo-runtime-user>> <<&remote-command-runtime-user-commands-1>>
 pushd run || exit 2
@@ -271,6 +269,7 @@ popd || exit 5
 #+name: remote.sh
 #+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
 #+begin_src bash :tangle ./bin/remote.sh :comments noweb
+<<&rsync-zip>>
 ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "
 <<&remote-command>>
 "
