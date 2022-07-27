@@ -204,7 +204,7 @@ unzip -o alt.zip || exit 1
 /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.service /etc/systemd/system/ || exit 2
 /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.socket /etc/systemd/system/ || exit 3
 /bin/cp -f resources/filesystem/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ || exit 4
-/bin/cp -f resources/filesystem/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ || exit 5  # carful here
+/bin/cp -f resources/filesystem/etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-available/ || exit 5  # carful here XXX DO NOT NUKE FROM ORBIT THANKS
 unlink /etc/nginx/sites-enabled/uri.interlex.org.conf
 ln -s /etc/nginx/sites-available/uri.interlex.org.conf /etc/nginx/sites-enabled/uri.interlex.org.conf || exit 6
 systemd-tmpfiles --create || exit 7
