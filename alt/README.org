@@ -214,7 +214,7 @@ systemctl enable ilxalt || exit 9
 #+name: &config-remote-runtime-user-commands-2
 #+begin_src bash
 pipenv --rm  # the very first time this can fail
-pipenv install || exit 11
+pipenv install --skip-lock || exit 11
 #+end_src
 #+name: &config-remote-runtime-user-commands-3
 #+begin_src bash
@@ -257,13 +257,13 @@ Subsequently run [[file:./bin/remote.sh]].
 #+name: &remote-command-runtime-user-commands-1
 #+begin_src bash
 mv -f run/*.whl .
-rm run/Pipenv.lock
+rm run/Pipfile.lock
 unzip -o alt.zip || exit 1
 #+end_src
 #+name: &remote-command-runtime-user-commands-2
 #+begin_src bash
 pipenv --rm
-pipenv install *.whl || exit 3
+pipenv install *.whl --skip-lock || exit 3
 #+end_src
 
 #+name: &remote-command
@@ -275,7 +275,7 @@ pushd run || exit 2
 sudo -u ${INTERLEX_USER} <<&remote-command-runtime-user-commands-2>>
 popd || exit 4
 popd || exit 5
-<<&restart-ilx>>
+<<&restart-ilxalt>>
 #+end_src
 
 #+name: remote.sh
