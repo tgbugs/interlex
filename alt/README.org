@@ -82,7 +82,7 @@ ALT_PATH="${ABS_PATH}/../"
 Go to the alt folder and clean out any existing build files.
 #+name: &pushd-clean
 #+begin_src bash
-pushd ${ALT_PATH} &&
+pushd "${ALT_PATH}" &&
 git clean -dfx &&  # cleans only the alt subdir
 git checkout HEAD -- resources/filesystem/  # prevent stale user
 popd || exit 1
@@ -91,10 +91,10 @@ popd || exit 1
 Build python wheels and package them for deployment.
 #+name: &build-alt-zip
 #+begin_src bash
-pushd ${ALT_PATH} &&
+pushd "${ALT_PATH}" &&
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&
-rm -rf *.egg-info &&
+rm -rf ./*.egg-info &&
 mv dist/* run/ &&
 rmdir dist &&
 #pipenv install  # leave this out for now due to gunicorn detection issues
@@ -110,10 +110,16 @@ popd || exit 2
 # connections, which makes the code clearer on the one hand but the connections more
 # complex on the other (sigh)
 Deploy the build artifact to the server.
+# FIXME :comments noweb severly broken, ignores `org-babel-tangle-use-relative-file-links'
 #+name: &rsync-zip
-#+begin_src bash
+#+begin_src bash :noweb yes :comments link
+<<&alt-path>>
 TEMP_DIR=$(ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "mktemp -d")
-pushd ${ALT_PATH} &&
+TD_EXIT=$?
+if [ $TD_EXIT -ne 0 ]; then
+    exit $TD_EXIT
+fi
+pushd "${ALT_PATH}" &&
 # yeah teamptarget is because we have to sync to somewhere the ssh user can deploy and only then move alt to
 # the runtime user
 rsync --archive --verbose alt.zip ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER}:${TEMP_DIR}/alt.zip || exit 20
@@ -125,7 +131,7 @@ The first time InterLex Alt is set up on a server run [[file:./bin/config-build.
 #+header: :shebang "#!/usr/bin/env bash"
 #+header: :noweb no-export
 #+header: :tangle-mode (identity #o755)
-#+begin_src bash :tangle ./bin/config-build.sh :comments noweb
+#+begin_src bash :tangle ./bin/config-build.sh :comments link
 <<&alt-path>>
 <<&pushd-clean>>
 grep -rl interlex resources/filesystem/ | xargs sed -i "s/{:interlex-user}/${INTERLEX_USER}/g" &&
@@ -138,7 +144,7 @@ Subsequently run [[file:./bin/build.sh]].
 #+header: :shebang "#!/usr/bin/env bash"
 #+header: :noweb no-export
 #+header: :tangle-mode (identity #o755)
-#+begin_src bash :tangle ./bin/build.sh :comments noweb
+#+begin_src bash :tangle ./bin/build.sh :comments link
 <<&alt-path>>
 <<&pushd-clean>>
 <<&build-alt-zip>>
@@ -155,7 +161,7 @@ The first time run [[file:./bin/config-remote.sh]].
 
 #+name: config-remote.sh
 #+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
-#+begin_src bash :tangle ./bin/config-remote.sh :comments noweb
+#+begin_src bash :tangle ./bin/config-remote.sh :comments link
 <<&rsync-zip>>
 ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "
 <<&config-remote-command>>
@@ -268,7 +274,7 @@ popd || exit 5
 
 #+name: remote.sh
 #+header: :shebang "#!/usr/bin/env bash" :noweb no-export :tangle-mode (identity #o755)
-#+begin_src bash :tangle ./bin/remote.sh :comments noweb
+#+begin_src bash :tangle ./bin/remote.sh :comments link
 <<&rsync-zip>>
 ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "
 <<&remote-command>>
