@@ -1,3 +1,4 @@
+import pytest
 import unittest
 import requests
 from interlex.render import TripleRender
@@ -11,29 +12,40 @@ class TestRoutes(unittest.TestCase):
     scheme = 'http'
     hostname = 'uri.interlex.org'
 
+    @pytest.mark.skip('the redirect form empty to /base/ is handled in nginx')
     def test_no_user(self):
         urls = [
             f'{self.scheme}://{self.host}:{self.port}/ilx_0101431.ttl',
         ]
+        bads = []
         for url in urls:
             out = requests.get(url, headers={'host': self.hostname})
             msg = out.url + '\n' + out.content.decode()
-            assert out.ok, msg
+            if not out.ok:
+                bads.append(msg)
 
+        assert not bads, '\n'.join(bads)
+
+    @pytest.mark.skip('the redirect form empty to /base/ is handled in nginx')
     def test_no_user_content_type(self):
         urls = [
             f'{self.scheme}://{self.host}:{self.port}/ilx_0101431',
         ]
         ct = 'text/turtle'
+        bads = []
         for url in urls:
             out = requests.get(url, headers={'host': self.hostname, 'Accept':ct})
             msg = out.url + '\n' + out.content.decode()
-            assert out.ok, msg
+            if not out.ok:
+                bads.append(msg)
+
+        assert not bads, '\n'.join(bads)
 
     def test_content_type(self):
         urls = [
             f'{self.scheme}://{self.host}:{self.port}/base/ilx_0101431',
         ]
+        bads = []
         for url in urls:
             for ct in tr.mimetypes:
                 if ct is None:
@@ -42,11 +54,23 @@ class TestRoutes(unittest.TestCase):
                     # though type nullability does indeed suck
                     continue
 
+                if ct == 'text/turtle+html':
+                    expect = 'text/html'
+                else:
+                    expect = ct
+
                 out = requests.get(url, headers={'host': self.hostname, 'Accept': ct})
-                assert out.ok
+                if not out.ok:
+                    msg = f'{url} {ct} failed'
+                    bads.append(msg)
+                    continue  # don't try to check content type on failed requests
+
                 oct = out.headers['Content-Type']
-                # charset may be added so use startswith
-                assert oct.startswith(ct), f'{out.status_code} {oct} != {ct}'
+                if not oct.startswith(expect):
+                    # charset may be added so use startswith
+                    bads.append(f'{url} {out.status_code} {oct} != {expect}')
+
+        assert not bads, '\n'.join(bads)
 
     def test_extension(self):
         urls = [
@@ -61,21 +85,34 @@ class TestRoutes(unittest.TestCase):
                 assert out.ok, out.url + '\n' + out.content.decode()
 
     def test_ilx_types(self):
-        ids = dict(fde='0381413',
-                   cde='0301431',
-                   term='0101431',
-                   annotation='0381355',
-                   relation='0381385',
-                   #termset='0770272',
-                   termset='0774501',  # gnarly multiply nested case
+        ids = dict(fde=['ilx_0381413'],  # XXX currently none of these are using the fde_ prefix?
+                   cde=['ilx_0301431',
+                        'cde_0288556'],
+                   pde=['ilx_0738259',
+                        'pde_01000045'],
+                   term=['ilx_0101431',
+                         'ilx_0728778',  # multi ilx case
+                         ],
+                   annotation=['ilx_0381355'],
+                   relation=['ilx_0381385'],
+                   termset=['ilx_0770272',
+                            'ilx_0774501',  # gnarly multiply nested case
+                            ],
                    )
 
-        for type, id in ids.items():
-            url = f'{self.scheme}://{self.host}:{self.port}/base/ilx_{id}'
-            ct = 'text/turtle'
-            out = requests.get(url, headers={'host': self.hostname, 'Accept':ct})
-            msg = out.url + '\n' + out.content.decode()
-            oct = out.headers['Content-Type']
-            assert out.ok, msg
-            assert oct.startswith(ct), f'{out.status_code} {oct} != {ct}'
-            #print(url, msg, ct, oct)
+        bads = []
+        for type, frags in ids.items():
+            for frag in frags:
+                url = f'{self.scheme}://{self.host}:{self.port}/base/{frag}'
+                ct = 'text/turtle'
+                out = requests.get(url, headers={'host': self.hostname, 'Accept':ct})
+                msg = out.url + '\n' + out.content.decode()
+                oct = out.headers['Content-Type']
+                if not out.ok:
+                    bads.append(msg)
+                if not oct.startswith(ct):
+                    bads.append(f'{out.status_code} {oct} != {ct}')
+
+                print(url, msg, ct, oct)
+
+        assert not bads, '\n'.join(bads)
