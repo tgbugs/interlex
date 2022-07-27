@@ -5,5 +5,4 @@ name = "pypi"
 
 [packages]
 interlex-alt = {path = "./InterLex_Alt-0.0.2-py2.py3-none-any.whl"}
-idlib = "==0.0.1.dev2"
 pymysql = "*" # fix for apparently braindead pipenv ???
