@@ -12,7 +12,7 @@ class TestRoutes(unittest.TestCase):
     scheme = 'http'
     hostname = 'uri.interlex.org'
 
-    @pytest.mark.skip('the redirect form empty to /base/ is handled in nginx')
+    @pytest.mark.skipif(port != '80', reason='no nginx redirects')
     def test_no_user(self):
         urls = [
             f'{self.scheme}://{self.host}:{self.port}/ilx_0101431.ttl',
@@ -26,7 +26,7 @@ class TestRoutes(unittest.TestCase):
 
         assert not bads, '\n'.join(bads)
 
-    @pytest.mark.skip('the redirect form empty to /base/ is handled in nginx')
+    @pytest.mark.skipif(port != '80', reason='no nginx redirects')
     def test_no_user_content_type(self):
         urls = [
             f'{self.scheme}://{self.host}:{self.port}/ilx_0101431',
