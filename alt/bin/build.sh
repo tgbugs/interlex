@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# [[file:~/git/interlex/alt/README.org::build.sh][build.sh]]
-# [[[[file:~/git/interlex/alt/README.org::&alt-path][&alt-path]]][&alt-path]]
+# [[file:../README.org::build.sh][build.sh]]
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do # resolve all symlinks
   DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
@@ -10,25 +9,19 @@ done
 ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
 
 ALT_PATH="${ABS_PATH}/../"
-# &alt-path ends here
-# [[[[file:~/git/interlex/alt/README.org::&pushd-clean][&pushd-clean]]][&pushd-clean]]
-pushd ${ALT_PATH} &&
+pushd "${ALT_PATH}" &&
 git clean -dfx &&  # cleans only the alt subdir
-git checkout HEAD -- deploy_files/  # prevent stale user
-# &pushd-clean ends here
-# [[[[file:~/git/interlex/alt/README.org::&build-alt-zip][&build-alt-zip]]][&build-alt-zip]]
+git checkout HEAD -- resources/filesystem/  # prevent stale user
+popd || exit 1
+pushd "${ALT_PATH}" &&
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&
-rm -rf *.egg-info &&
+rm -rf ./*.egg-info &&
 mv dist/* run/ &&
 rmdir dist &&
 #pipenv install  # leave this out for now due to gunicorn detection issues
 rm alt.zip;
 zip -r alt.zip README.org &&
 zip -r alt.zip run/ &&
-# &build-alt-zip ends here
-# [[[[file:~/git/interlex/alt/README.org::&scp-zip][&scp-zip]]][&scp-zip]]
-scp -v alt.zip ${INTERLEX_USER}@${INTERLEX_SERVER}:/home/${INTERLEX_USER}/
-popd || exit 1
-# &scp-zip ends here
+popd || exit 2
 # build.sh ends here
