@@ -120,9 +120,9 @@ if [ $TD_EXIT -ne 0 ]; then
     exit $TD_EXIT
 fi
 pushd "${ALT_PATH}" &&
-# yeah teamptarget is because we have to sync to somewhere the ssh user can deploy and only then move alt to
-# the runtime user
-rsync --archive --verbose alt.zip ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER}:${TEMP_DIR}/alt.zip || exit 20
+# so apparently we're deploying on things so old that rsync doesn't have the commands on the remote it needs
+#rsync --rsh ssh --archive --verbose alt.zip ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER}:${TEMP_DIR}/alt.zip || exit 20
+scp alt.zip ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER}:${TEMP_DIR}/alt.zip || exit 20
 popd || exit 3
 #+end_src
 
