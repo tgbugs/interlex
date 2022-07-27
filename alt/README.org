@@ -63,6 +63,7 @@ The =GID= is matched to the conventions we use for gentoo docker images.
 GID=839
 groupadd -g ${GID} interlex
 useradd -m -k /etc/skel -u ${GID} -g ${GID} -d /var/lib/interlex interlex
+chmod 0755 /var/lib/interlex
 #+end_src
 ** Build and deploy code and config
 Get the absolute path to the script and use it to find the alt folder.
@@ -217,16 +218,17 @@ touch .mypass || exit 13
 chmod 0600 .mypass || exit 14
 #+end_src
 
+# FIXME org-babel bug where <<&a>> <<&b>> doesn't expand <<&a>> as a prefix correctly
 #+name: &config-remote-command
 #+begin_src bash :noweb yes
 sudo <<&remote-root-commands-0>>
 pushd /var/lib/interlex || exit 22
-<<&sudo-runtime-user>> <<&config-remote-runtime-user-commands-1>>
+sudo -u ${INTERLEX_USER} <<&config-remote-runtime-user-commands-1>>
 sudo <<&config-remote-root-commands-1>>
 pushd run  || exit 10
-<<&sudo-runtime-user>> <<&config-remote-runtime-user-commands-2>>
+sudo -u ${INTERLEX_USER} <<&config-remote-runtime-user-commands-2>>
 popd || exit 12
-<<&sudo-runtime-user>> <<&config-remote-runtime-user-commands-3>>
+sudo -u ${INTERLEX_USER} <<&config-remote-runtime-user-commands-3>>
 if [ ! -s .mypass ]; then
     echo ~/.mypass has no records
     exit 15
@@ -264,9 +266,9 @@ pipenv install *.whl || exit 3
 #+begin_src bash :noweb yes
 sudo <<&remote-root-commands-0>>
 pushd /var/lib/interlex
-<<&sudo-runtime-user>> <<&remote-command-runtime-user-commands-1>>
+sudo -u ${INTERLEX_USER} <<&remote-command-runtime-user-commands-1>>
 pushd run || exit 2
-<<&sudo-runtime-user>> <<&remote-command-runtime-user-commands-2>>
+sudo -u ${INTERLEX_USER} <<&remote-command-runtime-user-commands-2>>
 popd || exit 4
 popd || exit 5
 <<&restart-ilx>>
