@@ -336,6 +336,9 @@ class MysqlExport:
         if recurse:
             yield t_frags, all_termsets, rests
             return
+        else:  # entrypoint
+            # add the starting termset to all termsets
+            all_termsets.extend(terms)
 
         if t_frags:
             t_terms = list(self.terms(t_frags))
@@ -344,6 +347,12 @@ class MysqlExport:
         for r in rests:
             log.debug(r)
             yield from r
+
+        ids = set()
+        for ts_termset_term in all_termsets:
+            yield from self._basic_trips(ts_termset_term, set(), ids, {})
+
+        yield from self._existing_trips(ids, set())
 
     def _convert_trip(self, t, predobjs):
         rest = tuple()
@@ -371,38 +380,34 @@ class MysqlExport:
 
         return (preferred_iri, p, oo), rest
 
+    def _basics(self, term):
+        id = term.id
+        ilx_fragment = term.ilx
+        baseiri = rdflib.URIRef('http://uri.interlex.org/base/' + ilx_fragment)
+        #done.add(baseiri)  # handled by caller
+        type = self.types[term.type]
+        ilxtype = ilxrtype[term.type]
+        preferred_iri = baseiri
+        return id, baseiri, preferred_iri, type, ilxtype, ilx_fragment
 
-    def _terms_triples(self, terms, include_full_object_predicates=tuple(), done=tuple()):
-        def basics(term):
-            id = term.id
-            ilx_fragment = term.ilx
-            baseiri = rdflib.URIRef('http://uri.interlex.org/base/' + ilx_fragment)
-            done.add(baseiri)
-            type = self.types[term.type]
-            ilxtype = ilxrtype[term.type]
-            preferred_iri = baseiri
-            return id, baseiri, preferred_iri, type, ilxtype, ilx_fragment
+    def _basic_trips(self, term, done, ids, types):
+        id, baseiri, preferred_iri, type, ilxtype, ilx_fragment = self._basics(term)
+        ids.add(id)
+        done.add(baseiri)  # FIXME duplicated
+        types[baseiri] = type
+        preferred_iri = baseiri  # XXX dealt with by render prefs instead i.e. TripleRender.default_prefix_ranking
+        yield preferred_iri, rdf.type, type
+        yield preferred_iri, ilxr.type, ilxtype
+        yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
+        if term.definition:
+            yield preferred_iri, definition, rdflib.Literal(term.definition)
 
-        done = set() if not done else done
-        predobjs = set()
-        ids = set()
-        #prids = {}
-        for term in terms:
-            id, baseiri, preferred_iri, type, ilxtype, ilx_fragment = basics(term)
-            ids.add(id)
-            done.add(baseiri)
-            preferred_iri = baseiri  # XXX dealt with by render prefs instead i.e. TripleRender.default_prefix_ranking
-            yield preferred_iri, rdf.type, type
-            yield preferred_iri, ilxr.type, ilxtype
-            yield preferred_iri, rdfs.label, rdflib.Literal(term.label)
-            if term.definition:
-                yield preferred_iri, definition, rdflib.Literal(term.definition)
+        # TODO hasIlxId sco hasRefId, hasMutualId for non ref ids
+        yield preferred_iri, ilxtr.hasIlxId, baseiri
 
-            # TODO hasIlxId sco hasRefId, hasMutualId for non ref ids
-            yield preferred_iri, ilxtr.hasIlxId, baseiri
+        #prids[preferred_iri] = ilx_fragment
 
-            #prids[preferred_iri] = ilx_fragment
-
+    def _existing_trips(self, ids, predobjs):
         for ilx_iri, pref, o in self.existing_ids_triples(ids):
             ilx_iri = rdflib.URIRef(ilx_iri)
             o = rdflib.URIRef(o.rstrip())  # FIXME ARGH rstrip
@@ -419,6 +424,17 @@ class MysqlExport:
             if pref == '1':
                 yield ilx_iri, ilxtr.hasIlxPreferredId, o
 
+    def _terms_triples(self, terms, include_full_object_predicates=tuple(), done=tuple()):
+        done = set() if not done else done
+        predobjs = set()
+        ids = set()
+        #prids = {}
+        types = {}
+        for term in terms:
+            yield from self._basic_trips(term, done, ids, types)
+
+        yield from self._existing_trips(ids, predobjs)
+
         more_terms_ilx_fragments = set()
         for preferred_iri, p, o in self.id_triples(ids):  # FIXME not actually preferred
             (preferred_iri, p, oo), rest = self._convert_trip((preferred_iri, p, o), predobjs)
@@ -427,7 +443,7 @@ class MysqlExport:
             if p == rdf.type:
                 type = p
             elif p == ilxtr.subThingOf:
-                if type == owl.Class:
+                if types[preferred_iri] == owl.Class:
                     p = rdfs.subClassOf
                 else:
                     p = rdfs.subPropertyOf
@@ -450,7 +466,7 @@ class MysqlExport:
             predobjs = set()
             ids = set()
             for term in self.terms(todo):
-                id, baseiri, preferred_iri, type, ilxtype, ilx_fragment = basics(term)
+                id, baseiri, preferred_iri, type, ilxtype, ilx_fragment = self._basics(term)
                 ids.add(id)
                 done.add(baseiri)
                 preferred_iri = baseiri  # XXX dealt with by render prefs instead i.e. TripleRender.default_prefix_ranking
