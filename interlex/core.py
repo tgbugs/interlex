@@ -18,15 +18,15 @@ from flask import make_response, abort
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.routing import BaseConverter
 from ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
-from pyontutils.core import makeGraph, OntId
+from pyontutils.core import makeGraph, OntId, OntGraph
 from pyontutils.utils import TermColors as tc, injective_dict
-from pyontutils.config import devconfig
 from pyontutils.namespaces import PREFIXES as uPREFIXES
 from pyontutils.namespaces import ilxtr, rdf, rdfs, owl, oboInOwl, NIFRID
 from pyontutils.combinators import annotation
 from pyontutils.identity_bnode import IdentityBNode, IdLocalBNode
 from interlex import config
 from interlex.utils import printD, log
+from interlex.config import auth
 from interlex.namespaces import fma
 
 synonym_types = {'abbrev':ilxtr['synonyms/abbreviation'],
@@ -265,14 +265,14 @@ def server_api(db=None, dburi=dbUri()):
 
     @app.route('/triples/bulk', methods=['POST'])
     def triples_bulk():
-        #file = Path(devconfig.git_local_base) / devconfig.ontology_repo / 'ttl' / 'nif.ttl'
-        graph = rdflib.Graph()
+        #file = auth.get_path('git-local-base') / auth.get('ontology-repo') / 'ttl/nif.ttl'
+        graph = OntGraph()
 
-        #file = Path(devconfig.git_local_base) / devconfig.ontology_repo / 'ttl' / 'NIF-GrossAnatomy.ttl'
-        #file = Path(devconfig.git_local_base) / devconfig.ontology_repo / 'ttl' / 'bridge' / 'anatomy-bridge.ttl'
+        #file = auth.get_path('git-local-base') / auth.get('ontology-repo') / 'ttl/NIF-GrossAnatomy.ttl'
+        #file = auth.get_path('git-local-base') / auth.get('ontology-repo') / 'ttl/bridge/anatomy-bridge.ttl'
         #graph.parse(file.as_posix(), format='ttl')
         #graph.parse('http://purl.obolibrary.org/obo/uberon.owl')
-        file = Path(devconfig.git_local_base) / devconfig.ontology_repo / 'ttl' / 'external' / 'uberon.owl'
+        file = auth.get_path('git-local-base') / auth.get('ontology-repo') / 'ttl/external/uberon.owl'
         group = 'uberon'
         graph.parse(file.as_posix())
 

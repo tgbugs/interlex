@@ -1,7 +1,8 @@
 import os
 import orthauth as oa
+from pyontutils.config import auth as pauth
 
-auth = oa.configure_here('auth-config.py', __name__)
+auth = oa.configure_here('auth-config.py', __name__, include=pauth)
 
 # basics
 debug = auth.get('debug')

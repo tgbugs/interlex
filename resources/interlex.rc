@@ -7,7 +7,6 @@
 : ${SVCUSER:=interlex}
 : ${LOG_LOC:="/var/log/${SVCNAME}"}
 : ${PYTHONPATH:=""}
-: ${PYONTUTILS_DEVCONFIG:="~/.config/pyontutils/devconfig.yaml"}  # sigh, still needed for now
 
 run_dir=${run_dir:-/run}
 LOG="${LOG_LOC}/uri.log"

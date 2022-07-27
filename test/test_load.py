@@ -3,12 +3,11 @@ import unittest
 from unittest.mock import MagicMock
 import pytest
 from pathlib import Path
-from pyontutils.config import devconfig  # FIXME this will cause issues down the line
 from interlex import exceptions as exc
 from interlex.core import FakeSession
 from interlex.load import FileFromFileFactory, FileFromIRIFactory
-from test.setup_testing_db import getSession
-from IPython import embed
+from interlex.config import auth
+from .setup_testing_db import getSession
 
 
 class FakeResultProxy:
@@ -30,14 +29,14 @@ class TestLoader(unittest.TestCase):
     FileFromFile = FileFromFileFactory(session)
     def setUp(self):  # NOTE this runs multiple times
         self.FileFromFile.refresh()  # clear cached anything
-        self.nasty = Path(devconfig.git_local_base, 'pyontutils/ttlser/test/nasty.ttl')
+        self.nasty = auth.get_path('git-local-base') / 'pyontutils/ttlser/test/nasty.ttl'
         self.nastyebn = 'http://testurl.org/filename.ttl'
         self.results = (FakeResultProxy for _ in range(999))
         self.session.execute = MagicMock(return_value=self.results)
         self.FileFromFile.ident_exists = ident_exists
 
     def test_loader(self):
-        ttl = Path(devconfig.ontology_local_repo) / 'ttl'
+        ttl = auth.get_path('ontology-local-repo') / 'ttl'
         paths =  ('NIF-GrossAnatomy.ttl',
                   #'NIF-Chemical.ttl',
                   #'external/uberon.owl',  # FIXME to big for testing w/o pypy3
@@ -46,7 +45,8 @@ class TestLoader(unittest.TestCase):
                   'generated/parcellation-artifacts.ttl',
                   'nif.ttl',)
         names = [ttl/p for p in paths]
-        # TODO devconfig needs the remote ontology uri base
+        # TODO the ontology should define the iri path mapping in its own metadata?
+        # and/or infer it using the augpathlib logic that I implemented somewhere already?
         ebns = [os.path.join('http://ontology.neuinfo.org/NIF/ttl', p) for p in paths]
         for name, ebn in list(zip(names, ebns))[::-1]:
             #self.FileFromFile.session.return_value = results
