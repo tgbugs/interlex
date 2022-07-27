@@ -42,9 +42,13 @@ Install =python3.7-devel= (or greater), =pip=, and =pipenv= on the server that
 will run InterLex Alt. For example on CentOS
 
 #+begin_src bash
-sudo yum install python37-devel python37-pip
-sudo pip install pipenv
+sudo yum install centos-release-scl-rh
+sudo yum install rh-python38-python rh-python38-python-devel # devel needed for pyxattr
+sudo /opt/rh/rh-python38/root/usr/bin/python3.8 -m ensurepip
+sudo /opt/rh/rh-python38/root/usr/local/bin/pip3.8 install pipenv
+sudo ln -s /opt/rh/rh-python38/root/usr/local/bin/pipenv /usr/bin/pipenv
 #+end_src
+
 ** Set environment variables
 Set =INTERLEX_DEPLOY_USER=, =INTERLEX_USER=, and =INTERLEX_SERVER=
 environment variables.  The =INTERLEX_DEPLOY_USER= should have =sudo=
