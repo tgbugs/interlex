@@ -46,6 +46,7 @@ class TestRoutes(unittest.TestCase):
             f'{self.scheme}://{self.host}:{self.port}/base/ilx_0101431',
         ]
         bads = []
+        doskip = False
         for url in urls:
             for ct in tr.mimetypes:
                 if ct is None:
@@ -59,7 +60,12 @@ class TestRoutes(unittest.TestCase):
                 else:
                     expect = ct
 
-                out = requests.get(url, headers={'host': self.hostname, 'Accept': ct})
+                try:
+                    out = requests.get(url, headers={'host': self.hostname, 'Accept': ct})
+                except requests.exceptions.SSLError as e:
+                    doskip = 'There was an SSL failure.'
+                    continue
+
                 if not out.ok:
                     msg = f'{url} {ct} failed'
                     bads.append(msg)
@@ -71,6 +77,8 @@ class TestRoutes(unittest.TestCase):
                     bads.append(f'{url} {out.status_code} {oct} != {expect}')
 
         assert not bads, '\n'.join(bads)
+        if doskip:
+            pytest.skip(doskip)
 
     def test_extension(self):
         urls = [
@@ -113,6 +121,6 @@ class TestRoutes(unittest.TestCase):
                 if not oct.startswith(ct):
                     bads.append(f'{out.status_code} {oct} != {ct}')
 
-                print(url, msg, ct, oct)
+                #print(url, msg, ct, oct)
 
         assert not bads, '\n'.join(bads)
