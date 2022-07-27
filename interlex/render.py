@@ -3,7 +3,7 @@ from pathlib import PurePosixPath
 from datetime import datetime
 from itertools import chain
 import rdflib
-from flask import abort  # FIXME decouple this??
+from flask import abort, Response  # FIXME decouple this??
 from htmlfn import atag, htmldoc
 from htmlfn import table_style, render_table, ttl_html_style
 from ttlser import CustomTurtleSerializer
@@ -61,6 +61,8 @@ class TripleRender:
                            'nt': 'application/n-triples',
                            'n3': 'text/n3',
                            #'nq': 'application/n-quads',  # TODO need qualifier context store
+                           'csv': 'text/csv',
+                           'tsv': 'text/tsv',
         }
 
     def check(self, request):
@@ -328,5 +330,9 @@ class TripleRender:
         # TODO
         return {}
 
-    def tabular(self, *args, **kwargs):
-        raise NotImplementedError('TODO')
+    def tabular(self, request, graph, group, frag_pref, id, object_to_existing,
+                title, mimetype, labels, ontid, ranking):
+        # FIXME decouple use of Response ???
+        # XXX FIXME really bad representation, literally the raw triples
+        sep = ',' if mimetype == 'text/csv' else '\t'
+        return Response((sep.join((json.dumps(str(e)) for e in t)) + '\n' for t in graph), mimetype=mimetype)
