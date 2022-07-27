@@ -182,45 +182,36 @@ class MysqlExport:
             return
 
         args = dict(ids=tuple(ids))
-        # FIXME urg the ILX:% ... maybe fixed now, but is matching iri bad too?
         sql = f'''
-        SELECT te.iri, ts.type, ts.literal FROM term_synonyms as ts
-          JOIN term_existing_ids AS te
-            ON te.tid = ts.tid
+        SELECT concat('http://uri.interlex.org/base/', te.ilx), ts.type, ts.literal FROM term_synonyms as ts
+          JOIN terms AS te
+            ON te.id = ts.tid
          WHERE ts.tid in :ids
            AND ts.literal != ''
-           AND te.iri like 'http://uri.interlex.org/base/%'
         UNION
-        SELECT te1.iri, te2.iri, value FROM term_annotations AS ta
-          JOIN term_existing_ids AS te1
-            ON ta.tid = te1.tid
-          JOIN term_existing_ids AS te2
-            ON ta.annotation_tid = te2.tid
+        SELECT concat('http://uri.interlex.org/base/', te1.ilx), concat('http://uri.interlex.org/base/', te2.ilx), value FROM term_annotations AS ta
+          JOIN terms AS te1
+            ON ta.tid = te1.id
+          JOIN terms AS te2
+            ON ta.annotation_tid = te2.id
          WHERE ta.tid in :ids
-           AND te1.iri like 'http://uri.interlex.org/base/%'
-           AND te2.iri like 'http://uri.interlex.org/base/%'
         UNION
-        SELECT te.iri, te1.iri, te2.iri FROM term_relationships AS tr
-          JOIN term_existing_ids AS te
-            ON te.tid = tr.term1_id
-          JOIN term_existing_ids AS te1
-            ON te1.tid = tr.relationship_tid
-          JOIN term_existing_ids AS te2
-            ON te2.tid = tr.term2_id
+        SELECT concat('http://uri.interlex.org/base/', te.ilx), concat('http://uri.interlex.org/base/', te1.ilx), concat('http://uri.interlex.org/base/', te2.ilx) FROM term_relationships AS tr
+          JOIN terms AS te
+            ON te.id = tr.term1_id
+          JOIN terms AS te1
+            ON te1.id = tr.relationship_tid
+          JOIN terms AS te2
+            ON te2.id = tr.term2_id
          WHERE tr.term1_id in :ids
            AND tr.withdrawn != '1'
-           AND te.iri like 'http://uri.interlex.org/base/%'
-           AND te1.iri like 'http://uri.interlex.org/base/%'
-           AND te2.iri like 'http://uri.interlex.org/base/%'
         UNION
-        SELECT te1.iri, {str(ilxtr.subThingOf)!r}, te2.iri FROM term_superclasses AS tsc
-          JOIN term_existing_ids AS te1
-            ON te1.tid = tsc.tid
-          JOIN term_existing_ids AS te2
-            ON te2.tid = tsc.superclass_tid
+        SELECT concat('http://uri.interlex.org/base/', te1.ilx), {str(ilxtr.subThingOf)!r}, concat('http://uri.interlex.org/base/', te2.ilx) FROM term_superclasses AS tsc
+          JOIN terms AS te1
+            ON te1.id = tsc.tid
+          JOIN terms AS te2
+            ON te2.id = tsc.superclass_tid
          WHERE tsc.tid in :ids
-           AND te1.iri like 'http://uri.interlex.org/base/%'
-           AND te2.iri like 'http://uri.interlex.org/base/%'
         '''
 
         yield from self.session.execute(sql, args)
@@ -437,11 +428,15 @@ class MysqlExport:
 
         more_terms_ilx_fragments = set()
         for preferred_iri, p, o in self.id_triples(ids):  # FIXME not actually preferred
-            (preferred_iri, p, oo), rest = self._convert_trip((preferred_iri, p, o), predobjs)
+            t = (preferred_iri, p, oo), rest = self._convert_trip((preferred_iri, p, o), predobjs)
+            if preferred_iri not in done:
+                log.error(t)
+                continue
+
             predobjs.add(p)
             #print(p, oo)
             if p == rdf.type:
-                type = p
+                pass
             elif p == ilxtr.subThingOf:
                 if types[preferred_iri] == owl.Class:
                     p = rdfs.subClassOf
