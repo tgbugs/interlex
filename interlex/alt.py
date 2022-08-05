@@ -33,9 +33,11 @@ def server_alt(db=None, dburi=dbUri()):
     tripleRender = TripleRender()
     object_to_existing = {}
 
-    @app.route('/base/<frag_pref>_<id>')
-    def ilx(frag_pref, id, redirect=True):
-        user = 'base'  # TODO
+    @app.route('/<group>/<frag_pref>_<id>')
+    def ilx(group, frag_pref, id, redirect=True):
+        if group not in ('base', 'sparc'):  # XXX HACK alt db has no groups
+            return abort(404)
+
         try:
             prefix = {
                 'ilx': 'ILX',
@@ -46,10 +48,10 @@ def server_alt(db=None, dburi=dbUri()):
         except KeyError:
             return abort(404)
 
-        if user == 'base':
+        if group == 'base':
             title = f'{prefix}:{id}'
         else:
-            title = f'ilx.{user}:{frag_pref}_{id}'
+            title = f'ilx.{group}:{frag_pref}_{id}'
 
         try:
             tripleRender.check(request)
@@ -59,17 +61,25 @@ def server_alt(db=None, dburi=dbUri()):
         graph = OntGraph()
         oq.OntCuries.populate(graph)
         [graph.add(t) for t in ilxexp(frag_pref, id)]
+
+        kwargs = {}
+        if group == 'sparc':  # TODO real support for render preferences
+            # XXX HACK
+            _pr = ['FMA'] + [p for p in tripleRender.default_prefix_ranking if p != 'FMA']
+            kwargs['ranking'] = _pr
+
         try:
-            return tripleRender(request, graph, user, frag_pref, id,
-                                object_to_existing, title, redirect=redirect)
+            return tripleRender(
+                request, graph, group, frag_pref, id, object_to_existing, title,
+                redirect=redirect, **kwargs)
         except BaseException as e:
             print(tc.red('ERROR'), e)
             raise e
             return abort(404)
 
-    @app.route('/base/<frag_pref>_<id>.<extension>')
-    def ilx_get(frag_pref, id, extension):
-        return ilx(frag_pref, id, redirect=False)
+    @app.route('/<group>/<frag_pref>_<id>.<extension>')
+    def ilx_get(group, frag_pref, id, extension):
+        return ilx(group, frag_pref, id, redirect=False)
 
     @app.route('/base/curies')
     def curies_():
@@ -105,13 +115,13 @@ def server_alt(db=None, dburi=dbUri()):
         except ValueError:
             iri = prefix_iri_curie
 
-    @app.route('/base/ontologies/ilx_<id>')
-    def ontologies_ilx(id):
-        return ilx(id)
+    @app.route('/<group>/ontologies/<frag_pref>_<id>')
+    def ontologies_ilx(group, frag_pref, id):
+        return ilx(group, frag_pref, id)
 
-    @app.route('/base/ontologies/ilx_<id>.<extension>')
-    def ontologies_ilx_get(id, extension):
-        return ilx(id, redirect=False)
+    @app.route('/<group>/ontologies/<frag_pref>_<id>.<extension>')
+    def ontologies_ilx_get(group, frag_pref, id, extension):
+        return ilx(group, frag_pref, id, redirect=False)
 
     @app.route('/<group>/ontologies/community-terms')
     def group_ontologies_terms(group):
