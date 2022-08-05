@@ -35,7 +35,9 @@ def server_alt(db=None, dburi=dbUri()):
 
     @app.route('/<group>/<frag_pref>_<id>')
     def ilx(group, frag_pref, id, redirect=True):
-        if group not in ('base', 'sparc'):  # XXX HACK alt db has no groups
+        # XXX FIXME termsets should render like regular terms on the /base/ilx_ endpoint
+        # and like ontologies on the /base/ontologies/ilx_ endpoint
+        if group not in ('base', 'sparc'):  # XXX HACK the db has no groups
             return abort(404)
 
         try:
