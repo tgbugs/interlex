@@ -37,7 +37,15 @@ def server_alt(db=None, dburi=dbUri()):
     def ilx(group, frag_pref, id, redirect=True):
         # XXX FIXME termsets should render like regular terms on the /base/ilx_ endpoint
         # and like ontologies on the /base/ontologies/ilx_ endpoint
-        if group not in ('base', 'sparc'):  # XXX HACK the db has no groups
+        if group not in ('base', 'sparc', 'interlex'):  # XXX HACK the db has no groups
+            # the interlex group is used to serialize using only interlex internal ids
+            # this is where conflating groups and perspectives is a problem
+            # really perspectives are render preferences which do not map 1:1
+            # on to groups, and might need to be passed as parameter instead of
+            # part of the tree structure to keep all the endpoints from multiplying
+            # nope, perspectives HAVE to be part of the url path :/ see comment
+            # on stubs below, alternately we have to have some other way to
+            # track perspectives independent of the url e.g. in the metadata
             return abort(404)
 
         try:
@@ -69,6 +77,19 @@ def server_alt(db=None, dburi=dbUri()):
             # XXX HACK
             _pr = ['FMA'] + [p for p in tripleRender.default_prefix_ranking if p != 'FMA']
             kwargs['ranking'] = _pr
+        elif group == 'interlex':
+            _pr = ['CDE', 'PDE', 'FDE', 'ILX.CDE', 'ILX']
+            kwargs['ranking'] = _pr
+
+        # XXX HACK stubs, needs design review
+        # XXX FIXME THIS CANNOT BE USED FOR REAL PURPOSES
+        # the issue is that the parameter then becomes part
+        # of the uri and we absolutely do not want to allow that
+        # so going to set it as default behavior for now, when
+        # we get to perspectives they WILL
+        #if 'stubs' in request.args and request.args['stubs'].lower() == 'true':
+            #kwargs['ilx_stubs'] = True
+        #kwargs['ilx_stubs'] = True  # XXX aaahhhh not clear the use case, so not now
 
         try:
             return tripleRender(

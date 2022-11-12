@@ -104,7 +104,7 @@ class TripleRender:
 
     def __call__(self, request, graph, group, frag_pref, id, object_to_existing,
                  title=None, labels=None, ontid=None, ranking=default_prefix_ranking,
-                 redirect=True):
+                 ilx_stubs=False, redirect=True):
         extension, mimetype, func = self.check(request)
 
         if not graph:
@@ -117,7 +117,7 @@ class TripleRender:
             labels = {}
 
         out = func(request, graph, group, frag_pref, id, object_to_existing,
-                   title, mimetype, labels, ontid, ranking)
+                   title, mimetype, labels, ontid, ranking, ilx_stubs)
 
         code = 303 if redirect and mimetype == 'text/html' and extension != 'html' else 200  # cool uris
         to_plain = 'ttl', 'nt', 'n3', 'nq'
@@ -142,7 +142,7 @@ class TripleRender:
         """ Same as iri selection but for curies """
 
     def html(self, request, graph, group, frag_pref, id, object_to_existing,
-             title, mimetype, labels, ontid, ranking):
+             title, mimetype, labels, ontid, ranking, ilx_stubs):
         cts = CustomTurtleSerializer(graph)
         gsortkey = cts._globalSortKey
         psortkey = lambda p: cts.predicate_rank[p]
@@ -160,7 +160,7 @@ class TripleRender:
                        title=title,
                        styles=(table_style,))
 
-    def renderPreferences(self, group, graph, frag_pref, id, ranking=default_prefix_ranking):
+    def renderPreferences(self, group, graph, frag_pref, id, ranking=default_prefix_ranking, ilx_stubs=False):
         # list of predicates where objects should not be rewritten
         # TODO maybe make it possible to add to this?
         # and/or make it possible to get the raw unrendered form more easily
@@ -238,6 +238,11 @@ class TripleRender:
             if not v and not isinstance(k, rdflib.BNode):
                 new_graph.add((k, ilxtr.MISSING_ILX_ID, rdflib.Literal(True)))
 
+        if ilx_stubs:
+            for ilx, pref in preferred_all.items():
+                if ilx != pref:
+                    new_graph.add((ilx, rdfs.label, next(graph[ilx:rdfs.label:])))
+
         if id is not None:  # FIXME and not termset
             uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/{frag_pref}_{id}')  # FIXME reference_host from db ...
             try:
@@ -256,9 +261,9 @@ class TripleRender:
         return preferred_iri, new_graph
 
     def graph(self, request, graph, group, frag_pref, id, object_to_existing,
-              title, mimetype, ontid, ranking=default_prefix_ranking):
+              title, mimetype, ontid, ranking=default_prefix_ranking, ilx_stubs=False):
         # FIXME abstract to replace id with ontology name ... local ids are hard ...
-        preferred_iri, rgraph = self.renderPreferences(group, graph, frag_pref, id, ranking)
+        preferred_iri, rgraph = self.renderPreferences(group, graph, frag_pref, id, ranking, ilx_stubs)
         # FIXME nowish should come from the last change or the last transitive change
         nowish = utcnowtz()  # request doesn't have this
         epoch = int(nowish.timestamp())  # truncate to second to match iso
@@ -286,15 +291,17 @@ class TripleRender:
         return cull_prefixes(rgraph, {k:v for k, v in rgraph.namespaces()}).g  # ICK as usual
 
     def ttl(self, request, graph, group, frag_pref, id, object_to_existing,
-            title, mimetype, labels, ontid, ranking):
+            title, mimetype, labels, ontid, ranking, ilx_stubs):
         rgraph = self.graph(request, graph, group, frag_pref, id,
-                            object_to_existing, title, mimetype, ontid, ranking)
+                            object_to_existing, title, mimetype, ontid, ranking,
+                            ilx_stubs)
         return rgraph.serialize(format='nifttl')
 
     def ttl_html(self, request, graph, group, frag_pref, id, object_to_existing,
-                 title, mimetype, labels, ontid, ranking):
+                 title, mimetype, labels, ontid, ranking, ilx_stubs):
         rgraph = self.graph(request, graph, group, frag_pref, id,
-                            object_to_existing, title, mimetype, ontid, ranking)
+                            object_to_existing, title, mimetype, ontid, ranking,
+                            ilx_stubs)
         body = rgraph.serialize(format='htmlttl', labels=labels).decode()
         # TODO owl:Ontology -> <head><meta> prov see if there is a spec ...
         return htmldoc(body,
@@ -302,19 +309,20 @@ class TripleRender:
                        styles=(table_style, ttl_html_style))
 
     def rdf_ser(self, request, graph, group, frag_pref, id, object_to_existing,
-                title, mimetype, labels, ontid, ranking, **kwargs):
+                title, mimetype, labels, ontid, ranking, ilx_stubs, **kwargs):
         rgraph = self.graph(request, graph, group, frag_pref, id,
-                            object_to_existing, title, mimetype, ontid, ranking)
+                            object_to_existing, title, mimetype, ontid, ranking,
+                            ilx_stubs)
         return rgraph.serialize(format=mimetype, **kwargs)
 
     def jsonld(self, request, graph, group, frag_pref, id, object_to_existing,
-               title, mimetype, labels, ontid, ranking):
+               title, mimetype, labels, ontid, ranking, ilx_stubs):
         return self.rdf_ser(request, graph, group, frag_pref, id,
                             object_to_existing, title, mimetype, labels, ontid, ranking,
-                            auto_compact=True)
+                            ilx_stubs, auto_compact=True)
 
     def json(self, request, graph, group, frag_pref, id, object_to_existing,
-             title, mimetype, labels, ontid, ranking):
+             title, mimetype, labels, ontid, ranking, ilx_stubs):
         # lol
         rgraph = cull_prefixes(graph, {k:v for k, v in graph.namespaces()}).g  # ICK as usual
         out = {'prefixes': {k:v for k, v in rgraph.namespaces()},
@@ -326,12 +334,12 @@ class TripleRender:
         return json.dumps(out)
 
     def jsonilx(self, request, graph, group, frag_pref, id, object_to_existing,
-                title, mimetype, labels, ontid, ranking):
+                title, mimetype, labels, ontid, ranking, ilx_stubs):
         # TODO
         return {}
 
     def tabular(self, request, graph, group, frag_pref, id, object_to_existing,
-                title, mimetype, labels, ontid, ranking):
+                title, mimetype, labels, ontid, ranking, ilx_stubs):
         # FIXME decouple use of Response ???
         # XXX FIXME really bad representation, literally the raw triples
         sep = ',' if mimetype == 'text/csv' else '\t'
