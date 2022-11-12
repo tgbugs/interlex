@@ -177,6 +177,85 @@ class MysqlExport:
         sql = 'SELECT * FROM terms where ilx in :fragments'
         yield from self.session.execute(sql, args)
 
+    __max_depth = 45
+    @staticmethod
+    def _superclasses_ids(max_depth=__max_depth):
+        return '\n'.join([
+            'select',
+            ',\n'.join([f't{n + 1}.tid as tid{n + 1}' for n in range(max_depth)]),
+            'from term_superclasses as t1',
+            '\n'.join([f'left join term_superclasses as t{n + 2} on t{n + 2}.tid = t{n + 1}.superclass_tid'
+                       for n in range(max_depth - 1)]),
+            'where t1.tid in :ids'])
+
+    @classmethod
+    def _superclasses_query(cls, max_depth=__max_depth):
+        # have to nest queries because mariadb can join on max 61 tables per (sub)query
+        # this also happens to give us a max depth of 60 without having to query twice
+        return '\n'.join([
+            'select',
+            ',\n'.join([('concat("http://uri.interlex.org/base/", '
+                         f'ti{n + 1}.ilx), ti{n + 1}.label, ti{n + 1}.id, ti{n + 1}.type')
+                        for n in range(max_depth)]),
+            'from (',
+            cls._superclasses_ids(max_depth),
+            ') as traw',
+            '\n'.join([f'left join terms as ti{n + 1} on traw.tid{n + 1} = ti{n + 1}.id'
+                       for n in range(max_depth)]),
+        ])
+
+    def id_supers(self, ids):
+        if not ids:
+            return
+
+        args = dict(ids=tuple(ids))
+        sql = self._superclasses_ids()
+        out = set()
+        for supers in self.session.execute(sql, args):
+            if supers[-1] != None:
+                msg = (  # XXX TODO requery from supers[-1] in this case and stitch
+                    'the last element of the result superclasses '
+                    'was not null, you may be missing parents!')
+                log.warning(msg)
+
+            [out.add(s) for s in supers if s is not None]
+
+        return out
+
+    def _supers_triples(self, ids):
+        # this isn't really what we want ...
+        if not ids:
+            return
+
+        def conv(rawp):
+            if self.types[rawp] == owl.Class:
+                p = rdfs.subClassOf
+            else:
+                p = rdfs.subPropertyOf
+
+            return p
+
+        sco = rdfs.subClassOf
+        rdl = rdfs.label
+        args = dict(ids=tuple(ids))
+        sql = self._superclasses_query()
+        ids = set()
+        trips = []  # XXX FIXME have to know type
+        for supers in self.session.execute(sql, args):
+            if supers[-1] != None:
+                msg = (  # XXX TODO requery from supers[-1] in this case and stitch
+                    'the last element of the result superclasses '
+                    'was not null, you may be missing parents!')
+                log.warning(msg)
+
+            ids.update(i for i in supers[2::4] if i is not None)
+            trips.extend((rdflib.URIRef(s), conv(rawp), rdflib.URIRef(o))  # XXX FIXME type
+                         for s, rawp, o in zip(supers[:-4:4], supers[3::4], supers[4::4]) if s and o)
+            trips.extend((rdflib.URIRef(s), rdl, rdflib.Literal(o))
+                         for s, o in zip(supers[:-4:4], supers[1:-3:4]) if s and o)
+
+        return ids, trips
+
     def id_triples(self, ids):
         if not ids:
             return
@@ -415,7 +494,8 @@ class MysqlExport:
             if pref == '1':
                 yield ilx_iri, ilxtr.hasIlxPreferredId, o
 
-    def _terms_triples(self, terms, include_full_object_predicates=tuple(), done=tuple()):
+    def _terms_triples(self, terms, include_full_object_predicates=tuple(),
+                       done=tuple(), include_supers=False):
         done = set() if not done else done
         predobjs = set()
         ids = set()
@@ -423,6 +503,12 @@ class MysqlExport:
         types = {}
         for term in terms:
             yield from self._basic_trips(term, done, ids, types)
+
+        if include_supers:
+            # XXX note that supers do not include the full complement of triples
+            sids, strips = self._supers_triples(ids)
+            yield from strips
+            yield from self._existing_trips(sids, predobjs)
 
         yield from self._existing_trips(ids, predobjs)
 

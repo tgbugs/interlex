@@ -17,7 +17,10 @@ from interlex.utils import log
 
 class TripleRender:
 
-    default_prefix_ranking = ('UBERON',
+    default_prefix_ranking = ('BFO',
+                              'RO',
+                              'PATO',
+                              'UBERON',
                               'CHEBI',
                               'GO',
                               'PR',
