@@ -197,8 +197,12 @@ class TripleRender:
         preferred_all = getPreferred(graph)
 
         hasIlxId = {}
+        hasLabel = {}
         for s, p, o in graph:
             if s in preferred_all:
+                # XXX FIXME this can result in multiple labels
+                # if deprecated terms have had their label changed
+                # or if the terms had distinct labels to start with
                 ns = preferred_all[s]
             else:
                 ns = s
@@ -211,6 +215,16 @@ class TripleRender:
                 new_graph.add((ns, p, o))
                 hasIlxId[ns] = True
                 continue
+            elif p == rdfs.label:
+                if ns not in hasLabel:
+                    hasLabel[ns] = []
+                else:
+                    log.warning(f'MULTIPLE LABELS FOR {ns}')
+
+                hasLabel[ns].append(o)
+                if ns != s:
+                    new_graph.add((ns, ilxtr.deprecatedLabel ,o))
+                    continue
 
             if p in preferred_all:
                 np = preferred_all[p]
