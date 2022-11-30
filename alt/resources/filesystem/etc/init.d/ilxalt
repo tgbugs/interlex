@@ -18,15 +18,14 @@ start_stop_daemon_args="
 --wait 1500
 --env PYTHONBREAKPOINT=0
 "
-command="/usr/bin/python"
+command="/usr/bin/gunicorn"
 command_args="
--m gunicorn
 --bind ${socket}
 --daemon
 --pid ${pidfile}
 --name ${SVCNAME}
 --workers 2
---worker-class gevent
+--worker-class tornado
 --timeout 30
 --group ${SVCGROUP}
 --user ${SVCUSER}
