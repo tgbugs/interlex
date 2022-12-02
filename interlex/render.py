@@ -1,3 +1,5 @@
+import io
+import csv
 import json
 from pathlib import PurePosixPath
 from datetime import datetime
@@ -10,7 +12,7 @@ from ttlser import CustomTurtleSerializer
 from pyontutils.core import OntId, OntGraph
 from pyontutils.utils import isoformat, utcnowtz
 from pyontutils.qnamefix import cull_prefixes
-from pyontutils.namespaces import isAbout, ilxtr
+from pyontutils.namespaces import isAbout, ilxtr, ILX, definition, NIFRID
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex import exceptions as exc
 from interlex.utils import log
@@ -364,7 +366,48 @@ class TripleRender:
 
     def tabular(self, request, graph, group, frag_pref, id, object_to_existing,
                 title, mimetype, labels, ontid, ranking, ilx_stubs):
-        # FIXME decouple use of Response ???
-        # XXX FIXME really bad representation, literally the raw triples
+        # spec is currently
+        # ILX ID, label, synonyms, description, comment, Preferred ID, Other IDs.
+        # Interlex URL (community specific so that it goes to REVA, eg) (no way do this one right now)
+
+        synpreds = (
+            #fma.synonym,
+            NIFRID.synonym,
+            rdflib.URIRef('http://purl.org/sig/ont/fma/synonym'),
+            ILX['0737161'],  # exact
+            ILX['0737162'],  # related
+            ILX['0737163'],  # narrow
+            ILX['0737164'],  # broad
+        )
+        col_preds = {
+            'label': [rdfs.label],
+            'synonyms': synpreds,
+            'definition': [definition],
+            'subClassOf': [rdfs.subClassOf],
+            'iri-preferred': [ilxtr.hasIlxPreferredId],
+            'iri-existing': [ilxtr.hasExistingId],
+            'type': [rdf.type,],
+        }
         sep = ',' if mimetype == 'text/csv' else '\t'
-        return Response((sep.join((json.dumps(str(e)) for e in t)) + '\n' for t in graph), mimetype=mimetype)
+        unit_sep = b'\x1f'.decode()  # ascii unit sep, joins multiple values in a single cell
+        # ironically/annoyingly even if we used the ascii control chars for this there is
+        # still the need for a non-printing charachter for when we have to flatten a bunch of
+        # separate values into a single cell
+        def genrows():
+            yield sep.join(['iri'] + list(col_preds)) + '\n'
+            out = io.StringIO()
+            writer = csv.writer(out, delimiter=sep, lineterminator='\n')
+            for s in sorted(set(graph.subjects())):
+                if isinstance(s, rdflib.BNode):
+                    continue
+                cells = [s]
+                for header, preds in col_preds.items():
+                    raw = unit_sep.join(str(o) for p in preds for o in graph[s:p])
+                    cells.append(raw)
+                writer.writerow(cells)
+                yield out.getvalue()
+                out.seek(0)
+                out.truncate()
+
+        # FIXME decouple use of Response ???
+        return Response(genrows(), mimetype=mimetype)
