@@ -143,7 +143,9 @@ pushd "${ALT_PATH}" &&
 grep -rl interlex resources/filesystem/ | xargs sed -i "s/{:interlex-user}/${INTERLEX_USER}/g" &&
 popd || exit 101
 <<&build-alt-zip>>
+pushd "${ALT_PATH}" &&
 zip -r alt.zip resources/filesystem/  # first time only add deploy files
+popd || exit 102
 #+end_src
 
 Subsequently run [[file:./bin/build.sh]].

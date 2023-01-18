@@ -27,5 +27,7 @@ rm alt.zip;
 zip -r alt.zip README.org &&
 zip -r alt.zip run/ &&
 popd || exit 2
+pushd "${ALT_PATH}" &&
 zip -r alt.zip resources/filesystem/  # first time only add deploy files
+popd || exit 102
 # config-build.sh ends here
