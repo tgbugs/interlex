@@ -178,7 +178,7 @@ ssh ${INTERLEX_DEPLOY_USER}@${INTERLEX_SERVER} "
 SSH_EXIT=$?
 if [ $SSH_EXIT -eq 15 ]; then
     echo you need to edit ~/.mypass on ${INTERLEX_SERVER} as ${INTERLEX_USER} to complete setup
-    echo the pattern used to set the password is deocumented in step five of README.org on the server
+    echo the pattern used to set the password is documented in step five of README.org on the server
     exit $SSH_EXIT
 elif [ $SSH_EXIT -ne 0 ]; then
     echo remote command failed with $SSH_EXIT
@@ -202,6 +202,7 @@ chown ${INTERLEX_USER}:${INTERLEX_USER} /var/lib/interlex/alt.zip
 rm -rf run/
 rm -rf resources/filesystem/
 unzip -o alt.zip || exit 1
+chown -R ${INTERLEX_USER}:${INTERLEX_USER} run resources README.org || exit 103
 #+end_src
 #+name: &config-remote-root-commands-1
 #+begin_src bash

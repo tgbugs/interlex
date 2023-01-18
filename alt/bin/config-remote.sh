@@ -27,6 +27,7 @@ pushd /var/lib/interlex || exit 22
 sudo -u ${INTERLEX_USER} rm -rf run/
 sudo -u ${INTERLEX_USER} rm -rf resources/filesystem/
 sudo -u ${INTERLEX_USER} unzip -o alt.zip || exit 1
+sudo -u ${INTERLEX_USER} chown -R ${INTERLEX_USER}:${INTERLEX_USER} run resources README.org || exit 103
 sudo /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.service /etc/systemd/system/ || exit 2
 sudo /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.socket /etc/systemd/system/ || exit 3
 sudo /bin/cp -f resources/filesystem/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ || exit 4
@@ -59,7 +60,7 @@ sudo systemctl restart nginx
 SSH_EXIT=$?
 if [ $SSH_EXIT -eq 15 ]; then
     echo you need to edit ~/.mypass on ${INTERLEX_SERVER} as ${INTERLEX_USER} to complete setup
-    echo the pattern used to set the password is deocumented in step five of README.org on the server
+    echo the pattern used to set the password is documented in step five of README.org on the server
     exit $SSH_EXIT
 elif [ $SSH_EXIT -ne 0 ]; then
     echo remote command failed with $SSH_EXIT
