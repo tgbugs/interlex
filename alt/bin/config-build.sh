@@ -13,7 +13,9 @@ pushd "${ALT_PATH}" &&
 git clean -dfx &&  # cleans only the alt subdir
 git checkout HEAD -- resources/filesystem/  # prevent stale user
 popd || exit 1
+pushd "${ALT_PATH}" &&
 grep -rl interlex resources/filesystem/ | xargs sed -i "s/{:interlex-user}/${INTERLEX_USER}/g" &&
+popd || exit 101
 pushd "${ALT_PATH}" &&
 python setup.py bdist_wheel --universal &&
 python setup.py clean --all &&
