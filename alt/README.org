@@ -202,8 +202,10 @@ chown ${INTERLEX_USER}:${INTERLEX_USER} /var/lib/interlex/alt.zip
 rm -rf run/
 rm -rf resources/filesystem/
 unzip -o alt.zip || exit 1
-chown -R ${INTERLEX_USER}:${INTERLEX_USER} run resources README.org || exit 103
+chmod 0755 run
 #+end_src
+Have to chmod run so that the deploy user can pushd into it so the
+paths are correct.
 #+name: &config-remote-root-commands-1
 #+begin_src bash
 /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.service /etc/systemd/system/ || exit 2

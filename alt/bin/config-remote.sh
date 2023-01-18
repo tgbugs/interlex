@@ -27,7 +27,7 @@ pushd /var/lib/interlex || exit 22
 sudo -u ${INTERLEX_USER} rm -rf run/
 sudo -u ${INTERLEX_USER} rm -rf resources/filesystem/
 sudo -u ${INTERLEX_USER} unzip -o alt.zip || exit 1
-sudo -u ${INTERLEX_USER} chown -R ${INTERLEX_USER}:${INTERLEX_USER} run resources README.org || exit 103
+sudo -u ${INTERLEX_USER} chmod 0755 run
 sudo /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.service /etc/systemd/system/ || exit 2
 sudo /bin/cp -f resources/filesystem/etc/systemd/system/ilxalt.socket /etc/systemd/system/ || exit 3
 sudo /bin/cp -f resources/filesystem/etc/tmpfiles.d/ilxalt.conf /etc/tmpfiles.d/ || exit 4
