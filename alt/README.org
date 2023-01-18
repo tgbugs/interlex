@@ -69,6 +69,12 @@ groupadd -g ${GID} interlex
 useradd -m -k /etc/skel -u ${GID} -g ${GID} -d /var/lib/interlex interlex
 chmod 0755 /var/lib/interlex
 #+end_src
+** Edit nginx.conf to include user-ilx-map.conf
+Put the commented out section for =map redirect_user_ilx= from
+[[./resources/filesystem/etc/nginx/sites-available/uri.interlex.org.conf]]
+is in nginx.conf and =user-ilx-map.conf= is put somewhere that the
+config can find it. Old versions of centos don't check for bad nginx
+configs, so watch out for that one.
 ** Build and deploy code and config
 Get the absolute path to the script and use it to find the alt folder.
 #+name: &alt-path
