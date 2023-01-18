@@ -26,6 +26,7 @@ class MysqlExport:
 
     _group_community = {
         'sparc': 'SPARC Anatomical Working Group',  # 504
+        'openminds': 'openMINDS',  # 515
     }
     _group_include_full_objects = {
         'sparc': (OntId('ILX:0738400').u,  # ilx.includeForSPARC
@@ -443,6 +444,8 @@ class MysqlExport:
             p = NIFRID.synonym
             triple = preferred_iri, p, oo
             rest = annotation(triple, (ilxtr.synonymType, stype))()
+        elif p == 'vocab:synonym':
+            p = OntId('NIFRID:synonym').u
         elif [_ for _ in ('fma:', 'NIFRID:', 'oboInOwl:') if p.startswith(_)]:
             p = OntId(p).u
         else:
