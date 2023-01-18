@@ -43,7 +43,9 @@ sudo yum install centos-release-scl-rh
 sudo yum install rh-python38-python rh-python38-python-devel # devel needed for pyxattr
 sudo /opt/rh/rh-python38/root/usr/bin/python3.8 -m ensurepip
 sudo /opt/rh/rh-python38/root/usr/local/bin/pip3.8 install pipenv
+# sudo mv /usr/bin/pipenv /usr/bin/pipenv3.6  # only needed if something existing is symlinked
 sudo ln -s /opt/rh/rh-python38/root/usr/local/bin/pipenv /usr/bin/pipenv
+sudo ln -s /opt/rh/rh-python38/root/usr/bin/python3.8 /usr/bin/python3.8
 #+end_src
 
 ** Set environment variables
@@ -68,6 +70,9 @@ GID=839
 groupadd -g ${GID} interlex
 useradd -m -k /etc/skel -u ${GID} -g ${GID} -d /var/lib/interlex interlex
 chmod 0755 /var/lib/interlex
+
+# for sake of sanity add bamboo (deploy user) to the interlex group
+usermod -a -G interlex bamboo
 #+end_src
 ** Edit nginx.conf to include user-ilx-map.conf
 Put the commented out section for =map redirect_user_ilx= from
