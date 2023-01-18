@@ -32,7 +32,7 @@ You should also run =shellcheck= on the tangled files if you make any changes.
 :CUSTOM_ID: setup
 :END:
 ** Install wheel on build machine
-The build machine will work with any version of python, however it that
+The build machine will work with any version of python, however that
 version does need to have =wheel= installed e.g. via =pip install wheel=.
 ** Install python on server
 Install =python3.7-devel= (or greater), =pip=, and =pipenv= on the server that
@@ -57,6 +57,9 @@ INTERLEX_DEPLOY_USER=user
 INTERLEX_USER=interlex
 INTERLEX_SERVER=localhost
 #+end_src
+
+In bamboo set these for all scripts that that are run, for example
+Default Job Script remote ilxalt.
 ** Create interlex runtime user account
 Do this manually right now for sanity.
 The =GID= is matched to the conventions we use for gentoo docker images.
@@ -136,7 +139,9 @@ The first time InterLex Alt is set up on a server run [[file:./bin/config-build.
 #+begin_src bash :tangle ./bin/config-build.sh :comments link
 <<&alt-path>>
 <<&pushd-clean>>
+pushd "${ALT_PATH}" &&
 grep -rl interlex resources/filesystem/ | xargs sed -i "s/{:interlex-user}/${INTERLEX_USER}/g" &&
+popd || exit 101
 <<&build-alt-zip>>
 zip -r alt.zip resources/filesystem/  # first time only add deploy files
 #+end_src
