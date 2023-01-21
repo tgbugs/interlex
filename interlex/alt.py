@@ -1,4 +1,5 @@
 import socket
+from pathlib import PurePath
 import rdflib  # FIXME FIXME FIXME BAD DESIGN DETECTED
 from flask import Flask, request, abort, redirect
 from flask_sqlalchemy import SQLAlchemy
@@ -33,8 +34,10 @@ def server_alt(db=None, dburi=dbUri()):
     tripleRender = TripleRender()
     object_to_existing = {}
 
+    group_render = None
+
     @app.route('/<group>/<frag_pref>_<id>')
-    def ilx(group, frag_pref, id, redirect=True):
+    def ilx(group, frag_pref, id, redirect=True, ontology=True):
         # XXX FIXME termsets should render like regular terms on the /base/ilx_ endpoint
         # and like ontologies on the /base/ontologies/ilx_ endpoint
         if group not in ('base', 'sparc', 'interlex'):  # XXX HACK the db has no groups
@@ -70,14 +73,15 @@ def server_alt(db=None, dburi=dbUri()):
 
         graph = OntGraph()
         oq.OntCuries.populate(graph)
-        [graph.add(t) for t in ilxexp(frag_pref, id)]
+        [graph.add(t) for t in ilxexp(frag_pref, id, ontology)]
 
         kwargs = {}
-        if group == 'sparc':  # TODO real support for render preferences
+        group_rend = group if group_render is None else group_render
+        if group_rend == 'sparc':  # TODO real support for render preferences
             # XXX HACK
             _pr = ['FMA'] + [p for p in tripleRender.default_prefix_ranking if p != 'FMA']
             kwargs['ranking'] = _pr
-        elif group == 'interlex':
+        elif group_rend == 'interlex':
             _pr = ['CDE', 'PDE', 'FDE', 'ILX.CDE', 'ILX']
             kwargs['ranking'] = _pr
 
@@ -93,7 +97,7 @@ def server_alt(db=None, dburi=dbUri()):
 
         try:
             return tripleRender(
-                request, graph, group, frag_pref, id, object_to_existing, title,
+                request, graph, group_rend, frag_pref, id, object_to_existing, title,
                 redirect=redirect, **kwargs)
         except BaseException as e:
             print(tc.red('ERROR'), e)
@@ -140,11 +144,11 @@ def server_alt(db=None, dburi=dbUri()):
 
     @app.route('/<group>/ontologies/<frag_pref>_<id>')
     def ontologies_ilx(group, frag_pref, id):
-        return ilx(group, frag_pref, id)
+        return ilx(group, frag_pref, id, ontology=True)
 
     @app.route('/<group>/ontologies/<frag_pref>_<id>.<extension>')
     def ontologies_ilx_get(group, frag_pref, id, extension):
-        return ilx(group, frag_pref, id, redirect=False)
+        return ilx(group, frag_pref, id, redirect=False, ontology=True)
 
     @app.route('/<group>/ontologies/community-terms')
     def group_ontologies_terms(group):
@@ -164,14 +168,22 @@ def server_alt(db=None, dburi=dbUri()):
         graph = OntGraph()
         graph.namespace_manager.populate_from(uPREFIXES)
         [graph.add(t) for t in ilxexp._call_group(group)]
-        ontid = f'http://uri.interlex.org/{group}/ontologies/community-terms'  # FIXME
+        #ontid = f'http://uri.interlex.org/{group}/ontologies/community-terms'  # FIXME
+        _host = 'uri.interlex.org'
+        _scheme = 'http'
+        ontid = _scheme + '://' + _host + PurePath(request.path).with_suffix('').as_posix()
         kwargs = {}  # FIXME indicates a design flaw ...
-        if group == 'sparc':  # FIXME should not be hardcoded should be a function -> database
+        group_rend = group if group_render is None else group_render
+        if group_rend == 'sparc':  # FIXME should not be hardcoded should be a function -> database
             _pr = ['FMA'] + [p for p in tripleRender.default_prefix_ranking if p != 'FMA']
             kwargs['ranking'] = _pr
+        elif group_rend == 'interlex':
+            _pr = ['CDE', 'PDE', 'FDE', 'ILX.CDE', 'ILX']
+            kwargs['ranking'] = _pr
+
         try:
             # FIXME TODO
-            return tripleRender(request, graph, group, 'ilx', None, object_to_existing,
+            return tripleRender(request, graph, group_rend, 'ilx', None, object_to_existing,
                                 title, ontid=ontid, **kwargs, redirect=False)
         except BaseException as e:
             print(tc.red('ERROR'), e)
@@ -267,6 +279,22 @@ def server_alt(db=None, dburi=dbUri()):
         # and the we move it into render and let render mediate the additional stream types beyond owl, interlex, neurdf etc
         return graph.asMimetype(mimetype)
 
+    @app.route('/<group>/own/<group_data>/<path:path>', methods=['GET'], defaults={'extension': None})
+    @app.route('/<group>/own/<group_data>/<path:path>.<extension>', methods=['GET'])
+    def group_own(group, group_data, path, extension):
+        host = request.host
+        adapter = app.url_map.bind(request.host)
+        ext = '' if extension is None else f'.{extension}'
+        fname, kwargs = adapter.match(f'/{group_data}/{path}{ext}', method='GET')
+        f = app.view_functions[fname]
+        # XXX watch out with nonlocal, if the gil ever gets turned off
+        # this isn't going to be thread safe like lisp dynamic variables
+        nonlocal group_render
+        group_render = group
+        try:
+            return f(**kwargs)
+        finally:
+            group_render = None
 
     return app
 

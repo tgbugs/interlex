@@ -333,13 +333,13 @@ class MysqlExport:
 
         yield from self.session.execute(sql, args)
 
-    def __call__(self, fragment_prefix, id):
+    def __call__(self, fragment_prefix, id, ontology=False):
         ilx_fragment = fragment_prefix + '_' + id
-        return self._call_fragment(ilx_fragment)
+        return self._call_fragment(ilx_fragment, ontology=ontology)
 
-    def _call_fragment(self, ilx_fragment):
+    def _call_fragment(self, ilx_fragment, ontology=False):
         term = self.term(ilx_fragment)  # FIXME handle value error or no?
-        if term.type == 'TermSet':  # XXX design flaw to have to branch here but oh well
+        if ontology and term.type == 'TermSet':  # XXX design flaw to have to branch here but oh well
             return self._termset_triples((term,))
 
         return self._terms_triples((term,))
