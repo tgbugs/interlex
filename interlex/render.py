@@ -16,6 +16,7 @@ from pyontutils.namespaces import isAbout, ilxtr, ILX, definition, NIFRID
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex import exceptions as exc
 from interlex.utils import log
+from interlex.namespaces import ilxr
 
 class TripleRender:
 
@@ -269,17 +270,24 @@ class TripleRender:
                 if ilx != pref:
                     new_graph.add((ilx, rdfs.label, next(graph[ilx:rdfs.label:])))
 
-        if id is not None:  # FIXME and not termset
-            uri = rdflib.URIRef(f'http://uri.interlex.org/{group}/{frag_pref}_{id}')  # FIXME reference_host from db ...
-            try:
-                preferred_iri = preferred_all[uri]
-            except KeyError as e:
-                log.debug('printing graph one line below this')
-                graph.debug()
-                log.debug('printing graph one line above this')
-                log.exception(e)
-                log.error('the input graph probably has a bad structure '
-                          'probably need to sync from interlex again or write a lifting rule')
+        if id is not None:
+            # FIXME is_termset horribly inefficient and brittle
+            termsets = list(graph[:rdf.type:ilxr.TermSet])
+            is_termset = termsets and [t for t in termsets if t.endswith(id)]
+            if not is_termset:
+                _uri = f'http://uri.interlex.org/{group}/{frag_pref}_{id}'
+                uri = rdflib.URIRef(_uri)  # FIXME reference_host from db ...
+                try:
+                    preferred_iri = preferred_all[uri]
+                except KeyError as e:
+                    log.debug('printing graph one line below this')
+                    graph.debug()
+                    log.debug('printing graph one line above this')
+                    log.exception(e)
+                    log.error('the input graph probably has a bad structure '
+                            'probably need to sync from interlex again or write a lifting rule')
+                    preferred_iri = None
+            else:
                 preferred_iri = None
         else:
             preferred_iri = None
