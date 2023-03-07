@@ -166,8 +166,8 @@ class FakeSession:
 
     def execute(self, sql, params):
         printD('Fake executing')
-        if len(sql) < 2000:
-            print(sql)
+        if len(sql.text) < 2000:
+            print(sql.text)
         rv = self.current_return_value
         self.current_return_value = (_ for _ in range(0))
         return rv

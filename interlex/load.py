@@ -8,6 +8,7 @@ import rdflib
 import hashlib
 import requests
 import sqlalchemy as sa
+from sqlalchemy.sql import text as sql_text
 from pyontutils.core import OntId, OntResIri, OntResGit
 from pyontutils.utils import TermColors as tc
 from pyontutils.identity_bnode import IdentityBNode
@@ -762,7 +763,7 @@ class BasicDBFactory:
         classTypeInstance = type(new_name,
                                  (cls,),
                                  dict(session=session,
-                                      execute=session.execute,
+                                      _execute=session.execute,
                                       auth=Auth(session),
                                       process_type=new_name))
         return classTypeInstance
@@ -787,6 +788,13 @@ class BasicDBFactory:
         # read only does not need to be enforced in the database becuase user role
         # is the ultimate defense and that _is_ in the database
         # it is more of a convenience reminder
+
+    def execute(self, sql, params=None):
+        log.warning("shouldn't this move to self.session_execute? self.execute is fairly ancient ya?")
+        return self._execute(sql_text(sql), params=params)
+
+    def session_execute(self, sql, params=None):
+        return self.session.execute(sql_text(sql), params=params)
 
     @property
     def reference_host(self):
@@ -829,7 +837,7 @@ class BasicDBFactory:
             sql = ('SELECT * FROM groups '
                    "WHERE own_role < 'pending' AND groupname = :name")
             try:
-                res = next(self.session.execute(sql, dict(name=group)))
+                res = next(self.session_execute(sql, dict(name=group)))
                 self._cache_groups[group] = res.id, res.own_role
                 return res.id, res.own_role
             except StopIteration:
@@ -1119,7 +1127,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         if value not in self._cache_names or self._transaction_cache_names:
             try:
                 sql = 'INSERT INTO names VALUES (:name)'
-                self.session.execute(sql, dict(name=value))
+                self.session_execute(sql, dict(name=value))
             except sa.exc.IntegrityError:
                 # name was already in but not cached
                 self.session.rollback()
@@ -1248,7 +1256,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             self._reference_name = value
             sql = 'SELECT name, expected_bound_name FROM reference_names WHERE name = :name'
             try:
-                res = next(self.session.execute(sql, dict(name=self._reference_name)))
+                res = next(self.session_execute(sql, dict(name=self._reference_name)))
                 self._expected_bound_name = res.expected_bound_name
                 self.reference_name_in_db = True
             except StopIteration:
@@ -1261,7 +1269,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
     def batch_ident_check(self, *idents):
         sql = 'SELECT identity FROM identities WHERE identity IN '
         values_template, params = makeParamsValues((idents,))
-        res = self.session.execute(sql + values_template, params)
+        res = self.session_execute(sql + values_template, params)
         existing = set(r.identity for r in res)
         self._cache_identities.update(existing)
         for ident in idents:
@@ -1277,7 +1285,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         sql = ('SELECT * FROM identities ' #' as i JOIN load_processes'
                'WHERE identity = :ident')
         try:
-            next(self.session.execute(sql, dict(ident=ident)))
+            next(self.session_execute(sql, dict(ident=ident)))
             self._cache_identities.add(ident)
             return True
         except StopIteration:
@@ -1369,7 +1377,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         params_i['rn'] = self.reference_name
         sql_ident = sql_ident_base + vt + ' ON CONFLICT DO NOTHING'  # TODO FIXME XXX THIS IS BAD
         #breakpoint()  # TODO
-        self.session.execute(sql_ident, params_i)
+        self.session_execute(sql_ident, params_i)
 
         sql_ident_rel_base = 'INSERT INTO identity_relations (p, s, o) VALUES '
         values_ident_rel = ((self.serialization_identity, part_ident)
@@ -1379,7 +1387,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         vt, params_ir = makeParamsValues(values_ident_rel, constants=(':p',))
         params_ir['p'] = 'hasPart'
         sql_rel_ident = sql_ident_rel_base + vt
-        self.session.execute(sql_rel_ident, params_ir)
+        self.session_execute(sql_rel_ident, params_ir)
 
         # 'INSERT INTO qualifiers (identity, group_id)'
         # FIXME this should happen automatically in the database
@@ -1388,7 +1396,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         params_le = dict(si=si, g=self.group, u=self.user)
         sql_le = ('INSERT INTO load_events (serialization_identity, group_id, user_id) '
                   'VALUES (:si, idFromGroupname(:g), idFromGroupname(:u))')
-        self.session.execute(sql_le, params_le)
+        self.session_execute(sql_le, params_le)
 
         # TODO get the qualifier id so that it can be 
 
@@ -1613,7 +1621,7 @@ class FileFromIRIFactory(FileFromBaseFactory):
 
         printD(admin_check_sql, admin_check_args)
         try:
-            indeed = next(self.session.execute(admin_check_sql, admin_check_args))
+            indeed = next(self.session_execute(admin_check_sql, admin_check_args))
             print(indeed)
             is_admin = True
         except StopIteration:
@@ -1693,7 +1701,7 @@ class FileFromPostFactory(FileFromIRIFactory):
             sql = ('SELECT name, expected_bound_name FROM reference_names '
                    f'WHERE {name_type} = :name')
             try:
-                res = next(self.session.execute(sql, dict(name=self.Loader.bound_name)))
+                res = next(self.session_execute(sql, dict(name=self.Loader.bound_name)))
                 self._reference_name = res.name
                 self._expected_bound_name = res.expected_bound_name
                 self.reference_name_in_db = True

@@ -1,6 +1,7 @@
 import rdflib
 import ontquery as oq
 from itertools import chain
+from sqlalchemy.sql import text as sql_text
 from pyontutils import sneechenator as snch
 from pyontutils.core import OntId
 from pyontutils.utils import TermColors as tc
@@ -36,11 +37,14 @@ class MysqlExport:
     def __init__(self, session):
         self.session = session
 
+    def session_execute(self, sql, params=None):
+        return self.session.execute(sql_text(sql), params=params)
+
     def getGroupCuries(self, group, epoch_verstr=None):
         # NOTE no support for group in the mysql version, but match the api
         sql = 'SELECT prefix, namespace FROM term_curie_catalog'
         args = dict()
-        resp = self.session.execute(sql, args)
+        resp = self.session_execute(sql, args)
         return {prefix:namespace for prefix, namespace in resp}
 
     def expandPrefixIriCurie(self, group, prefix_iri_curie):
@@ -104,12 +108,12 @@ class MysqlExport:
                'tc.cid = c.id WHERE c.name = :name AND tc.status = "approved") AS subquery)')
 
         args = dict(name=name)
-        yield from self.session.execute(sql, args)
+        yield from self.session_execute(sql, args)
 
     def existing_ids(self, id):
         sql = 'SELECT preferred, iri FROM term_existing_ids WHERE tid = :id'
         args = dict(id=id)
-        yield from self.session.execute(sql, args)
+        yield from self.session_execute(sql, args)
 
     def existing_ids_triples(self, ids):
         if not ids:
@@ -121,7 +125,7 @@ class MysqlExport:
                ' WHERE te.tid in :ids'
                "   AND te_s.iri like 'http://uri.interlex.org/base/%'")
         args = dict(ids=tuple(ids))
-        yield from self.session.execute(sql, args)
+        yield from self.session_execute(sql, args)
 
     def existing_in_namespace(self, namespace):
         """ for now only check a single namespace at a time """
@@ -131,7 +135,7 @@ class MysqlExport:
                " WHERE te.iri LIKE CONCAT(:namespace, '%')"
                "   AND te_o.iri like 'http://uri.interlex.org/base/%'")
         args = dict(namespace=namespace)
-        yield from self.session.execute(sql, args)
+        yield from self.session_execute(sql, args)
 
     def index_triples(self, namespace):
         for s, o in self.existing_in_namespace(namespace):
@@ -152,7 +156,7 @@ class MysqlExport:
         # yes we could implement a generic iri mapping facility
         # but to be efficient it probably makes more sense to create
         # an temporary index of the set of iris to map or something
-        yield from self.session.execute(sql, args)
+        yield from self.session_execute(sql, args)
 
     def alreadyMapped(self, iris, namespace=None):
         for s, o in self.existing_mapped(iris, namespace):
@@ -163,7 +167,7 @@ class MysqlExport:
         args = dict(ilx=ilx_fragment)
         sql = 'SELECT * FROM terms WHERE ilx = :ilx'
 
-        rp = self.session.execute(sql, args)
+        rp = self.session_execute(sql, args)
         term = next(rp)
         try:
             next(rp)
@@ -176,7 +180,7 @@ class MysqlExport:
     def terms(self, ilx_fragments):
         args = dict(fragments=ilx_fragments)
         sql = 'SELECT * FROM terms where ilx in :fragments'
-        yield from self.session.execute(sql, args)
+        yield from self.session_execute(sql, args)
 
     __max_depth = 45
     @staticmethod
@@ -212,7 +216,7 @@ class MysqlExport:
         args = dict(ids=tuple(ids))
         sql = self._superclasses_ids()
         out = set()
-        for supers in self.session.execute(sql, args):
+        for supers in self.session_execute(sql, args):
             if supers[-1] != None:
                 msg = (  # XXX TODO requery from supers[-1] in this case and stitch
                     'the last element of the result superclasses '
@@ -242,7 +246,7 @@ class MysqlExport:
         sql = self._superclasses_query()
         ids = set()
         trips = []  # XXX FIXME have to know type
-        for supers in self.session.execute(sql, args):
+        for supers in self.session_execute(sql, args):
             if supers[-1] != None:
                 msg = (  # XXX TODO requery from supers[-1] in this case and stitch
                     'the last element of the result superclasses '
@@ -294,7 +298,7 @@ class MysqlExport:
          WHERE tsc.tid in :ids
         '''
 
-        yield from self.session.execute(sql, args)
+        yield from self.session_execute(sql, args)
 
     def predicate_objects(self, id):
         args = dict(id=id)
@@ -331,7 +335,7 @@ class MysqlExport:
            -- AND te.preferred = '1'
         '''
 
-        yield from self.session.execute(sql, args)
+        yield from self.session_execute(sql, args)
 
     def __call__(self, fragment_prefix, id, ontology=False):
         ilx_fragment = fragment_prefix + '_' + id
@@ -656,19 +660,22 @@ class Queries:
         self.session = session
         self.__reference_host = None
 
+    def session_execute(self, sql, params=None):
+        return self.session.execute(sql_text(sql), params=params)
+
     @property
     def reference_host(self):
         if self.__reference_host is None:
             # NOTE this means you can't call this queries until you have set up the database
-            self.__reference_host = next(self.session.execute('SELECT reference_host()')).reference_host
+            self.__reference_host = next(self.session_execute('SELECT reference_host()')).reference_host
         return self.__reference_host
 
     def getBuiltinGroups(self):
-        return list(self.session.execute("SELECT * FROM groups WHERE own_role = 'builtin'"))
+        return list(self.session_execute("SELECT * FROM groups WHERE own_role = 'builtin'"))
 
     def getGroupIds(self, *group_names):
         # have to type group_names as list because postgres doesn't know what to do with a tuple
-        return {r.g:r[1] for r in self.session.execute('SELECT g, idFromGroupname(g) '
+        return {r.g:r[1] for r in self.session_execute('SELECT g, idFromGroupname(g) '
                                                         'FROM unnest(ARRAY[:group_names]) '
                                                         'WITH ORDINALITY g',
                                                         dict(group_names=list(group_names)))}
@@ -683,7 +690,7 @@ class Queries:
         else:
             sql = ('SELECT curie_prefix, iri_prefix FROM curies as c '
                     'WHERE c.group_id = idFromGroupname(:group)')  # FIXME idFromGroupname??
-        resp = self.session.execute(sql, params)
+        resp = self.session_execute(sql, params)
         PREFIXES = {cp:ip for cp, ip in resp}
         return PREFIXES
 
@@ -699,17 +706,17 @@ class Queries:
                 'FROM triples AS t '
                 # iri should be distinct...
                 'WHERE t.s IS NOT NULL AND t.s NOT IN (SELECT iri FROM existing_iris)')
-        resp = list(self.session.execute(sql))
+        resp = list(self.session_execute(sql))
         if unmapped:
-            resp += list(self.session.execute(sql2))
+            resp += list(self.session_execute(sql2))
         return resp
 
     def dumpAll(self, user=None):
         """ Every triple we have ever seen. """
         # TODO stick the id on the front as a quad
         # and then dump the actual qualifier table
-        #return list(self.session.execute("SELECT * FROM triples WHERE s::text LIKE '%RO_0002005'"))
-        return self.session.execute('SELECT * FROM triples')  # this streams
+        #return list(self.session_execute("SELECT * FROM triples WHERE s::text LIKE '%RO_0002005'"))
+        return self.session_execute('SELECT * FROM triples')  # this streams
 
     def dumpAllNt(self, user=None):
         ssc = "substring(encode(subgraph_identity, 'hex'), 0, 20)"
@@ -717,23 +724,23 @@ class Queries:
         # this one is blazingly fast
         sep = "'x'"
         return (
-            self.session.execute("SELECT '<' || s || '> <' || p || '> <' || o || '> .\n' "
+            self.session_execute("SELECT '<' || s || '> <' || p || '> <' || o || '> .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o IS NOT NULL"),
-            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || ' .\n' "
+            self.session_execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || ' .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL"),
-            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '@' || language || ' .\n' "
+            self.session_execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '@' || language || ' .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL"),
-            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '^^<' || datatype || '> .\n' "
+            self.session_execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '^^<' || datatype || '> .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL"),
-            self.session.execute(f"SELECT '<' || s || '> <' || p || '> _:' || {ssc} || {sep} || o_blank::text || ' .\n' "
+            self.session_execute(f"SELECT '<' || s || '> <' || p || '> _:' || {ssc} || {sep} || o_blank::text || ' .\n' "
                                  "FROM triples WHERE s IS NOT NULL AND o_blank IS NOT NULL"),
-            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> _:' || {ssc} || {sep}            || o_blank::text     || ' .\n' "
+            self.session_execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> _:' || {ssc} || {sep}            || o_blank::text     || ' .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_blank IS NOT NULL"),
-            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text || ' .\n' "
+            self.session_execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text || ' .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL"),
-            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '@'   || language || ' .\n' "
+            self.session_execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '@'   || language || ' .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL"),
-            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n' "
+            self.session_execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n' "
                                  "FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL"),
             )
 
@@ -745,29 +752,29 @@ class Queries:
                      "WHERE t2.o::text LIKE '%owl#Ontology'")
         condition = f'AND (s NOT IN ({subselect}) OR s IS NULL)'
         return (
-            self.session.execute("SELECT '<' || s || '> <' || p || '> <' || o || '> .\n' "
+            self.session_execute("SELECT '<' || s || '> <' || p || '> <' || o || '> .\n' "
                                  f"FROM triples WHERE s IS NOT NULL AND o IS NOT NULL {condition}"),
-            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || ' .\n' "
+            self.session_execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || ' .\n' "
                                  f"FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL {condition}"),
-            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '@' || language || ' .\n' "
+            self.session_execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '@' || language || ' .\n' "
                                  f"FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL {condition}"),
-            self.session.execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '^^<' || datatype || '> .\n' "
+            self.session_execute("SELECT '<' || s || '> <' || p || '> '  || to_json(o_lit)::text || '^^<' || datatype || '> .\n' "
                                  f"FROM triples WHERE s IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL {condition}"),
-            self.session.execute(f"SELECT '<' || s || '> <' || p || '> _:' || {ssc} || {sep} || o_blank::text || ' .\n' "
+            self.session_execute(f"SELECT '<' || s || '> <' || p || '> _:' || {ssc} || {sep} || o_blank::text || ' .\n' "
                                  f"FROM triples WHERE s IS NOT NULL AND o_blank IS NOT NULL {condition}"),
-            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> _:' || {ssc} || {sep}          || o_blank::text     || ' .\n' "
+            self.session_execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> _:' || {ssc} || {sep}          || o_blank::text     || ' .\n' "
                                  f"FROM triples WHERE s_blank IS NOT NULL AND o_blank IS NOT NULL {condition}"),
-            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || ' .\n' "
+            self.session_execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || ' .\n' "
                                  f"FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NULL AND datatype IS NULL {condition}"),
-            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '@'   || language || ' .\n' "
+            self.session_execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '@'   || language || ' .\n' "
                                  f"FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND language IS NOT NULL {condition}"),
-            self.session.execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n' "
+            self.session_execute(f"SELECT '_:' || {ssc} || {sep} || s_blank::text || ' <' || p || '> '   || to_json(o_lit)::text    || '^^<' || datatype || '> .\n' "
                                  f"FROM triples WHERE s_blank IS NOT NULL AND o_lit IS NOT NULL AND datatype IS NOT NULL {condition}"),
             )
 
     def getExistingIris(self):
         sql = 'SELECT * FROM existing_iris'
-        return self.session.execute(sql)
+        return self.session_execute(sql)
 
     def _getExistingFromCurie(self, curie, user):  # FIXME multiple
         prefix, suffix = curie.split(':', 1)
@@ -783,14 +790,14 @@ class Queries:
                'JOIN existing_iris as e2 '
                'ON e1.ilx_id = e2.ilx_id '
                'WHERE e2.iri IN :iris')
-        resp = list(self.session.execute(sql, args))
+        resp = list(self.session_execute(sql, args))
         return resp
 
     def getExistingIrisForIlxId(self, *ilx_ids):
         args = dict(ilx_ids=list(ilx_ids))
         sql = ('SELECT i, iri FROM unnest(ARRAY[:ilx_ids]) WITH ORDINALITY i '
                'JOIN existing_iris ON i = ilx_id')
-        resp = list(self.session.execute(sql, args))
+        resp = list(self.session_execute(sql, args))
         return resp
 
     def getBySubject(self, subject, user):
@@ -811,7 +818,7 @@ class Queries:
         SELECT * FROM graph UNION SELECT * from subgraphs
         '''
 
-        resp = list(self.session.execute(sql, args))
+        resp = list(self.session_execute(sql, args))
         return resp
 
     def getById(self, id, user):
@@ -884,7 +891,7 @@ class Queries:
         if not hasattr(self.sql, 'getById'):
             self.sql.getById = sql
 
-        resp = list(self.session.execute(self.sql.getById, args))
+        resp = list(self.session_execute(self.sql.getById, args))
         return resp
 
     def getByGroupUriPath(self, group, path, redirect=False):  # TODO bulk versions of these
@@ -892,7 +899,7 @@ class Queries:
         sql = ('SELECT ilx_id FROM uris WHERE group_id = idFromGroupname(:group) '
                'AND uri_path = :path')
         # TODO handle the unmapped case (currently literally all of them)
-        gen = self.session.execute(sql, args)
+        gen = self.session_execute(sql, args)
         try:
             ilx_id = next(gen).ilx_id
         except StopIteration:
@@ -924,7 +931,7 @@ class Queries:
     def getObjectsForPredicates(self, iris, *predicates):
         args = dict(p=predicates, iris=tuple(iris))  # FIXME normalize here or there?
         sql = 'SELECT s, o_lit FROM triples WHERE p in :p AND s in :iris'
-        for r in self.session.execute(sql, args):
+        for r in self.session_execute(sql, args):
             yield r.s, r.o_lit  # with multiple iris we have to keep track of the mapping
 
     def getLabels(self, user, iris):
@@ -942,7 +949,7 @@ class Queries:
         #sql = f'SELECT s FROM triples WHERE p = :p AND o_lit ~~* :label'  # ~~* is LIKE case insensitive
         sql = 'SELECT s FROM triples WHERE s IS NOT NULL AND p = :p AND LOWER(o_lit) LIKE :label'
         # we can sort out the case sensitivity later if it is an issue
-        results = [r.s for r in self.session.execute(sql, args)]
+        results = [r.s for r in self.session_execute(sql, args)]
         if not results:
             # NOTE if ambiguation is done by a user, then they keep that mapping
             return False, None  # redlink? ambiguate
@@ -955,12 +962,12 @@ class Queries:
     def getTriplesById(self, *triples_ids):
         # when using IN directly we don't have to convert to a list first
         # unlike in the unnest case
-        yield from self.session.execute('SELECT * FROM triples WHERE id IN :triples_ids',
+        yield from self.session_execute('SELECT * FROM triples WHERE id IN :triples_ids',
                                         dict(triples_ids=triples_ids))
 
     def tripleIdentity(self, *triples_ids):
         """ light wrapper around built in function """
-        for (identity,) in self.session.execute('SELECT tripleIdentity(id)'
+        for (identity,) in self.session_execute('SELECT tripleIdentity(id)'
                                                 'FROM unnest(ARRAY[:triples_ids]) '
                                                 'WITH ORDINALITY id',
                                                 dict(triples_ids=list(triples_ids))):
