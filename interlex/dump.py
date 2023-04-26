@@ -279,6 +279,7 @@ class MysqlExport:
           JOIN terms AS te2
             ON ta.annotation_tid = te2.id
          WHERE ta.tid in :ids
+           AND ta.withdrawn != '1'
         UNION
         SELECT concat('http://uri.interlex.org/base/', te.ilx), concat('http://uri.interlex.org/base/', te1.ilx), concat('http://uri.interlex.org/base/', te2.ilx) FROM term_relationships AS tr
           JOIN terms AS te
@@ -312,6 +313,7 @@ class MysqlExport:
           JOIN term_existing_ids AS te
             ON ta.annotation_tid = te.tid
          WHERE ta.tid = :id
+           AND ta.withdrawn != '1'
            AND te.iri like 'http://uri.interlex.org/base/%'
            -- AND te.preferred = '1'
         UNION
