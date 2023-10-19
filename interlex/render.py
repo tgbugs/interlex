@@ -221,20 +221,17 @@ class TripleRender:
             elif p == rdfs.label:
                 __argh = False
                 if ns not in hasLabel:
-                    hasLabel[ns] = [o]
+                    hasLabel[ns] = [(s, o)]
                 else:
                     if o not in hasLabel[ns]:
                         __argh = True
 
-                    hasLabel[ns].append(o)
+                    hasLabel[ns].append((s, o))
 
                 if __argh:
                     log.warning(f'MULTIPLE LABELS FOR {ns}\n{hasLabel[ns]}')
 
-                if ns != s:
-                    if 'uri.interlex.org' in ns or __argh:  # FIXME or __argh isn't quite right
-                        new_graph.add((ns, ilxtr.deprecatedLabel, o))
-                        continue
+                continue
 
             if p in preferred_all:
                 np = preferred_all[p]
@@ -248,6 +245,15 @@ class TripleRender:
 
             t = (ns, np, no)
             new_graph.add(t)
+
+        for ns, sobjs in hasLabel.items():
+            objs = [o for s, o in sorted(sobjs)]
+            for o in objs[:1]:
+                new_graph.add((ns, rdfs.label, o))
+
+            if len(objs) > 1:
+                for o in objs[1:]:
+                    new_graph.add((ns, ilxtr.deprecatedLabel, o))
 
         if not [k for k, v in hasIlxId.items() if v]:
             # handle old case where pref and ilx were not present
