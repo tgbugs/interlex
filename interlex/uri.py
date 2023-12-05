@@ -230,13 +230,15 @@ def api_rule_maker(api, doc_namespaces):
 
 def setup_runonce(app, endpoints, echo):
     from interlex.load import BasicDBFactory
-    @app.before_first_request
     def runonce():
         # FIXME this is a reasonably safe way to make sure that we have a db connection
-        endpoints.db.engine.echo = echo
-        log.info(f'reference_host = {endpoints.reference_host}')
-        for group in endpoints.queries.getBuiltinGroups():  # FIXME inelegant way around own_role < 'pending'
-            BasicDBFactory._cache_groups[group.groupname] = group.id, group.own_role
+        with app.app_context():
+            endpoints.db.engine.echo = echo
+            log.info(f'reference_host = {endpoints.reference_host}')
+            for group in endpoints.queries.getBuiltinGroups():  # FIXME inelegant way around own_role < 'pending'
+                BasicDBFactory._cache_groups[group.groupname] = group.id, group.own_role
+
+    return runonce
 
 
 def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
@@ -259,7 +261,7 @@ def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
     mq.init_app(app)
 
     route_endpoint_mapper, endpoints = build_endpoints(db)   # endpoints
-    setup_runonce(app, endpoints, echo)                      # runonce
+    runonce = setup_runonce(app, endpoints, echo)            # runonce
 
     api, doc_namespaces = build_api(app)                     # api init
     add_api_rule = api_rule_maker(api, doc_namespaces)       # api binding
@@ -304,6 +306,7 @@ def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
             log.debug(f'{name:<40}{path:<130}{v}')
         #printD(k, v)
 
+    runonce()
     return app
 
 def run_uri(echo=False):
