@@ -3,6 +3,7 @@ import unittest
 import pytest
 from pathlib import Path
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.sql import text as sql_text
 from pyontutils.utils import TermColors as tc
 from .common import working_dir
 
@@ -50,7 +51,7 @@ class TestSQLs(unittest.TestCase):
         for test in self.load_sql(self.positive_f):
             print(f'++++++++++++++\n{test}')
             try:
-                out = session.execute(test)
+                out = session.execute(sql_text(test))
                 if test.startswith('SELECT') or 'RETURNING' in test:
                     print(list(out))
                 session.commit()
@@ -71,7 +72,7 @@ class TestSQLs(unittest.TestCase):
         failed = []
         for test in self.load_sql(self.negative_f):
             try:
-                session.execute(test)
+                session.execute(sql_text(test))
                 failed.append((test, AssertionError('THIS TEST SHOULD HAVE FAILED')))
                 #raise AssertionError(test)
             except (IntegrityError, ) as e:
