@@ -12,7 +12,8 @@ CREATE TABLE uris(
        -- TODO may need a holding area for unmapped uris for certain workflows
        -- OR we may need to return the file with suggested mappings
        group_id integer NOT NULL,
-       ilx_id char(7) NOT NULL,  -- TODO how to enforce the 'no changing the ilx_id' block delete?
+       ilx_prefix char(32) NOT NULL,
+       ilx_id char(32) NOT NULL,  -- TODO how to enforce the 'no changing the ilx_id' block delete?
        uri_path text NOT NULL,
 
        -- uri_full uri not null,  -- yes or no?
@@ -21,10 +22,10 @@ CREATE TABLE uris(
        -- but then we have to know which are branches...
        -- unique on user_id ilx_id as discussed in the spec or what?
        CONSTRAINT pk__uris PRIMARY KEY (group_id, uri_path), -- groups may only map a uri path to a single ilx_id
-       CONSTRAINT un__uris UNIQUE (group_id, ilx_id),  -- groups may only map an ilx_id to a single readable
+       CONSTRAINT un__uris UNIQUE (group_id, ilx_prefix, ilx_id),  -- groups may only map an ilx_id to a single readable
        -- FIXME un__uris does not account for provisional paths ...
        CONSTRAINT fk__uris__group_id__groups FOREIGN key (group_id) REFERENCES groups (id) match simple,
-       CONSTRAINT fk__uris__ilx_id__interlex_ids FOREIGN key (ilx_id) REFERENCES interlex_ids (id) match simple
+       CONSTRAINT fk__uris__ilx_prefix_ilx_id__interlex_ids FOREIGN key (ilx_prefix, ilx_id) REFERENCES interlex_ids (prefix, id) match simple
 );
 
 -- CREATE TRIGGER uris_static ON uris BEFORE UPDATE OR DELETE -- dealt with via no update or delete permissions for interlex-user

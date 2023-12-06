@@ -1,32 +1,70 @@
 -- CONNECT TO interlex_test USER "interlex-admin";
 
-CREATE sequence if NOT exists interlex_ids_seq;
+CREATE TABLE fragment_prefix_sequences(
+       prefix char(32) PRIMARY KEY NOT NULL,
+       suffix_max integer NOT NULL,
+       current_pad integer NOT NULL DEFAULT 7
+);
+
+CREATE OR REPLACE FUNCTION incrementPrefixSequence(prefix_in char(32), OUT suffix_id integer) RETURNS integer AS $incrementPrefixSequence$
+       BEGIN
+           UPDATE fragment_prefix_sequences
+           SET suffix_max = 1 + (SELECT suffix_max
+                                 FROM fragment_prefix_sequences
+                                 WHERE prefix = prefix_in)
+           WHERE prefix = prefix_in
+           INTO suffix_id;
+       END;
+$incrementPrefixSequence$ language plpgsql;
 
 -- TODO implement this so that there will be no gaps
+-- FIXME fragment prefixes make these non-unique, and they need additional sequences
 CREATE TABLE interlex_ids(
        -- these when used in http://uri.interlex.org/base/ilx_{id} are the reference ids for terms
        -- they can however be mapped to more than one since they cannot (usually) be bound
-       id char(7) PRIMARY key DEFAULT LPAD(NEXTVAL('interlex_ids_seq')::text, 7, '0'),
-       CHECK (id ~ '[0-9]{7}')
+       prefix char(32) NOT NULL, -- the fragment prefix
+       id char(32) NOT NULL, -- the fragment suffix must be padded BEFORE being inserted into this table
+       original_label text NOT NULL, -- require at least the original label in this table for accounting in case the later part of an exchange fails for some reason we can partially recover XXX ideally this is what we would require to be unique, but labels can change?
+       -- consider instead triple label id maybe, but then we would have to allow it to be null
+       CONSTRAINT pk__interlex_ids PRIMARY KEY (prefix, id),
+       -- XXX if it looks like we are going to overflow the limit the padding rule will have to be changed changed, just bump it
+       -- the check constraint here does not reference the current_pad because that can grow, in which case the check here should be updated
+       CHECK ((prefix = 'ilx' AND id ~ '[0-9]{7}') OR
+              (prefix = 'cde' AND id ~ '[0-9]{7}') OR
+              (prefix = 'fde' AND id ~ '[0-9]{7}') OR
+              (prefix = 'pde' AND id ~ '[0-9]{8}'))
 );
 
-CREATE OR REPLACE FUNCTION ilxIdFromIri(iri uri, OUT ilx_id char(7)) RETURNS char(7) AS $ilxIdFromIri$
+-- TODO FIXME ideally minimal inserts need to happen in here to ensure metadata is preserved
+CREATE OR REPLACE FUNCTION newIdForPrefix(prefix_in char(32), original_label_in varchar) RETURNS integer AS $newIdForPrefix$
        BEGIN
-           SELECT substring((uri_path_array(iri))[array_upper(uri_path_array(iri), 1)], 5)::char(7) INTO ilx_id;
+            INSERT INTO interlex_ids (prefix, id, original_label)
+            VALUES (prefix_in, incrementPrefixSequence(prefix_in), original_label_in);
+       END;
+$newIdForPrefix$ language plpgsql;
+
+/*
+-- TODO figure out how this worked and use it to get prefix + and id
+CREATE OR REPLACE FUNCTION ilxIdFromIri(iri uri, OUT (ilx_prefix char(32), ilx_id char(32))) RETURNS (char(32), char(32)) AS $ilxIdFromIri$
+       BEGIN
+           -- SELECT substring((uri_path_array(iri))[array_upper(uri_path_array(iri), 1)], 5)::char(8) INTO ilx_id;
+           -- SELECT substring((uri_path_array(iri))[array_upper(uri_path_array(iri), 1)], 5)::char(8) INTO (ilx_id);
        END;
 $ilxIdFromIri$ language plpgsql;
+*/
 
 CREATE TABLE existing_iris(
        -- note that this table does NOT enumerate any uri.interlex.org identifiers
        -- the default/curated user will be the fail over
        -- do we need exclude rules? latest + original user will always be inserted
        -- but do we really even need latest to be explicit here?
-       ilx_id char(7) NOT NULL,
+       ilx_prefix char(32),
+       ilx_id char(32) NOT NULL,
        iri uri UNIQUE NOT NULL CHECK (uri_host(iri) NOT LIKE '%interlex.org'),
        group_id integer NOT NULL,
-       CONSTRAINT fk__existing_iris__ilx_id__interlex_ids
-                  FOREIGN key (ilx_id)
-                  REFERENCES interlex_ids (id) match simple,
+       CONSTRAINT fk__existing_iris__ilx_prefix_ilx_id__interlex_ids
+                  FOREIGN key (ilx_prefix, ilx_id)
+                  REFERENCES interlex_ids (prefix, id) match simple,
        CONSTRAINT fk__existing_iris__group_id__group
                   FOREIGN key (group_id)
                   REFERENCES groups (id) match simple,
@@ -505,14 +543,14 @@ CREATE TABLE triples(
        CHECK (o_lit ~* '(^\S+|\S+$)'),  -- no leading or trailing whitespace TODO also for other columns
        CHECK (uri_host(s) <> reference_host() OR
               uri_host(s) = reference_host() AND
-              (uri_path_array(s))[2] !~* 'ilx_' OR
+              (uri_path_array(s))[2] !~* 'ilx_' OR -- FIXME or cde_, fde_, etc
               uri_host(s) = reference_host() AND
               -- TODO we can't check that the id is actually in the database without a trigger
               -- TODO also prevent users from creating ilx_ fragments in /uris/
               -- only base may have ilx ids, all the rest are by construction from qualifiers
               -- FIXME un hardcode 'base' and 'ilx_'
               (uri_path_array(s))[1] = 'base' AND
-              (uri_path_array(s))[2] ~* 'ilx_'),
+              (uri_path_array(s))[2] ~* '[a-z]+_[0-9]+'),
        CHECK ((s IS NOT NULL AND s_blank IS NULL) OR
               (s IS NULL AND s_blank IS NOT NULL) OR
               (s = 'annotation' AND s_blank IS NOT NULL)),

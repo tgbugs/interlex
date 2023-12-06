@@ -1,3 +1,11 @@
+-- fragment prefixes
+
+INSERT INTO fragment_prefix_sequences (prefix, suffix_max, current_pad) VALUES
+ ('ilx', 0, 7),
+ ('fde', 0, 7),
+ ('cde', 0, 7),
+ ('pde', 0, 8);
+
 -- groups
 -- NOTE: normalized to lower case
 
@@ -51,6 +59,7 @@ INSERT INTO groups (groupname) VALUES
        ('neurons'),
        ('neuinfo'),
        ('swanson'),
+       ('precise-tbi'), -- FIXME check name on this one
        ('NeuroLex'),
        ('InterLex');
 
