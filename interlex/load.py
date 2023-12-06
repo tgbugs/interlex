@@ -10,7 +10,7 @@ import requests
 import sqlalchemy as sa
 from sqlalchemy.sql import text as sql_text
 from pyontutils.core import OntId, OntResIri, OntResGit
-from pyontutils.utils import TermColors as tc
+from pyontutils.utils_fast import TermColors as tc, chunk_list
 from pyontutils.identity_bnode import IdentityBNode
 from pyontutils.namespaces import definition
 from pyontutils.namespaces import makeNamespaces, ILX, NIFRID, ilxtr
@@ -1177,7 +1177,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
             # FIXME this is not wrapped with a rollback because...
             # that shouldn't happen? are we sure?
-            self.execute(sql, dict(r=self.reference_name, e=value, group_id=self.group_id))
+            self.session_execute(sql, dict(r=self.reference_name, e=value, group_id=self.group_id))
             self._expected_bound_name = value
             self.reference_name_in_db = True  # ok to set again
             #breakpoint()
@@ -1402,24 +1402,59 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
         def sortkey(kv):
             k, v = kv
-            return k  # FIXME TODO this needs to be checked an improved to control insert order
+            return k  # FIXME TODO this needs to be checked and improved to control insert order
 
+        batchsize = 20000  # keep maximum memory usage under control
+        separates = []
         value_sets = []
         statements = []
         for prefix, suffix, to_insert in self.Loader.make_load_records(self.serialization_identity,
                                                                        curies_done, metadata_done,
                                                                        data_done, self.ident_exists):
             for columns, values in sorted(to_insert.items(), key=sortkey):
-                value_sets.append(values)
+                if len(values) > batchsize * 1.5:
+                    separate = True
+                    value_sets.append(list(chunk_list(values, batchsize)))
+                    separates.append(True)
+                else:
+                    value_sets.append(values)
+                    separates.append(False)
+
                 statement = ' '.join((prefix, f'({columns}) VALUES', '{}', suffix))
                 statements.append(statement)
 
-        *value_templates, params = makeParamsValues(*value_sets)
-        sql = ';\n'.join(statements).format(*value_templates)
-        self.execute(sql, params)
-        if self.debug:
-            printD()
-            [print(k, v) for k, v in params.items()]
+        if any(separates):
+            nexecs = sum([len(vals) if sep else 1 for sep, vals in zip(separates, value_sets)])
+            msg = f'running statements individually batch at {batchsize} with {nexecs} total executions'
+            log.debug(msg)
+            def run_statement(values, statement):
+                value_templates, params = makeParamsValues(values)
+                sql = statement.format(value_templates)
+                self.session_execute(sql, params)
+
+            # TODO FIXME handle error cases and probably figure out how to roll back or something
+            # the other possible source of the high memory usage might be the fact that this is all in one transaction?
+            # and we commit at the end ... explore the possibility of commiting at checkpoints?
+            count = 0
+            for separate, values, statement in zip(separates, value_sets, statements):
+                if separate:
+                    for chunk in values:
+                        count += 1
+                        run_statement(chunk, statement)
+                else:
+                    count += 1
+                    run_statement(values, statement)
+
+                percent = (count / nexecs) * 100
+                msg = f'loading approximately {percent}% done'
+                log.debug(msg)
+        else:
+            *value_templates, params = makeParamsValues(*value_sets)
+            sql = ';\n'.join(statements).format(*value_templates)
+            self.session_execute(sql, params)
+            if self.debug:
+                printD()
+                [print(k, v) for k, v in params.items()]
 
         self.times['load_end'] = time.time()
         # TODO create qualifiers
