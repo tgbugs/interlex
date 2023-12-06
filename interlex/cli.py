@@ -97,23 +97,24 @@ class Main(clif.Dispatcher):
         shell('shell')
 
     def sync(self):
-        from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
         from interlex.load import TripleLoaderFactory
         from interlex.sync import InterLexLoad
         app = run_uri()
-        db = SQLAlchemy(app)
-        il = InterLexLoad(db, do_cdes=self.options.do_cdes)
-        il.setup()
-        # il.load()  # do this one yourself  WARNING high memory usage ~ 17 gigs
-        self = il
-        breakpoint()
+        db = app.extensions['sqlalchemy']
+        with app.app_context():
+            il = InterLexLoad(db, do_cdes=self.options.do_cdes)
+            il.setup()
+            il.load()  # do this one yourself  WARNING high memory usage ~ 17 gigs
+            self = il
+            breakpoint()
+            pass
 
     def dbsetup(self):
-        from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
-        app = run_uri()
-        db = SQLAlchemy(app)
+        from sqlalchemy.sql import text as sql_text
+        app = run_uri()  # database init happens inside run_uri now
+        db = app.extensions['sqlalchemy']
         session = db.session
         sql_verify_user = (
             'INSERT INTO user_emails (user_id, email, email_primary) VALUES (:id, :email, :email_primary);'
@@ -122,8 +123,10 @@ class Main(clif.Dispatcher):
         args_verify_user = dict(id=1,
                              orcid='https://orcid.org/0000-0002-7509-4801',
                              email='tgbugs@gmail.com', email_primary=True)
-        session.execute(sql_verify_user, args_verify_user)
-        session.commit()
+        with app.app_context():
+            session.execute(sql_text(sql_verify_user), args_verify_user)
+            session.commit()
+
         breakpoint()
 
     def post(self):
@@ -137,7 +140,6 @@ class Main(clif.Dispatcher):
 
 class Shell(clif.Dispatcher):
     def default(self):
-        from flask_sqlalchemy import SQLAlchemy
         from interlex.uri import run_uri
         from interlex.core import IdentityBNode
         from interlex.load import TripleLoaderFactory
@@ -151,7 +153,7 @@ class Shell(clif.Dispatcher):
         # not sure why this is needed here but not
         # runonce is called ...
         app.config['SQLALCHEMY_ECHO'] = self.options.debug
-        db = SQLAlchemy(app)
+        db = app.extensions['sqlalchemy']
         endpoints = Endpoints(db)
         session = db.session
         queries = endpoints.queries
