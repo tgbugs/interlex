@@ -5,7 +5,7 @@
 --DO
 --$body$
 --BEGIN
-INSERT INTO interlex_ids DEFAULT VALUES RETURNING id;
+/* INSERT INTO interlex_ids DEFAULT VALUES RETURNING id;  -- FIXME TODO need the updated version for these */
 
 /*
 INSERT INTO existing_iris (ilx_id, iri, group_id) VALUES ('0000001', 'http://uri.neuinfo.org/nif/nifstd/birnlex_796', 1),

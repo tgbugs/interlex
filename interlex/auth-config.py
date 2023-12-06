@@ -20,7 +20,9 @@
 
      # testing
      'test-host': 'localhost',
-     'test-database': '__interlex_testing',
+     'test-database': {
+         'default': '__interlex_testing',
+         'environment-variables': 'INTERLEX_TEST_DATABASE',},
 
      # alt
      'alt-db-user': 'nif_eelg_secure',
