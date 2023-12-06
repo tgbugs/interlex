@@ -36,6 +36,8 @@ synonym_types = {'abbrev':ilxtr['synonyms/abbreviation'],
                  'oboInOwl:hasRelatedSynonym': ilxtr['synonyms/related'],
                  'fma:synonym': fma.synonym,  # perserved for prov
                  'NIFRID:synonym': NIFRID.synonym,
+                 'vocab:synonym': NIFRID.synonym,  # FIXME probably normalize this internally?
+                 'NIFRID:abbrev': NIFRID.abbrev,
 }
 default_prefixes = {'rdf':str(rdf),
                     'rdfs':str(rdfs),
