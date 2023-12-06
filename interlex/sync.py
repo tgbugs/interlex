@@ -61,8 +61,15 @@ class InterLexLoad:
         lse(self.uid_sql, self.uid_params)
 
         # FIXME this probably requires admin permissions
+        vt, params = makeParamsValues(list(self.current.items()))
         with self.admin_engine.connect() as conn:
-            conn.execute(sql_text(f"SELECT setval('interlex_ids_seq', {self.current}, TRUE)"))  # DANGERZONE
+            #conn.execute(sql_text(f"SELECT setval('interlex_ids_seq', {self.current}, TRUE)"))  # DANGERZONE
+            conn.execute(sql_text(
+                'INSERT INTO fragment_prefix_sequences (prefix, suffix_max) '
+                f'VALUES {vt} ON CONFLICT (prefix) DO UPDATE '
+                'SET suffix_max = EXCLUDED.suffix_max '
+                'WHERE fragment_prefix_sequences.prefix = EXCLUDED.prefix'), params)
+            conn.commit()
 
         if self.graph is None:
             self.graph = rdflib.Graph()
@@ -91,12 +98,14 @@ class InterLexLoad:
 
     def ids(self):
         with self.engine.connect() as conn:
-            rows = conn.execute(sql_text('SELECT DISTINCT ilx FROM terms ORDER BY ilx ASC'))
+            rows = conn.execute(sql_text('SELECT DISTINCT ilx, label FROM terms ORDER BY ilx ASC'))
 
-        values = [(row.ilx[4:],) for row in rows]
+        values = [(row.ilx[:3], row.ilx[4:], row.label) for row in rows]
         vt, self.ilx_params = makeParamsValues(values)
-        self.ilx_sql = 'INSERT INTO interlex_ids VALUES ' + vt + ' ON CONFLICT DO NOTHING'  # FIXME BAD
-        self.current = int(values[-1][0].strip('0'))
+        self.ilx_sql = 'INSERT INTO interlex_ids (prefix, id, original_label) VALUES ' + vt + ' ON CONFLICT DO NOTHING'  # FIXME BAD
+        prefixes = set(v[0] for v in values)
+        self.current = {p:int([v for v in values if v[0] == p][-1][1]) for p in prefixes}
+        #self.current = int(values[-1][1].strip('0'))
         log.debug(self.current)
 
     def cull_bads(self, eternal_screaming, values, ind):
@@ -118,19 +127,20 @@ class InterLexLoad:
 
         maybe_mult = defaultdict(list)
         versions = defaultdict(list)
-        for ilx, iri, ver in sorted(values, key=lambda t: t[-1], reverse=True):
-            versions[ilx].append(ver)
-            maybe_mult[iri].append(ilx)
+        for pref, ilx, iri, ver in sorted(values, key=lambda t: t[-1], reverse=True):
+            versions[pref, ilx].append(ver)
+            maybe_mult[iri].append((pref, ilx))
 
         multiple_versions = {k:v for k, v in versions.items() if len(set(v)) > 1}
 
         any_mult = {k:v for k, v in maybe_mult.items() if len(v) > 1}
 
-        dupe_report = {k:tuple(f'http://uri.interlex.org/base/ilx_{i}' for i in v)
+        dupe_report = {k:tuple(f'http://uri.interlex.org/base/{p}_{i}' for p, i in v)
                        for k, v in maybe_mult.items()
                        if len(set(v)) > 1}
         readable_report = {OntId(k):tuple(OntId(e) for e in v)
                            for k, v in dupe_report.items()}
+        log.debug('obvious duplicate report')
         _ = [print(repr(k), '\t', *(f'{e!r}' for e in v))
              for k, v in sorted(readable_report.items())]
 
@@ -140,21 +150,21 @@ class InterLexLoad:
 
         skips = []
         bads = []
-        bads += [(a, b) for a, b, _ in values if b in dupes]
+        bads += [(p, a, b) for p, a, b, _ in values if b in dupes]
         # TODO one of these is incorrect can't quite figure out which, so skipping entirely for now
-        for id_, iri, version in values:  # FIXME
+        for pref, id_, iri, version in values:  # FIXME
             if ' ' in iri:  # sigh, skip these for now since pguri doesn't seem to handled them
-                bads.append((id_, iri))
+                bads.append((pref, id_, iri))
             elif 'neurolex.org/wiki' in iri:
-                skips.append((id_, iri))
+                skips.append((pref, id_, iri))
 
         bads = sorted(bads, key=lambda ab:ab[1])
-        _ins_values = [(ilx, iri) for ilx, iri, ver in values if
-                       (ilx, iri) not in bads and
-                       (ilx, iri) not in skips]
-        ins_values = [v for v in _ins_values if 'interlex.org' not in v[1]]
-        user_iris = [v for v in _ins_values if 'interlex.org' in v[1] and 'org/base/' not in v[1]]
-        base_iris = [v for v in _ins_values if 'interlex.org' in v[1] and 'org/base/' in v[1]]
+        _ins_values = [(pref, ilx, iri) for pref, ilx, iri, ver in values if
+                       (pref, ilx, iri) not in bads and
+                       (pref, ilx, iri) not in skips]
+        ins_values = [v for v in _ins_values if 'interlex.org' not in v[2]]
+        user_iris = [v for v in _ins_values if 'interlex.org' in v[2] and 'org/base/' not in v[2]]
+        base_iris = [v for v in _ins_values if 'interlex.org' in v[2] and 'org/base/' in v[2]]
         assert len(ins_values) + len(user_iris) + len(base_iris) == len(_ins_values)
         #ins_values += [(v[0], k) for k, v in mult_curies.items()]  # add curies back now fixed
         if self.debug:
@@ -197,13 +207,14 @@ class InterLexLoad:
         #values = [(row.ilx[4:], row.iri, row.version) for row in query if row.ilx not in row.iri]
         eternal_screaming = list(query)
 
-        start_values = [(row[ind('ilx')][4:], row[ind('iri')], row[ind('version')])
+        # FIXME frag prefs
+        start_values = [(row[ind('ilx')][:3], row[ind('ilx')][4:], row[ind('iri')], row[ind('version')])
                         for row in eternal_screaming
                         if row[ind('ilx')] not in row[ind('iri')]]
 
         values, bads, skips, user_iris = self.cull_bads(eternal_screaming, start_values, ind)
 
-        sql_base = 'INSERT INTO existing_iris (group_id, ilx_id, iri) VALUES '
+        sql_base = 'INSERT INTO existing_iris (group_id, ilx_prefix, ilx_id, iri) VALUES '
         values_template, params = makeParamsValues(values, constants=('idFromGroupname(:group)',))
         params['group'] = 'base'
         sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # TODO return id? (on conflict ok here)
@@ -248,22 +259,22 @@ class InterLexLoad:
 
             return user, path
 
-        _values = [(ilx_id, *iri_to_group_uripath(iri))
-                   for ilx_id, iri in self.eid_user_iris]
+        _values = [(ilx_prefix, ilx_id, *iri_to_group_uripath(iri))
+                   for ilx_prefix, ilx_id, iri in self.eid_user_iris]
 
         if bads:
             raise ValueError('\n'.join(bads))
 
-        gidmap = self.queries.getGroupIds(*sorted(set(u for _, u, _ in _values)))
+        gidmap = self.queries.getGroupIds(*sorted(set(u for _, _, u, _ in _values)))
         # XXX if you encounter an error here it is probably because
         # new groups were used by convention in the ontology and
         # loaded into interlex as existing ids and we don't have them
         # listed here
 
-        print(gidmap)
-        values = [(ilx_id, gidmap[g], uri_path)
-                  for ilx_id, g, uri_path in _values]
-        sql_base = 'INSERT INTO uris (ilx_id, group_id, uri_path) VALUES '
+        log.debug(gidmap)
+        values = [(ilx_prefix, ilx_id, gidmap[g], uri_path)
+                  for ilx_prefix, ilx_id, g, uri_path in _values]
+        sql_base = 'INSERT INTO uris (ilx_prefix, ilx_id, group_id, uri_path) VALUES '
         values_template, params = makeParamsValues(values)
         sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # FIXME BAD
         self.uid_sql = sql
@@ -288,31 +299,36 @@ class InterLexLoad:
             queries['terms'] = 'SELECT * FROM terms'
         else:
             queries['cde_ids'] = 'SELECT id, ilx FROM terms where type = "cde"'
+
         with engine.connect() as conn:
             data = {name:conn.execute(sql_text(query)).fetchall()  # FIXME yeah this is gonna be big right?
                     for name, query in queries.items()}
+
         #breakpoint()  # XXX break here
         ilx_index = {}
         id_type = {}
-        triples = [(ILX[ilx], oboInOwl.hasDbXref, iri) for ilx, iri in self.eid_skips]  # FIXME broken for new fragment prefixes
+        triples = [(rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),  # FIXME hardcoded structure
+                    oboInOwl.hasDbXref, iri) for pref, ilx, iri in self.eid_skips]  # FIXME broken for new fragment prefixes
         type_to_owl = MysqlExport.types
 
-        def addToIndex(id, ilx, class_):
-            if ilx not in ilx_index:
-                ilx_index[ilx] = []
-            ilx_index[ilx].append(id)
+        # FIXME handle alternate fragment prefixes!
+        def addToIndex(id, frag_pref, ilx, class_):
+            if (frag_pref, ilx) not in ilx_index:
+                ilx_index[frag_pref, ilx] = []
+            ilx_index[frag_pref, ilx].append(id)
             if id not in id_type:
                 id_type[id] = []
             id_type[id].append(class_)
 
         if not self.do_cdes:
-            [addToIndex(row.id, row.ilx[4:], owl.Class) for row in data['cde_ids']]
+            [addToIndex(row.id, row.ilx[:3], row.ilx[4:], owl.Class) for row in data['cde_ids']]
 
         bads = []
         for row in data['terms']:
             #id, ilx_with_prefix, _, _, _, _, label, definition, comment, type_
+            frag_pref = row.ilx[:3]
             ilx = row.ilx[4:]
-            uri = f'http://uri.interlex.org/base/ilx_{ilx}'
+            uri = f'http://uri.interlex.org/base/{frag_pref}_{ilx}'
 
             try:
                 class_ = type_to_owl[row.type]
@@ -335,7 +351,7 @@ class InterLexLoad:
             #elif row.type == 'cde':
                 #triples.append((uri, rdfs.subClassOf, ilxtr.commonDataElement))
 
-            addToIndex(row.id, ilx, class_)
+            addToIndex(row.id, frag_pref, ilx, class_)
 
         versions = {k:v for k, v in ilx_index.items() if len(v) > 1}  # where did our dupes go!?
         tid_to_ilx = {v:k for k, vs in ilx_index.items() for v in vs}
@@ -345,21 +361,30 @@ class InterLexLoad:
 
         def baseUri(e):
             # FIXME this is wrong for fde cde pde
-            return f'http://uri.interlex.org/base/ilx_{tid_to_ilx[e]}'
+            frag_pref, ilx = tid_to_ilx[e]
+            return f'http://uri.interlex.org/base/{frag_pref}_{ilx}'
 
         synWTF = []
+        synWTF_ids = []
         for row in data['synonyms']:
             synid, tid, literal, type, version, time = row
             # TODO annotation with synonym type
             if not literal:
                 synWTF.append(row)
+            elif tid not in tid_to_ilx:
+                synWTF_ids.append(row)
             else:
+                # FIXME somehow possible to get tids that aren't in terms?
                 t = baseUri(tid), ilxr.synonym, rdflib.Literal(literal)
                 triples.append(t)
                 if type:  # yay for empty string! >_<
                     stype = self.stype_lookup[type]
                     triples.extend(
                         cmb.annotation(t, (ilxtr.synonymType, stype)).value)
+
+        if synWTF_ids:
+            # foreign keys kids
+            log.warning(f'synonyms table non-existent tids:\n{synWTF_ids}')
 
         WTF = []
         for row in data['object_properties']:
