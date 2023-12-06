@@ -1,6 +1,7 @@
 from collections import defaultdict
 import rdflib
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.sql import text as sql_text
 from pyontutils import combinators as cmb
 from pyontutils.core import OntId
 from pyontutils.namespaces import ILX, ilxtr, oboInOwl, owl, rdf, rdfs
@@ -30,7 +31,6 @@ class InterLexLoad:
         self.do_cdes = do_cdes
         self.debug = debug
         self.admin_engine = create_engine(dbUri(dbuser='interlex-admin'), echo=True)
-        self.admin_exec = self.admin_engine.execute
         kwargs = {k: config.auth.get(f'alt-db-{k}')
                   for k in ('user', 'host', 'port', 'database')}
         if kwargs['database'] is None:
@@ -53,11 +53,17 @@ class InterLexLoad:
     def local_load(self):
         from pyontutils.core import makeGraph
         loader = self.loader
-        loader.session.execute(self.ilx_sql, self.ilx_params)
-        loader.session.execute(self.eid_sql, self.eid_params)
-        loader.session.execute(self.uid_sql, self.uid_params)
+        def lse(s, p):
+            loader.session.execute(sql_text(s), p)
+
+        lse(self.ilx_sql, self.ilx_params)
+        lse(self.eid_sql, self.eid_params)
+        lse(self.uid_sql, self.uid_params)
+
         # FIXME this probably requires admin permissions
-        self.admin_exec(f"SELECT setval('interlex_ids_seq', {self.current}, TRUE)")  # DANGERZONE
+        with self.admin_engine.connect() as conn:
+            conn.execute(sql_text(f"SELECT setval('interlex_ids_seq', {self.current}, TRUE)"))  # DANGERZONE
+
         if self.graph is None:
             self.graph = rdflib.Graph()
             self.loader._graph
@@ -84,7 +90,9 @@ class InterLexLoad:
         self.remote_load()
 
     def ids(self):
-        rows = self.engine.execute('SELECT DISTINCT ilx FROM terms ORDER BY ilx ASC')
+        with self.engine.connect() as conn:
+            rows = conn.execute(sql_text('SELECT DISTINCT ilx FROM terms ORDER BY ilx ASC'))
+
         values = [(row.ilx[4:],) for row in rows]
         vt, self.ilx_params = makeParamsValues(values)
         self.ilx_sql = 'INSERT INTO interlex_ids VALUES ' + vt + ' ON CONFLICT DO NOTHING'  # FIXME BAD
@@ -166,14 +174,19 @@ class InterLexLoad:
             else:
                 raise IndexError()
 
-        if self.do_cdes:
-            query = engine.execute('SELECT * FROM term_existing_ids as teid '
-                                   'JOIN terms as t '
-                                   'ON t.id = teid.tid')
-        else:
-            query = engine.execute('SELECT * FROM term_existing_ids as teid '
-                                   'JOIN terms as t '
-                                   'ON t.id = teid.tid WHERE t.type != "cde"')
+        with engine.connect() as conn:
+            if self.do_cdes:
+                query = conn.execute(
+                    sql_text(
+                        'SELECT * FROM term_existing_ids as teid '
+                        'JOIN terms as t '
+                        'ON t.id = teid.tid'))
+            else:
+                query = conn.execute(
+                    sql_text(
+                        'SELECT * FROM term_existing_ids as teid '
+                        'JOIN terms as t '
+                        'ON t.id = teid.tid WHERE t.type != "cde"'))
 
         #data = query.fetchall()
         #cdata = list(zip(*data))
@@ -275,8 +288,9 @@ class InterLexLoad:
             queries['terms'] = 'SELECT * FROM terms'
         else:
             queries['cde_ids'] = 'SELECT id, ilx FROM terms where type = "cde"'
-        data = {name:engine.execute(query).fetchall()  # FIXME yeah this is gonna be big right?
-                for name, query in queries.items()}
+        with engine.connect() as conn:
+            data = {name:conn.execute(sql_text(query)).fetchall()  # FIXME yeah this is gonna be big right?
+                    for name, query in queries.items()}
         #breakpoint()  # XXX break here
         ilx_index = {}
         id_type = {}
