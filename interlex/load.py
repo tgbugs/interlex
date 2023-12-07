@@ -1404,7 +1404,8 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             k, v = kv
             return k  # FIXME TODO this needs to be checked and improved to control insert order
 
-        batchsize = 20000  # keep maximum memory usage under control
+        batchsize = 20000  # keep maximum memory usage under control XXX also in sync probably centralize this?
+        # 20k better than 80k or 40k probably due to less alloc when parsing or something
         separates = []
         value_sets = []
         statements = []
@@ -1412,7 +1413,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                                                                        curies_done, metadata_done,
                                                                        data_done, self.ident_exists):
             for columns, values in sorted(to_insert.items(), key=sortkey):
-                if len(values) > batchsize * 1.5:
+                if len(values) > batchsize:
                     separate = True
                     value_sets.append(list(chunk_list(values, batchsize)))
                     separates.append(True)
@@ -1436,21 +1437,26 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             # the other possible source of the high memory usage might be the fact that this is all in one transaction?
             # and we commit at the end ... explore the possibility of commiting at checkpoints?
             count = 0
+            def _logm():
+                percent = (count / nexecs) * 100
+                msg = f'loading approximately {percent:3.0f}% done'
+                log.debug(msg)
+
             for separate, values, statement in zip(separates, value_sets, statements):
                 if separate:
                     for chunk in values:
                         count += 1
                         run_statement(chunk, statement)
+                        _logm()
                 else:
                     count += 1
                     run_statement(values, statement)
+                    _logm()
 
-                percent = (count / nexecs) * 100
-                msg = f'loading approximately {percent}% done'
-                log.debug(msg)
         else:
             *value_templates, params = makeParamsValues(*value_sets)
             sql = ';\n'.join(statements).format(*value_templates)
+            # FIXME will fail if query is empty e.g. if all terms are already present ????
             self.session_execute(sql, params)
             if self.debug:
                 printD()

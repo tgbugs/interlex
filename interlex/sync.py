@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.sql import text as sql_text
 from pyontutils import combinators as cmb
 from pyontutils.core import OntId
+from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import ILX, ilxtr, oboInOwl, owl, rdf, rdfs
 from pyontutils.namespaces import definition
 from interlex import alt
@@ -23,7 +24,10 @@ class InterLexLoad:
 
     stype_lookup = synonym_types
 
-    def __init__(self, db, do_cdes=False, debug=False):
+    def __init__(self, db, do_cdes=False, debug=False, batchsize=20000):
+        # batchsize tested at 20k, 40k, and 80k, 20k runs slightly faster than the other two
+        # and does it with significantly less memory usage (< 1 gig)
+        self.batchsize = batchsize
         TripleLoader = TripleLoaderFactory(db.session)
         self.loader = TripleLoader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex')
 
@@ -54,28 +58,43 @@ class InterLexLoad:
         from pyontutils.core import makeGraph
         loader = self.loader
         def lse(s, p):
-            loader.session.execute(sql_text(s), p)
+            # accepts two lists of equal length
+            assert len(s) == len(p)
+            n = len(p)
+            log.debug('starting batch load')
+            for i, (sql, params) in enumerate(zip(s, p)):
+                loader.session.execute(sql_text(sql), params)
+                msg = f'{((i + 1) / n) * 100:3.0f}% done with batched load'
+                log.debug(msg)
 
-        lse(self.ilx_sql, self.ilx_params)
-        lse(self.eid_sql, self.eid_params)
+        # start sitting at around 10 gigs in pypy3 (oof)
+        # now stays below 8 gigs in pypy3, and below about 1gig in postgres with 40k batch size, much better, 600mb at 20k
+        lse(self.ilx_sql, self.ilx_params)  # 3 gigs in postgres no batching
+        lse(self.eid_sql, self.eid_params)  # 16.4 gigs in postgres with no batching
         lse(self.uid_sql, self.uid_params)
 
         # FIXME this probably requires admin permissions
         vt, params = makeParamsValues(list(self.current.items()))
-        with self.admin_engine.connect() as conn:
+        #with self.admin_engine.connect() as conn:
             #conn.execute(sql_text(f"SELECT setval('interlex_ids_seq', {self.current}, TRUE)"))  # DANGERZONE
+        with self.admin_engine.connect() as conn:  # calling UPDATE on this without the function requires admin (sensibly)
             conn.execute(sql_text(
                 'INSERT INTO fragment_prefix_sequences (prefix, suffix_max) '
                 f'VALUES {vt} ON CONFLICT (prefix) DO UPDATE '
                 'SET suffix_max = EXCLUDED.suffix_max '
-                'WHERE fragment_prefix_sequences.prefix = EXCLUDED.prefix'), params)
-            conn.commit()
+                'WHERE fragment_prefix_sequences.prefix = EXCLUDED.prefix'),
+                         params)
+
+        #lse([('INSERT INTO fragment_prefix_sequences (prefix, suffix_max) '
+            #f'VALUES {vt} ON CONFLICT (prefix) DO UPDATE '
+            #'SET suffix_max = EXCLUDED.suffix_max '
+            #'WHERE fragment_prefix_sequences.prefix = EXCLUDED.prefix')], [params])
 
         if self.graph is None:
             self.graph = rdflib.Graph()
-            self.loader._graph
             mg = makeGraph('', graph=self.graph)  # FIXME I swear I fixed this already
             [mg.add_trip(*t) for t in self.triples]
+
         self.loader._graph = self.graph
         name = 'http://toms.ilx.dump/TODO'
         self.loader.Loader._bound_name = name
@@ -101,8 +120,14 @@ class InterLexLoad:
             rows = conn.execute(sql_text('SELECT DISTINCT ilx, label FROM terms ORDER BY ilx ASC'))
 
         values = [(row.ilx[:3], row.ilx[4:], row.label) for row in rows]
-        vt, self.ilx_params = makeParamsValues(values)
-        self.ilx_sql = 'INSERT INTO interlex_ids (prefix, id, original_label) VALUES ' + vt + ' ON CONFLICT DO NOTHING'  # FIXME BAD
+        self.ilx_sql = []
+        self.ilx_params = []
+        for chunk in chunk_list(values, self.batchsize):
+            vt, params = makeParamsValues(chunk)
+            sql = 'INSERT INTO interlex_ids (prefix, id, original_label) VALUES ' + vt + ' ON CONFLICT DO NOTHING'  # FIXME BAD
+            self.ilx_sql.append(sql)
+            self.ilx_params.append(params)
+
         prefixes = set(v[0] for v in values)
         self.current = {p:int([v for v in values if v[0] == p][-1][1]) for p in prefixes}
         #self.current = int(values[-1][1].strip('0'))
@@ -215,14 +240,19 @@ class InterLexLoad:
         values, bads, skips, user_iris = self.cull_bads(eternal_screaming, start_values, ind)
 
         sql_base = 'INSERT INTO existing_iris (group_id, ilx_prefix, ilx_id, iri) VALUES '
-        values_template, params = makeParamsValues(values, constants=('idFromGroupname(:group)',))
-        params['group'] = 'base'
-        sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # TODO return id? (on conflict ok here)
+        self.eid_sql = []
+        self.eid_params = []
+        for chunk in chunk_list(values, self.batchsize):
+            values_template, params = makeParamsValues(chunk, constants=('idFromGroupname(:group)',))
+            params['group'] = 'base'
+            sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # TODO return id? (on conflict ok here)
+            self.eid_sql.append(sql)
+            self.eid_params.append(params)
+
+
         self.eid_raw = eternal_screaming
         self.eid_starts = start_values
         self.eid_values = values
-        self.eid_sql = sql
-        self.eid_params = params
         self.eid_bads = bads
         self.eid_skips = skips
         self.eid_user_iris = user_iris
@@ -275,10 +305,14 @@ class InterLexLoad:
         values = [(ilx_prefix, ilx_id, gidmap[g], uri_path)
                   for ilx_prefix, ilx_id, g, uri_path in _values]
         sql_base = 'INSERT INTO uris (ilx_prefix, ilx_id, group_id, uri_path) VALUES '
-        values_template, params = makeParamsValues(values)
-        sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # FIXME BAD
-        self.uid_sql = sql
-        self.uid_params = params
+
+        self.uid_sql = []
+        self.uid_params = []
+        for chunk in chunk_list(values, self.batchsize):
+            values_template, params = makeParamsValues(chunk)
+            sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # FIXME BAD
+            self.uid_sql.append(sql)
+            self.uid_params.append(params)
 
     def make_triples(self):
         insp, engine = self.insp, self.engine
