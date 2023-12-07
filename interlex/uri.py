@@ -4,6 +4,7 @@ from flask import Flask, url_for
 from flask_restx import Api, Resource, apidoc
 from flask_restx.api import SwaggerView
 from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager
 from interlex import config
 from interlex.core import dbUri, mqUri, diffCuries
 from interlex.core import RegexConverter, make_paths, makeParamsValues
@@ -72,7 +73,10 @@ def uriStructure():
     intermediate_filename = ['<filename>.<extension>', '<filename>']
     uris_intermediate_filename = ['<filename>.<extension>', '*<uris_filename>']
     parent_child = {
-        '<group>':             basic + [ilx_get, 'lexical'] + branches + compare + ['contributions', 'upload', 'prov', 'external'],
+        '<group>':             basic + [ilx_get, 'lexical'] + branches + compare + ['ops', 'priv', 'contributions', 'upload', 'prov', 'external'],
+        'ops':                 ['<operation>'],  # in the uri api top level ops are not meaningful  # FIXME likely merge ...
+        'priv':                ['<page>'],  # XXX TODO see if we really need this also probably want /<group>/priv/settings/<sub>
+
         '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
         '<other_group_diff>':  basic + ['lexical'] + branches,
         'lexical':             ['<label>'],
@@ -117,6 +121,8 @@ def uriStructure():
                     '<filename_terminal>':['GET', 'POST'],
                     '<filename_terminal>.<extension>':['GET', 'POST'],
                     'mapped':['GET', 'POST'],
+                    '<operation>': ['GET', 'POST'],
+                    '<page>': ['GET', 'POST'],
     }
     return parent_child, node_methods, path_to_route
 
@@ -206,6 +212,9 @@ def build_api(app):
         'versions':api.namespace('Versions', 'View data associated with any ilx: URI at a given timepoint or version', '/'),
         'diff':api.namespace('Diff', 'Compare groups', '/'),
         'own':api.namespace('Own', 'See one group\'s view of another group\'s personalized IRIs', '/'),
+        # XXX these are being trialed
+        'ops':api.namespace('Operations', 'Stateful operations.'),
+        'priv':api.namespace('Privileged endpoints'),
     }
     extra = {name + '_':ns for name, ns in doc_namespaces.items() if name in ('curies', 'contributions', 'ontologies')}
     doc_namespaces = {**extra, **doc_namespaces}  # make sure the extras come first for priority ordering
@@ -230,6 +239,7 @@ def api_rule_maker(api, doc_namespaces):
 
 def setup_runonce(app, endpoints, echo):
     from interlex.load import BasicDBFactory
+
     def runonce():
         # FIXME this is a reasonably safe way to make sure that we have a db connection
         with app.app_context():
@@ -241,7 +251,7 @@ def setup_runonce(app, endpoints, echo):
     return runonce
 
 
-def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
+def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, dbonly=False):
     # app setup and database binding
     app = Flask('InterLex uri server')
     kwargs = {k:config.auth.get(f'db-{k}')  # TODO integrate with cli options
@@ -250,6 +260,7 @@ def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
     if kwargs['database'] is None:
         raise ValueError('db-database is None, did you remember to set one?')
 
+    app.config['SECRET_KEY'] = config.auth.get('fl-session-secret-key')
     app.config['SQLALCHEMY_DATABASE_URI'] = dbUri(**kwargs)  # use os.environ.update
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['CELERY_BROKER_URL'] = config.broker_url
@@ -259,9 +270,32 @@ def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
 
     db.init_app(app)
     mq.init_app(app)
+    lm.init_app(app)
+
+    if dbonly:  # FIXME consider putting this before mq or lm are inited or rename dbonly to setup only or something?
+        return app
 
     route_endpoint_mapper, endpoints = build_endpoints(db)   # endpoints
     runonce = setup_runonce(app, endpoints, echo)            # runonce
+
+    @lm.user_loader                                          # give login manager access to db
+    def load_user(user_id):
+        cr = endpoints.session_execute(
+            "SELECT * FROM groups WHERE own_role < 'pending' AND id = :user_id",
+            dict(user_id=user_id),)
+        rows = list(cr)
+        if not rows:
+            return None
+        else:
+            class tuser:
+                is_active = True
+                id = rows[0].id
+                own_role = rows[0].own_role
+                groupname = rows[0].groupname
+                def get_id(self):
+                    return self.id
+
+            return tuser()
 
     api, doc_namespaces = build_api(app)                     # api init
     add_api_rule = api_rule_maker(api, doc_namespaces)       # api binding
@@ -309,5 +343,5 @@ def server_uri(db=None, mq=None, structure=uriStructure, echo=False):
     runonce()
     return app
 
-def run_uri(echo=False):
-    return server_uri(db=SQLAlchemy(), mq=cel, echo=echo)
+def run_uri(echo=False, dbonly=False):
+    return server_uri(db=SQLAlchemy(), mq=cel, lm=LoginManager(), echo=echo, dbonly=dbonly)

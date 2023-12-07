@@ -504,7 +504,7 @@ class MysqlExport:
                 yield ilx_iri, ilxtr.hasIlxPreferredId, o
 
     def _terms_triples(self, terms, include_full_object_predicates=tuple(),
-                       done=tuple(), include_supers=False):
+                       done=tuple(), include_supers=False):  # XXX this one hack
         done = set() if not done else done
         predobjs = set()
         ids = set()

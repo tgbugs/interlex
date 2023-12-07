@@ -16,10 +16,12 @@ Usage:
     interlex post class    [options] <rdfs:subClassOf> <rdfs:label> [<definition:>] [<synonym:> ...]
     interlex post entity   [options] <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>] [<synonym:> ...]
     interlex post triple   [options] <subject> <predicate> <object>
+    interlex post login    [options]
     interlex id     [options] <match-curie-or-iri> ...
     interlex label  [options] <match-label> ...
     interlex term   [options] <match-label-or-synonym> ...
     interlex search [options] <match-full-text> ...
+    interlex ops password  [options]
 
 Commands:
     server api      start a server running the api endpoint (WARNING: OLD)
@@ -81,7 +83,9 @@ import requests
 from pyontutils import clifun as clif
 from pyontutils.utils import setPS1
 from pyontutils.namespaces import PREFIXES as uPREFIXES
-from interlex.utils import printD
+from interlex.utils import printD, log as _log
+
+log = _log.getChild('cli')
 
 
 class Options(clif.Options):
@@ -136,6 +140,10 @@ class Main(clif.Dispatcher):
     def server(self):
         server = Server(self)
         server('server')
+
+    def ops(self):
+        ops = Ops(self)
+        ops('ops')
 
 
 class Shell(clif.Dispatcher):
@@ -241,7 +249,7 @@ class Post(clif.Dispatcher):
         else:
             group = self.options.group
 
-        # FIXME obviously allowing the group name as the default password is unspeakably dump
+        # FIXME obviously allowing the group name as the default password is unspeakably dumb
         api_key = os.environ.get('INTERLEX_API_KEY', group)  # FIXME
         headers = {'Authorization': 'Bearer ' + api_key}
         if self.options.local:
@@ -264,6 +272,29 @@ class Post(clif.Dispatcher):
             printD(out[:-1])
 
         return out
+
+    def login(self):
+        from getpass import getpass
+        scheme, host, group, headers = self._post()
+        url = f'{scheme}://{host}/{group}/ops/login'  # https duh
+        # TODO ORCID on the front end
+        s = requests.Session()  # use session to auto handle cookies
+        resp = s.post(url, headers={'Authorization': 'Basic ' + getpass()})
+        resp.headers
+        #s.cookies.set("COOKIE_NAME", "the cookie works", domain="example.com")
+        log.debug(resp.text)
+        log.debug(resp.headers)
+        breakpoint()
+
+    def signup(self):
+        from getpass import getpass
+        scheme, host, group, headers = self._post()
+        breakpoint()
+        pass
+
+    def change_password(self):
+        breakpoint()
+        pass
 
     def curies(self):  # FIXME post should smart update? or switch to patch?
         scheme, host, group, headers = self._post()
@@ -341,6 +372,41 @@ class Post(clif.Dispatcher):
     def entity(self):
         raise NotImplementedError()
 
+
+class Ops(clif.Dispatcher):
+    def password(self):
+        if self.options.user is None:
+            raise ValueError('need user')
+
+        from interlex.uri import run_uri
+        from sqlalchemy.sql import text as sql_text
+        app = run_uri(dbonly=True)
+        db = app.extensions['sqlalchemy']
+        session = db.session
+
+        from interlex import auth
+        from getpass import getpass
+        group = self.options.user
+        a = getpass()
+        b = getpass()
+        if a == b:
+            argon2_string = auth.hash_password(a)
+        else:
+            raise ValueError('passwords do not match')
+
+        sql = ('INSERT INTO user_passwords (user_id, argon2_string) '
+               'VALUES ((SELECT groups.id FROM groups '
+               'JOIN users ON groups.id = users.id WHERE groups.groupname = :groupname), :argon2_string) '
+               'ON CONFLICT (user_id) DO UPDATE '
+               'SET argon2_string = EXCLUDED.argon2_string '
+               'WHERE user_passwords.user_id = EXCLUDED.user_id')
+        params = dict(groupname=group, argon2_string=argon2_string)
+
+        with app.app_context():
+            session.execute(sql_text(sql), params)
+            session.commit()
+
+        breakpoint()
 
 def main():
     from docopt import docopt, parse_defaults

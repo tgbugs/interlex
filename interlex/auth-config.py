@@ -54,4 +54,8 @@
      'mq-broker-backend': {
          'default': 'rpc://',
          'environment-variables': 'CELERY_BROKER_BACKEND BROKER_BACKEND',},
-     'mq-accept-content': ('pickle', 'json'),}}
+     'mq-accept-content': ('pickle', 'json'),
+
+     # fl
+     'fl-session-secret-key': None,
+ }}

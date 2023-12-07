@@ -24,6 +24,8 @@ else
     DATABASE=$2
 fi
 
+echo running dbsetup for ${DATABASE}
+
 # postgres setup (these need to fail loudly)
 psql -U postgres -h localhost -p $PORT -d postgres  -f "${SQL}/postgres.sql" -v database=$DATABASE &&
 psql -U postgres -h localhost -p $PORT -d $DATABASE -f "${SQL}/extensions.sql" &&
@@ -38,6 +40,7 @@ psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/permissions
 
 # tests
 export DBSETUPTEST=1
+# FIXME only run tests if we are on testing database probably to avoid pollution?
 export INTERLEX_TEST_DATABASE=${DATABASE}
 echo running python tests 
 cd ${ABS_PATH}/../

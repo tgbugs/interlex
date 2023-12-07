@@ -3,6 +3,7 @@ import re
 import json
 from functools import wraps
 import sqlalchemy as sa
+import flask_login as fl
 from flask import request, redirect, url_for, abort, Response
 from rdflib import URIRef  # FIXME grrrr
 from htmlfn import atag, btag, h2tag, htmldoc
@@ -10,6 +11,7 @@ from htmlfn import table_style, render_table, redlink_style
 from pyontutils.core import makeGraph
 from pyontutils.utils import TermColors as tc
 from pyontutils.namespaces import makePrefixes, definition
+from sqlalchemy.sql import text as sql_text
 from interlex import tasks
 from interlex import config
 from interlex import exceptions as exc
@@ -18,7 +20,7 @@ from interlex.core import diffCuries, makeParamsValues, default_prefixes
 from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
 from interlex.utils import log as _log
-from interlex.config import ilx_pattern
+from interlex.config import ilx_pattern  # FIXME pull from database probably
 from interlex.render import TripleRender  # FIXME need to move the location of this
 
 log = _log.getChild('endpoints')
@@ -28,19 +30,28 @@ tripleRender = TripleRender()
 
 def getBasicDB(self, group, request):
     #log.debug(f'{group}\n{request.method}\n{request.url}\n{request.headers}')
+
     try:
+        # FIXME pretty sure this isn't quite right
         auth_group, auth_user, scope, auth_token = self.auth.authenticate_request(request)
     except self.auth.ExpiredTokenError:
-        abort(401, {'message': ('Your token has expired, please get a '
-                                f'new one at {self.link_to_new_token}')})
+        abort(401, {'message': (
+            'Your token has expired, please get a '
+            f'new one at {self.link_to_new_token}')})
     except self.auth.AuthError:
         abort(400, {'message': 'Your token could not be verified.'})  # FIXME pull the message up?
 
+    logged_in_user = fl.current_user  # actually we can access this wherever we need now
+    if logged_in_user is not None:
+        li_user = logged_in_user.groupname
+    else:
+        li_user = None
+
     if request.method in ('HEAD', 'GET'):
+        # FIXME there are some pages we need to reject at this point?
         db = self.getBasicInfoReadOnly(group, auth_user)
 
     else:
-
         if auth_token:
             if auth_group != group:
                 return f'This token is not valid for group {group}', 401
@@ -139,6 +150,9 @@ class Endpoints:
         self.BasicDB = BasicDBFactory(self.session)
         self.UnsafeBasicDB = UnsafeBasicDBFactory(self.session)
 
+    def session_execute(self, sql, params=None):
+        return self.session.execute(sql_text(sql), params=params)
+
     @property
     def reference_host(self):
         return self.queries.reference_host
@@ -199,6 +213,8 @@ class Endpoints:
         mapping = {
             ilx_pattern:self.ilx,
             ilx_get:self.ilx_get,
+            'ops':self.ops,
+            'priv':self.priv,
             'lexical':self.lexical,
             'readable':self.readable,
             'uris':self.uris,
@@ -257,7 +273,7 @@ class Endpoints:
         if group != 'base' and group != 'latest':
             sql = 'SELECT id FROM interlex_ids WHERE id = :id'
             try:
-                res = next(self.session.execute(sql, dict(id=id)))
+                res = next(self.session_execute(sql, dict(id=id)))
                 id = res.id
                 #log.debug((id, db.group_id))
             except StopIteration:
@@ -267,6 +283,133 @@ class Endpoints:
             _, _, func = tripleRender.check(request)
         except exc.UnsupportedType as e:
             abort(e.code, {'message': e.message})
+
+    def ops(self, group, operation):
+        # FIXME this needs to be able to detect whether a user is already
+        # logged in as the same or another user
+        from interlex import auth as iauth
+
+        if operation == 'signup':
+            # TODO email
+            # password
+            # TODO only orcid
+            if request.method != 'POST':
+                return abort(404)
+
+            password = 'lol'
+            argon2_string = iauth.hash_password(password)
+            # TODO multiple operations see cli.Ops.password
+            #sql = 'INSERT INTO user_passwords (user_id, argon2_string) VALUES ((SELECT id FROM groups WHERE groupname :groupname JOIN users ON groups.id = users.id), :argon2_string)'
+            params = dict(groupname=group, argon2_string=argon2_string)
+            breakpoint()
+            return abort(404)
+
+        if operation == 'login':
+            # XXX NOTE this is pretty much only for development
+            # because in production login is going to go directly
+            # to orcid and /<group>/ops/login should pretty much never be used
+            if request.method == 'GET':
+                # only accept post with password on this endpoint
+                # to prevent user name discovery, though obviously
+                # there are other legitimate way to discover this
+                # information in bulk
+                return abort(404)
+
+            elif request.method == 'POST':
+                # if the the group is not a user then 404 since can only log in to orcid mapped users
+                # FIXME must check roles
+                sql = 'SELECT * FROM groups WHERE groupname = :groupname'  # FIXME case insensitive match here or no? I think no, insense only when someone tries to create a case variant and we block them
+                # FIXME TODO must also check users here to ensure actually allowed to log in
+                rows = list(self.session_execute(sql, dict(groupname=group)))
+                basic_group_password_or_password = request.headers.get('Authorization', '')
+                if not basic_group_password_or_password or not rows:  # order matters to try to minimize timing attack risk
+                    return abort(404)
+
+                group_row = rows[0]
+
+                abasic, *_group_password_or_password = basic_group_password_or_password.split(None, 1)
+                if abasic.lower() != 'basic' or not _group_password_or_password:  # FIXME do we force case sense or not here ...
+                    return abort(404)  # FIXME maybe malformed from client
+                else:
+                    group_password_or_password = _group_password_or_password[0]
+
+                sql = 'SELECT argon2_string FROM user_passwords WHERE user_id = :user_id'
+                params = {'user_id': group_row.id}
+                rows = list(self.session_execute(sql, params))
+                if not rows:
+                    return abort(404)  # not a user
+
+                user_password = rows[0]
+                argon2_string = user_password.argon2_string
+                if ':' in group_password_or_password:
+                    pass_group, password = group_password_or_password.split(':', 1)
+                    # try password
+                    if pass_group != group:  # passwords with colons yo
+                        # XXX watch out for timing attacks
+                        password_matches = iauth.validate_password(argon2_string, group_passworld_or_password)
+                        # try the whole thing
+                        # fail if no match
+                    else:
+                        password_matches = iauth.validate_password(argon2_string, password)
+                else:
+                    password = group_password_or_password
+                    password_matches = iauth.validate_password(argon2_string, password)
+
+                if password_matches:
+                    # return the relevant session information so that the browser can store it and retain the session
+                    # or however that works?
+                    # TODO flask login or something
+                    # XXX if they came here directly just go ahead and give them the api token probably?? not quite sure
+                    # I'm sure this will change with the orcid stuff
+                    class tuser:
+                        is_active = True  # TODO translate from the permission model
+                        def get_id(self, __id=group_row.id):
+                            return __id
+
+                    fl.login_user(tuser())
+                    return 'login successful, check your cookies (use requests.Session)'
+                else:
+                    return abort(401)  # FIXME hrm what would the return code be here ...
+                
+        elif operation == 'logout':
+            if request.method == 'GET':
+                # check if logged in?
+                # then log out
+                fl.logout_user()
+                return 'logged out'
+            else:
+                return abort(404)
+
+        else:
+            # unsupported operation
+            abort(404)
+
+        breakpoint()
+
+    @basic
+    def priv(self, group, page, db=None):
+        # separate privilidged pages from ops which technically don't require privs
+
+        # TODO check user first
+
+        if page == 'settings':
+            # TODO can handle logged in user x group membership and role in a similar way
+            return (
+                'ilx:group/priv/settings a ilxtr:interlex-settings ;\n'
+                'skos:comment "completely fake ttlish representation of settings" ;\n'
+                f'settings:groupname "{group}" ;\n'
+                'settings:email "email" ;\n'
+                'settings:orcid "orcid-id-thing-yeah" ;\n'
+                'settings:notification-prefs "email" ;\n'
+                'settings:api-token "maybe we just put this here sure why not" ;\n'
+                'settings:own-role "maybe we just put this here sure why not" ;\n'
+                '.')
+
+        elif page == 'api-token':
+            return 'TODO-lol-token'
+
+        breakpoint()
+
 
     def _ilx(self, group, frag_pref, id, func):
         PREFIXES, graph = self.getGroupCuries(group)
@@ -432,7 +575,7 @@ class Endpoints:
             base = 'INSERT INTO curies (group_id, curie_prefix, iri_prefix) VALUES '
             sql = base + values_template
             try:
-                resp = self.session.execute(sql, params)
+                resp = self.session_execute(sql, params)
                 self.session.commit()
                 return message, 201
             except sa.exc.IntegrityError as e:
@@ -491,7 +634,7 @@ class Endpoints:
                             'AND (e.group_id = :group_id OR e.group_id = 0)')  # base vs curated
                     args = dict(iri=iri, group_id=db.group_id)
                     try:
-                        resp = next(self.session.execute(sql, args))
+                        resp = next(self.session_execute(sql, args))
                         id = resp.ilx_id
                     except AttributeError as e:
                         breakpoint()
@@ -631,6 +774,7 @@ class Endpoints:
 
     @basic
     def ontologies_ilx(self, group, frag_pref_id, extension, db=None):
+        # FIXME termset
         return self.ilx(group=group, frag_pref_id=frag_pref_id, db=db)
 
     @basic

@@ -1,5 +1,34 @@
 from datetime import datetime, timedelta
+import argon2
+import flask_login as fl
 from interlex.utils import log
+
+ph = argon2.PasswordHasher(
+    # want this to run a bit slower than default
+    # so keep parallelism down following owasp argon2 recs
+    # t 3 m 128 p 1 gives on the order of 170ms on an i7-4770K
+    time_cost=3,
+    memory_cost=128 * 1024,
+    parallelism=1,
+)
+
+
+def hash_password(password):
+    try:
+        log.debug('beg')
+        return ph.hash(password)
+    finally:
+        log.debug('end')
+
+
+def validate_password(argon2_string, password):
+    try:
+        log.debug('beg')
+        return ph.verify(argon2_string, password)
+    except argon2.exceptions.VerifyMismatchError as e:
+        return False
+    finally:
+        log.debug('end')
 
 
 class Auth:

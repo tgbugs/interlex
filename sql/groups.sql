@@ -280,6 +280,14 @@ CREATE TABLE user_notification_preferences(
        CONSTRAINT fk__user_email_preferences__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
 );
 
+CREATE TABLE user_passwords(
+       user_id integer PRIMARY KEY NOT NULL, -- only users not orgs may have passwords
+       argon2_string text NOT NULL,
+       --salt bytea NOT NULL,
+       --salted_passworld bytea NOT NULL,
+       CONSTRAINT fk__user_passwords__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
+);
+
 /*
 create table user_preferences(
        -- not clear we need this, the data for customization lives a number of different places that

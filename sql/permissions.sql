@@ -7,3 +7,4 @@ GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA interlex TO "interlex-user";  -- ta
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA interlex TO "interlex-user";
 
 GRANT UPDATE (expected_bound_name) ON interlex.reference_names TO "interlex-user";
+GRANT UPDATE (argon2_string) ON interlex.user_passwords TO "interlex-user";
