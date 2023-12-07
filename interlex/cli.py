@@ -224,7 +224,7 @@ class Server(clif.Dispatcher):
 class Post(clif.Dispatcher):
 
     def _post(self):
-        if self.options.group == self.options.defaults['--group']:
+        if self.options.group == self.options._defaults['--group']:
             # NOTE: there is a security consideration here
             # if someone obtains a random api key then they
             # can use it to retrieve the user who it belongs to
@@ -333,13 +333,13 @@ class Post(clif.Dispatcher):
         printD(resp.text)
 
     def class_(self):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def triple(self):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def entity(self):
-        raise NotImplementedError
+        raise NotImplementedError()
 
 
 def main():

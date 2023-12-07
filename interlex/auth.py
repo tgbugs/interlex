@@ -14,7 +14,7 @@ class Auth:
             # FIXME use extra
             breakpoint()
             ll = getattr(Auth.log, self.log_level)
-            ll(f'{self.__class__.__name__} - {extra_info} - {request.remote_address} - {request.url} - \n{request.headers}')
+            ll(f'{self.__class__.__name__} - {extra_info} - {request.remote_addr} - {request.url} - \n{request.headers}')
             super().__init__(*args, **kwargs)
 
     class MangledTokenError(AuthError):
@@ -41,7 +41,7 @@ class Auth:
     class InternalRequest:
         headers = 'Internal-Request: True'
         url = 'check-the-logs'
-        remote_address = "THEY'RE IN THE DATABASE!!!"
+        remote_addr = "THEY'RE IN THE DATABASE!!!"
 
     def __init__(self, session):
         session  # we do not keep this around, it is only used at init
@@ -66,8 +66,9 @@ class Auth:
         # do not implement this yourself, is this coming from orcid?
         # all tokens should be encrypted with the 'public' key?
         # and then the private used to verify or something like that
-        fake_expand = token + ' ' + token + ' 1535947302 check-group ' + 'LOL-PLEASE-GET-ME-FROM-THE-DATABASE'  # XXX XXX XXX XXX FIXME TODO
+        fake_expand = token + ' ' + token + ' 1701912161 check-group ' + 'LOL-PLEASE-GET-ME-FROM-THE-DATABASE'  # XXX XXX XXX XXX FIXME TODO
         return fake_expand
+
 
     def decodeToken(self, request, token):
         assert isinstance(token, str)
@@ -82,7 +83,7 @@ class Auth:
         try:
             issued_utc_epoch = int(issued_utc_epoch_str)
         except ValueError:
-            raise self.EpochError(request, issued_utc_epoch_str, 'Token decoded but the epoch isnt an integer {issued_utc_epoch_str}')
+            raise self.EpochError(request, issued_utc_epoch_str, f'Token decoded but the epoch isnt an integer {issued_utc_epoch_str}')
 
         if scope not in self.scopes:
             raise self.ScopeError(request, scope, 'Token decoded but the scope isnt known {scope}')
@@ -119,7 +120,7 @@ class Auth:
             if now > expiration:  # TODO TESTING
                 # FIXME I don't think this is actually the right place to be returning these values
                 # I think we need another layer inbetween
-                expired = f'expired {now - expriation} ago'
+                expired = f'expired {now - expiration} ago'
                 raise self.ExpiredTokenError(request, expired)  # observe that we cant even accidentally log plain_text here
             else:
                 auth_user = maybe_auth_user
