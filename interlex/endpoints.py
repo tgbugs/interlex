@@ -42,7 +42,7 @@ def getBasicDB(self, group, request):
         abort(400, {'message': 'Your token could not be verified.'})  # FIXME pull the message up?
 
     logged_in_user = fl.current_user  # actually we can access this wherever we need now
-    if logged_in_user is not None:
+    if logged_in_user is not None and not logged_in_user.is_anonymous:
         li_user = logged_in_user.groupname
     else:
         li_user = None
