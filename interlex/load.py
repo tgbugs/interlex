@@ -219,7 +219,7 @@ class GraphIdentities:
     @property
     def bound_name(self):
         if self._bound_name is None:
-            subjects = self.graph[:rdf.type:owl.Ontology]
+            subjects = self.graph[:rdf.type:owl.Ontology]  # FIXME use OntResIri
             # FIXME this should be erroring on no bound names?
             self._bound_name = str(next(subjects))
             try:
@@ -958,8 +958,10 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
     scheme = 'http'  # sadface
     _cache_names = set() # FIXME make sure that reference hosts don't get crossed up
     _cache_identities = set()
-    formats = {
+    formats = {  # FIXME this is backward from OntRes stuff
         'text/turtle':'turtle',
+        'application/rdf+xml': 'xml',
+        #'text/owl-functional': '???',
         'ttl':'turtle',
         'owl':'xml',
         'n3':'n3',
@@ -1289,7 +1291,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             self.times['graph_begin'] = time.time()
             self._graph = OntGraph() #rdflib.Graph()
             try:
-                if self.format == 'xml':
+                if False and self.format == 'xml':  # XXX not clear this offers a speed up these days?
                     data = rapper(self.serialization)
                     self._graph.parse(data=data, format='nt')  # FIXME this destroys any file level prefixes
                 else:
@@ -1451,6 +1453,8 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         log.debug(f'load identifies for {si}')
         self.session_execute(sql_ident, params_i)
 
+        # TODO INSERT INTO name_to_identity
+
         sql_ident_rel_base = 'INSERT INTO identity_relations (p, s, o) VALUES '
         values_ident_rel = ((self.serialization_identity, part_ident)
                             for _, *part_idents in types_idents[1:]
@@ -1470,7 +1474,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         sql_le = ('INSERT INTO load_events (serialization_identity, group_id, user_id) '
                   'VALUES (:si, idFromGroupname(:g), idFromGroupname(:u))')
         log.debug(f'load load_events for {si}')
-        self.session_execute(sql_le, params_le)
+        self.session_execute(sql_le, params_le)  # FIXME why is the table always empty ?!?!??!
 
         # TODO get the qualifier id so that it can be 
 
@@ -1758,19 +1762,21 @@ class FileFromIRIFactory(FileFromBaseFactory):
             if self.content_length_mb > self.maxsize_mbgz:
                 if not is_admin:
                     raise exc.LoadError(self.lfmessage, 413)  # TODO error handling
-            resp = requests.get(self.name)
-        else:
-            resp = None
 
         if self.content_length_mb > self.maxsize_mb:
             if not is_admin:
                 raise exc.LoadError(self.lfmessage, 413)
 
-        if resp is None:
-            resp = requests.get(self.name)
+        ori = OntResIri(self.name)  # TODO probably want this at the class level for a variety of reasons
+        #meta = ori.metadata()
+        #meta.graph.debug()  # ah magic
+        # XXX this mimics the old way, but there are better ways to achieve similar use cases
+        # now without holding stupid amounts of raw data in memory
+        self._serialization = b''.join(ori.data)
+        self._mimetype = ori.format
 
-        self._serialization = resp.content
         self.times['fetch_end'] = time.time()
+        #breakpoint()
         return self._serialization
 
         # TODO check declared ontology_iri vs actually ontology_iri
