@@ -199,6 +199,20 @@ quid should probably be sh256 of spo
 2. subgraph
 3. qualifier
 4. prov
+** serialization spec graphs
+I think I wrote another variant of this somewhere.
+#+begin_src ttl
+# serialization spec is a metadata entry that modifies the interpretation of the rest of the file
+ilxtr:my-ontology-spec a ilxtr:serialization-spec ;
+    ilxtr:specifies-serialization-for ilxtr:some-ontology ;
+    # serialize-as gives the default serialization ranking preference or something
+    ilxtr:serialize-as (UBERON: ilx:) ;  # have to use list to preserve ordering XXX ugh reserialization issues
+    ilxtr:resource-source ilxtr:prefer-upstream .
+
+ilxtr:ncbitaxon-root ilxtr:subClassOf-serialize-as NCBITaxon: .
+# handle specific classes
+ilxtr:some-class ilxtr:serialize-as ilxtr: .
+#+end_src
 * Bugs
 ** Implicit context based on api user
 On reflection having the context of the api shift based on what api
