@@ -22,6 +22,7 @@ Usage:
     interlex term   [options] <match-label-or-synonym> ...
     interlex search [options] <match-full-text> ...
     interlex ops password  [options]
+    interlex ops resource  [options] <rdf-iri>
 
 Commands:
     server api      start a server running the api endpoint (WARNING: OLD)
@@ -40,6 +41,9 @@ Commands:
     post class
     post entity
     post triple
+
+    ops resource
+    ops password
 
     id              get the interlex record for a curie or iri
     label           get all interlex records where the rdfs:label matches a string
@@ -374,6 +378,34 @@ class Post(clif.Dispatcher):
 
 
 class Ops(clif.Dispatcher):
+
+    _post = Post._post
+
+    def resource(self):
+        # direct call to load a resource for simpler debug
+        if self.options.user is None:
+            raise ValueError('need user')
+
+        from interlex.uri import run_uri
+        app = run_uri()
+        db = app.extensions['sqlalchemy']
+
+        scheme, host, group, headers = self._post()
+        ontology_iri = self.options.rdf_iri
+
+        u = urlparse(ontology_iri)
+        j = {'name':ontology_iri}
+        #url = f'{scheme}://{host}/{group}/ontologies/' + u.path[1:]
+
+        filename = None
+        with app.test_request_context(
+                f'/{group}/ontologies/' + u.path[1:],
+                method='POST',
+                json=j,
+                headers=headers,):
+            f = app.view_functions['Ontologies.ontologies /<group>/ontologies/<filename>.<extension>']
+            resp = f(group=group, filename=u.path[:1], nocel=True)
+
     def password(self):
         if self.options.user is None:
             raise ValueError('need user')

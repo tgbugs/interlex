@@ -837,7 +837,8 @@ class Ontologies(Endpoints):
         return 'TODO list of ontology contributions', 501
 
     @basic
-    def ontologies(self, group, filename, extension=None, ont_path='', db=None):
+    def ontologies(self, group, filename, extension=None, ont_path='', db=None, nocel=False):
+        """ the main ontologies endpoint """
         # on POST for new file check to make sure that that the ontology iri matches the post endpoint
         # response needs to include warnings about any parts of the file that could not be lifted to interlex
         # TODO for ?iri=external-iri validate that uri_host(external-iri) and /ontologies/... ... match
@@ -947,7 +948,7 @@ class Ontologies(Endpoints):
                             # then wait for our max time and return the jobid/tracker or the result
                             #return task.get()  # timeout=10 or something
                             will_batch = loader.check(name)
-                            if will_batch:
+                            if will_batch and not nocel:
                                 if False:
                                     # and of course with this version api gets caught,
                                     # probably session is the issue
