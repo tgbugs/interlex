@@ -9,7 +9,7 @@ import hashlib
 import requests
 import sqlalchemy as sa
 from sqlalchemy.sql import text as sql_text
-from pyontutils.core import OntId, OntResIri, OntResGit
+from pyontutils.core import OntGraph, OntId, OntResIri, OntResGit
 from pyontutils.utils_fast import TermColors as tc, chunk_list
 from pyontutils.identity_bnode import IdentityBNode
 from pyontutils.namespaces import definition
@@ -67,6 +67,18 @@ def rapper(serialization, input='rdfxml', output='ntriples'):
                          stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE,
                          stderr=subprocess.DEVNULL)
+
+    if input == 'rdfxml':
+        # the bug introducing cycles is in rapper NOT rdflib, it is caused by an
+        # off by 1 error between rapper and whatever is creating the genids for
+        # cl, uberon etc. the end result is that rapper takes the explicit genid
+        # blanknodes as is assuming they are correctly aligned -- sometimes they
+        # are not, the fix is to change the genid prefix to one that won't
+        # collide with the rapper internal genid bnode prefix
+
+        serialization = serialization.replace(
+            b'rdf:nodeID="genid', b'rdf:nodeID="nocolgenid')
+
     out, err = p.communicate(input=serialization)
     return out
 
@@ -406,22 +418,28 @@ class GraphIdentities:
 
         datas = ('metadata', self.metadata_raw), ('data', self.data_raw)
         for name, data in datas:
+            log.debug(f'running {name} identity')
             idents = IdentityBNode(data, debug=True)
 
-            free_subgraph_identities = {identity:normgraph(s, idents.subgraph_mappings[s])
-                                        for s, identity in idents.unnamed_subgraph_identities.items()}
+            log.debug(f'running {name} free subgraph identities')
+            free_subgraph_identities = {
+                identity:normgraph(s, idents.subgraph_mappings[s])
+                for s, identity in idents.unnamed_subgraph_identities.items()}
 
+            log.debug(f'running {name} blank identities')
             self._blank_identities = idents.blank_identities
             inverse = {v:k for k, v in idents.blank_identities.items()}
 
             if name == 'data':
                 self._free_subgraph_identities = free_subgraph_identities
 
+            log.debug(f'running {name} connected object identities')
             for identity, o in idents.connected_object_identities.items():
                 idents.subgraph_mappings[o]
 
-            connected_subgraph_identities = {identity:normgraph(o, idents.subgraph_mappings[o])
-                                          for identity, o in idents.connected_object_identities.items()}
+            connected_subgraph_identities = {
+                identity:normgraph(o, idents.subgraph_mappings[o])
+                for identity, o in idents.connected_object_identities.items()}
 
             setattr(self, '_' + name + '_connected_subgraph_identities',
                     connected_subgraph_identities)
@@ -1228,7 +1246,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
     def graph(self):
         if self._graph is None:
             self.times['graph_begin'] = time.time()
-            self._graph = rdflib.Graph()
+            self._graph = OntGraph() #rdflib.Graph()
             try:
                 if self.format == 'xml':
                     data = rapper(self.serialization)
@@ -1240,6 +1258,17 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                 raise e
             finally:
                 self.times['graph_end'] = time.time()
+
+            # cycle check until we get the issue sorted in ibnode
+            cps = self._graph.cycle_check()
+            if cps:
+                wat = OntGraph().populate_from_triples([t for t in self._graph if t[0] in cps])
+                wat.debug()
+                msg = 'computing identities of graphs with bnode cycles in them is currently not working'
+                # one way to fix it is to do something like what lisps do with the read cycles
+                # and compute everything as if the bnode value was 0 for the first cyclical ref
+                # 1 for the next, etc.
+                raise NotImplementedError(msg)
 
         return self._graph
 
@@ -1343,6 +1372,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         # can run afterward and verify roundtrip identity
         #ni = self.ident_exists(self.bound_name_identity)  # FIXME usually a waste
 
+        log.debug(f'load start for {si}')
         self.times['load_begin'] = time.time()
         sgids = tuple(self.Loader.subgraph_identities)
         idents = (self.Loader.curies_identity,
@@ -1377,6 +1407,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         params_i['rn'] = self.reference_name
         sql_ident = sql_ident_base + vt + ' ON CONFLICT DO NOTHING'  # TODO FIXME XXX THIS IS BAD
         #breakpoint()  # TODO
+        log.debug(f'load identifies for {si}')
         self.session_execute(sql_ident, params_i)
 
         sql_ident_rel_base = 'INSERT INTO identity_relations (p, s, o) VALUES '
@@ -1387,6 +1418,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         vt, params_ir = makeParamsValues(values_ident_rel, constants=(':p',))
         params_ir['p'] = 'hasPart'
         sql_rel_ident = sql_ident_rel_base + vt
+        log.debug(f'load identity_relations for {si}')
         self.session_execute(sql_rel_ident, params_ir)
 
         # 'INSERT INTO qualifiers (identity, group_id)'
@@ -1396,6 +1428,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         params_le = dict(si=si, g=self.group, u=self.user)
         sql_le = ('INSERT INTO load_events (serialization_identity, group_id, user_id) '
                   'VALUES (:si, idFromGroupname(:g), idFromGroupname(:u))')
+        log.debug(f'load load_events for {si}')
         self.session_execute(sql_le, params_le)
 
         # TODO get the qualifier id so that it can be 
