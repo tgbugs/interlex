@@ -276,7 +276,7 @@ class GraphIdentities:
         if not hasattr(self, '_blank_identities'):
             self.process_graph()
 
-        for s, p, o in self.data_raw:
+        for s, p, o in self.data_raw:  # FIXME shouldn't this be if isinstance(s, rdflib.BNode) ????
             if not isinstance(s, rdflib.BNode) and isinstance(o, rdflib.BNode):
                 # TODO this does not cover free trips
                 yield s, p, self._blank_identities[o]
@@ -400,6 +400,14 @@ class GraphIdentities:
             return p, o, s
 
         def normgraph(head_subject, subgraph):
+            """ replace the bnodes with local integers inside the graph """
+            # make sure we are working only on the subjectGraph
+            # since we technically aren't supposed to use IdentityBNode.subgraph_mappings
+            # since it is polluted
+            _osg = subgraph
+            g = OntGraph().populate_from_triples(subgraph)
+            subgraph = list(g.subjectGraph(head_subject))
+
             cmax = 0
             existing = {head_subject:0}  # FIXME the head of a list is arbitrary :/
             normalized = []
@@ -410,6 +418,11 @@ class GraphIdentities:
                         #printD(tc.red('Yep working'), trip, o)
                         continue  # this has already been entered as part of data_unnamed
                     else:
+                        # this branch happens e.g. if the subgraph is malformed
+                        # and e.g. contains other bits of graph that e.g. have
+                        # head_subject in the object position because they are
+                        # from the raw subgraph_mappings that are used for debug
+                        # this particular example is avoided above via subjectGraph
                         raise TypeError('This should never happen!')
 
                 *ntrip, cmax = normalize(cmax, trip, existing)
@@ -426,17 +439,21 @@ class GraphIdentities:
                 identity:normgraph(s, idents.subgraph_mappings[s])
                 for s, identity in idents.unnamed_subgraph_identities.items()}
 
-            log.debug(f'running {name} blank identities')
-            self._blank_identities = idents.blank_identities
-            inverse = {v:k for k, v in idents.blank_identities.items()}
+            log.debug(f'running {name} blank/bnode identities')
+            # XXX using bnode_identities instead of idents._blank_identities
+            # I think it is working but we need to do some roundtrip checks
+            self._blank_identities = idents.bnode_identities
+            inverse = {v:k for k, v in idents.bnode_identities.items()}
 
             if name == 'data':
                 self._free_subgraph_identities = free_subgraph_identities
 
-            log.debug(f'running {name} connected object identities')
-            for identity, o in idents.connected_object_identities.items():
-                idents.subgraph_mappings[o]
+            # FIXME isn't this doing ... nothing ??? other than trying to produce a key error ???
+            #log.debug(f'running {name} connected object identities (though not sure why?)')
+            #for identity, o in idents.connected_object_identities.items():
+                #idents.subgraph_mappings[o]
 
+            log.debug(f'running {name} connected subgraph identities')
             connected_subgraph_identities = {
                 identity:normgraph(o, idents.subgraph_mappings[o])
                 for identity, o in idents.connected_object_identities.items()}
@@ -455,8 +472,18 @@ class GraphLoader(GraphIdentities):
     @staticmethod
     def make_row(s, p, o, subgraph_identity=None):
 
+        fix = None
+
         def str_None(thing):
             return str(thing) if thing is not None else thing
+
+        def ols(o_lit, record, i):
+            # TODO check performance on this
+            o_lit_strip = o_lit.strip()
+            if o_lit_strip != o_lit:
+                l = list(record)
+                l[i] = o_lit_strip
+                return tuple(l)
 
         # assume p is uriref, issues should be caught before here
         p = str(p)
@@ -474,11 +501,13 @@ class GraphLoader(GraphIdentities):
 
         elif isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.Literal):
             columns = 's, p, o_lit, datatype, language'
+            o_lit = str(o)
             record = (str(s),
                       p,
-                      str(o),
+                      o_lit,
                       str_None(o.datatype),
                       str_None(o.language))
+            fix = ols(o_lit, record, 2)
 
         elif isinstance(s, rdflib.URIRef) and isinstance(o, int) and subgraph_identity is not None:
             columns = 's, p, o_blank, subgraph_identity'
@@ -503,19 +532,21 @@ class GraphLoader(GraphIdentities):
 
         elif isinstance(s, int) and isinstance(o, rdflib.Literal) and subgraph_identity is not None:
             columns = 's_blank, p, o_lit, datatype, language, subgraph_identity'
+            o_lit = str(o)
             record = (s,
                       p,
-                      str(o),
+                      o_lit,
                       str_None(o.datatype),
                       str_None(o.language),
                       subgraph_identity)
+            fix = ols(o_lit, record, 2)
 
         else:
             raise ValueError(f'{s} {p} {o} {subgraph_identity} has an unknown or invalid type signature')
 
         #lc, lr = len(columns.split(', ')), len(record)
         #assert lc == lr, f'lengths {lc} != {lr} do not match {columns!r} {record}'
-        return columns, record
+        return columns, record, fix
 
     def make_load_records(self, serialization_identity, curies_done, metadata_done, data_done, ident_exists):
         # if you need to test pass in lambda i:False for ident_exists
@@ -524,10 +555,11 @@ class GraphLoader(GraphIdentities):
         if not curies_done:
             c = []
             to_insert = {'serialization_identity, curie_prefix, iri_prefix':c}
+            to_fix = {}
             for curie_prefix, iri_prefix in sorted(self.curies):  # FIXME ordering issue
                 c.append((serialization_identity, curie_prefix, iri_prefix))
 
-            yield 'INSERT INTO curies', '', to_insert
+            yield 'INSERT INTO curies', '', to_insert, to_fix
 
         def sortkey(triple):  # FIXME this a bad way to sort...
             return tuple(e if isinstance(e, str) else str(e) for e in triple)
@@ -537,19 +569,25 @@ class GraphLoader(GraphIdentities):
         bn = self.bound_name
         if not metadata_done:
             to_insert = defaultdict(list)  # should all be unique
+            to_fix = defaultdict(list)
             for p, o in sorted(self.metadata, key=sortkey):  # FIXME resolve bnode ordering issue?
-                columns, record = self.make_row(bn, p,  o)
+                columns, record, fix = self.make_row(bn, p,  o)
                 to_insert[columns].append(record)
+                if fix is not None:
+                    to_fix[columns].append((record, fix))
 
-            yield prefix, suffix, to_insert
+            yield prefix, suffix, to_insert, to_fix
 
         if not data_done:
             to_insert = defaultdict(list)  # should all be unique
+            to_fix = defaultdict(list)
             for s, p, o in sorted(self.data, key=sortkey):  # FIXME resolve bnode ordering issue? or was it already?
-                columns, record = self.make_row(s, p, o)
+                columns, record, fix = self.make_row(s, p, o)
                 to_insert[columns].append(record)
+                if fix is not None:
+                    to_fix[columns].append((record, fix))
 
-            yield prefix, suffix, to_insert
+            yield prefix, suffix, to_insert, to_fix
 
         def int_str(e, pref=' ' * 5):
             return pref + f'{e:0>5}' if isinstance(e, int) else e
@@ -571,6 +609,7 @@ class GraphLoader(GraphIdentities):
 
         # connected and free
         to_insert = defaultdict(list)  # should all be unique due to having already been identified
+        to_fix = defaultdict(list)
         for identity, subgraph in self.subgraph_identities.items():
             if self.debug:
                 printD(identity)
@@ -581,8 +620,10 @@ class GraphLoader(GraphIdentities):
 
             if not ident_exists(identity):  # we run a batch check before
                 for t in sorted(subgraph, key=intfirst):
-                    columns, record = self.make_row(*t, subgraph_identity=identity)
+                    columns, record, fix = self.make_row(*t, subgraph_identity=identity)
                     to_insert[columns].append(record)
+                    if fix is not None:
+                        to_fix[columns].append((record, fix))
                     # FIXME insertion order will be broken because of this
                     # however the order can be reconstructed on the way out...
                     # the trick however is to know which identities we need to
@@ -591,7 +632,7 @@ class GraphLoader(GraphIdentities):
         prefix = 'INSERT INTO triples'
         suffix = 'ON CONFLICT DO NOTHING'  # FIXME BAD
         if to_insert:
-            yield prefix, suffix, {k:v for k, v in to_insert.items()}
+            yield prefix, suffix, {k:v for k, v in to_insert.items()}, dict(to_fix)
 
 
 class LoadProv:
@@ -1442,9 +1483,13 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         separates = []
         value_sets = []
         statements = []
-        for prefix, suffix, to_insert in self.Loader.make_load_records(self.serialization_identity,
-                                                                       curies_done, metadata_done,
-                                                                       data_done, self.ident_exists):
+        fixes = []
+        for prefix, suffix, to_insert, to_fix in self.Loader.make_load_records(
+                self.serialization_identity,
+                curies_done, metadata_done,
+                data_done, self.ident_exists):
+            if to_fix:
+                fixes.append(to_fix)
             for columns, values in sorted(to_insert.items(), key=sortkey):
                 if len(values) > batchsize:
                     separate = True
@@ -1497,6 +1542,12 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
         self.times['load_end'] = time.time()
         # TODO create qualifiers
+
+        # TODO immediately insert fixes as a new qualifier noting that they are
+        # automated changes so that they are part of the same transaction
+
+        #if fixes:
+            #breakpoint()
         #return 'aaaaaaaaaaaaaaaaTODO\n'  # FIXME returning this makes downstream think we are in error
         return ''
 

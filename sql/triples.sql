@@ -540,7 +540,11 @@ CREATE TABLE triples(
        datatype uri,
        language varchar(10), -- FIXME can we put these in the datatype column as just strings?
        subgraph_identity bytea,
-       CHECK (o_lit ~* '(^\S+|\S+$)'),  -- no leading or trailing whitespace TODO also for other columns
+       -- FIXME SIGH as much as I want to enforce leading/trailing there are some edge cases
+       -- such as when importing, or when referring to the contents of a whitespace string
+       -- I think what we will have to do is add a set of immediate fixes on ingest that we always run
+       -- that work on specific fields and immediately fix things after load as an immediate change set
+       -- CHECK (o_lit ~* '(^\S+|\S+$)'),  -- no leading or trailing whitespace TODO also for other columns
        CHECK (uri_host(s) <> reference_host() OR
               uri_host(s) = reference_host() AND
               (uri_path_array(s))[2] !~* 'ilx_' OR -- FIXME or cde_, fde_, etc
