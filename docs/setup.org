@@ -74,6 +74,9 @@ Additional tables might be considered for dumping, but at the moment these are s
 
 Assuming you have set up port forwarding over ssh to production on port 33060.
 You will be asked to paste the production db password when this is run.
+
+Watch out for mismatched mariadb versions. =dev-db/mariadb-10.6.14= seems to be ok,
+=10.11.5= not so much. Worst case use =docker run --network=host --rm -i mariadb:10.6 mysqldump=.
 #+begin_src bash
 mysqldump \
 --user=nif_eelg_secure \
