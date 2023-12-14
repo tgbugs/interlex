@@ -98,6 +98,14 @@ term_synonyms \
 term_versions > "interlex-dump-$(date -Is).sql"
 #+end_src
 
+On your target database run the following
+#+begin_src sql :eval never
+CREATE DATABASE nif_eelg;
+CREATE USER nif_eelg_secure;
+SET PASSWORD FOR nif_eelg_secure = PASSWORD('lolpassword');
+GRANT ALL PRIVILEGES ON nif_eelg.* TO nif_eelg_secure;
+#+end_src
+
 Assuming you have set up port forwarding over ssh to your development mysql instance on port 33067.
 You will be asked to paste the root password you set when configuring mariadb when this is run.
 Adjust the input path to match your system.
