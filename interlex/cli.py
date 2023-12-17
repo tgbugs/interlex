@@ -23,6 +23,7 @@ Usage:
     interlex search [options] <match-full-text> ...
     interlex ops password  [options]
     interlex ops resource  [options] <rdf-iri>
+    interlex ops ontology  [options] <ontology-filename> ...
 
 Commands:
     server api      start a server running the api endpoint (WARNING: OLD)
@@ -43,6 +44,7 @@ Commands:
     post triple
 
     ops resource
+    ops ontology
     ops password
 
     id              get the interlex record for a curie or iri
@@ -388,7 +390,6 @@ class Ops(clif.Dispatcher):
 
         from interlex.uri import run_uri
         app = run_uri()
-        db = app.extensions['sqlalchemy']
 
         scheme, host, group, headers = self._post()
         ontology_iri = self.options.rdf_iri
@@ -405,6 +406,63 @@ class Ops(clif.Dispatcher):
                 headers=headers,):
             f = app.view_functions['Ontologies.ontologies /<group>/ontologies/<filename>.<extension>']
             resp = f(group=group, filename=u.path[:1], nocel=True)
+
+    def ontology(self):
+        if self.options.user is None:
+            raise ValueError('need user')
+
+        from pyontutils.core import OntResPath
+        from interlex.load import BasicDBFactory, FileFromFileFactory
+        from interlex.dump import Queries
+
+        def make_reference_name(reference_host, group, path):
+            # FIXME UGH complection from Endpoints.build_reference_name
+            # not compositional enough in the thinking when I was originally working on this stuff
+            # that thinking came later likely inspired by the issues here
+            return os.path.join(f'https://{reference_host}', group, path)
+
+        def load_path(filesystem_path, group, auth_user, session):
+            #auth = Auth(session)
+            bdb = BasicDBFactory(session)
+            fff = FileFromFileFactory(session)
+            q = Queries(session)
+
+            #token = auth.decrypt(auth_user)  # lol
+            token = auth_user
+            db = bdb(group, auth_user, token)
+
+            reference_name = make_reference_name(q.reference_host, group, path)
+            loader = fff(group, db.user, reference_name)
+            loader.check(filesystem_path)  # this configures the loader to actually load the path I think? ugh this was a dark period in my python style
+            expected_bound_name = None
+            breakpoint()
+            setup_ok = loader(expected_bound_name)  # XXX parsing happens here which is why we switched to split metadata for ontres
+            out = loader.load()
+            return out
+
+        from interlex.uri import run_uri
+        app = run_uri()
+        db = app.extensions['sqlalchemy']
+
+        strpaths = self.options.ontology_filename
+        paths = [Path(p).resolve() for p in strpaths]
+        group = auth_user = self.options.user  # ingest requests are always pinned to a user
+        # TODO need to figure out how to ensure that triples from unpublished ontologies
+        # don't accidentally leak out, we probably need separate endpoints to distinguish
+        # requests for ingest into the general pool vs in draft workspaces
+        results = []
+        with app.app_context():
+            with db.session() as session, session.begin():
+                for path in paths:
+                    res = load_path(
+                        path,
+                        group,
+                        auth_user,
+                        session,
+                    )
+                    results.append(res)
+
+        return
 
     def password(self):
         if self.options.user is None:
