@@ -43,6 +43,7 @@ setup(name='interlex',
       python_requires='>=3.7',
       tests_require=tests_require,
       install_requires=[
+          'argon2-cffi',
           'celery',
           'flask',
           'flask-login',
