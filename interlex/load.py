@@ -840,7 +840,8 @@ class BasicDBFactory:
         auth_group, auth_user = self.auth.decodeTokenSimple(token)
         if group != auth_group or user != auth_user:
             g = f'{group} {auth_group} {user} {auth_user}'
-            raise ValueError('FIXME this needs to be a logged auth consistency error {g}')
+            msg = f'FIXME this needs to be a logged auth consistency error {g}'
+            raise ValueError(msg)
         self.group = group
         self.user = user
         #self.user_role = 'lol'  # TODO this works but testing
@@ -1293,6 +1294,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             try:
                 if False and self.format == 'xml':  # XXX not clear this offers a speed up these days?
                     data = rapper(self.serialization)
+                    self._graph.namespace_manager.populate_from(metadata_graph)  # TODO
                     self._graph.parse(data=data, format='nt')  # FIXME this destroys any file level prefixes
                 else:
                     self._graph.parse(data=self.serialization, format=self.format)

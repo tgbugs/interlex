@@ -140,6 +140,11 @@ run =interlex uri= in the venv.
 run =interlex-uri= in the venv.
 *WARNING:* if you run in this way you will not be able to use =embed= to debug and you will
 get strange errors.
+** Start the message broker
+for example
+#+begin_src bash
+INTERLEX_DATABASE=__interlex_sync BROKER_URL=amqp://interlex-user:ilu123@localhost:5672/interlex EPYTHON=pypy3 celery --app interlex.tasks worker
+#+end_src
 ** Load ontologies
 If you are running interlex via =interlex-uri= replace the =-o= from these commands with =-c=.
 1. In the venv run =interlex post resource http://purl.obolibrary.org/obo/bfo.owl -o -u $YOURUSERNAME=
@@ -148,6 +153,22 @@ If you are running interlex via =interlex-uri= replace the =-o= from these comma
 ** Load curies
 1. In the venv run =interlex post curies -o base= and then =interlex post curies -o $YOURUSERNAME=
 * Performance notes
+** load
+#+begin_src bash
+INTERLEX_DATABASE=__interlex_sync; bin/interlex-dbsetup 5432 ${INTERLEX_DATABASE}
+INTERLEX_DATABASE=__interlex_sync pypy3 -m interlex.cli sync
+#+end_src
+wow yeah 20k ends up being way faster 26 seconds vs 60 seconds
+apparently there is a nasty performance bug in the sql parser
+when there are lots of parameters ...
+wow that 26 seconds was the usert, but turns out ... plain old insert also runs faster
+will have to try with psql 16 due to claimed changes in bulk load performance darn, that
+is in =COPY= not insert
+
+in conclusion 20k batch running faster than 80k batch with much less memory usage
+and yes, those things are probably related since allocating memory is almost always
+a bottleneck
+** read
 On =orpheus= the primary bottleneck seems to be the number of gunicorn workers.
 For total failures to respond in within 5 seconds when confronted 8 workers
 set at 50hz full blast. What is very strange is that the same set of failures
