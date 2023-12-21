@@ -17,7 +17,7 @@ with open('README.md', 'rt') as f:
     long_description = f.read()
 
 tests_require = ['pytest',]
-setup(name='InterLex',
+setup(name='interlex',
       version=__version__,
       description='A terminology management system.',
       long_description=long_description,
@@ -64,5 +64,7 @@ setup(name='InterLex',
               'interlex=interlex.cli:main',
           ],
       },
-      data_files=[('share/interlex/sql', [f.as_posix() for f in Path('sql').iterdir()])]  # FIXME package_data
+      data_files=[('share/interlex/sql', [f.as_posix() for f in Path('sql').iterdir()]),
+                  ('share/interlex/resources', ['reserved-usernames-len-gt-4.txt']),
+                  ]  # FIXME package_data
      )
