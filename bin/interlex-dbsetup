@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # interlex-dbsetup [PORT] [DATABASE]
-
+set -e
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do # resolve all symlinks
   DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"

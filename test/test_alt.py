@@ -2,6 +2,7 @@ import pytest
 import unittest
 import requests
 from interlex.render import TripleRender
+from interlex.alt import run_alt
 
 tr = TripleRender()
 
@@ -11,22 +12,42 @@ class TestRoutes(unittest.TestCase):
     port = '80'
     scheme = 'http'
     hostname = 'uri.interlex.org'
+    with_server = False
 
-    @pytest.mark.skipif(port != '80', reason='no nginx redirects')
+    @classmethod
+    def setUpClass(cls):
+        cls.app = run_alt()
+        cls.client = cls.app.test_client()
+        cls.runner = cls.app.test_cli_runner()
+
+    def setUp(self):
+        if self.with_server:
+            self.get = staticmethod(requests.get)
+        else:
+            self.get = self._get
+
+    def _get(self, url, headers={}):
+        resp = self.client.get(url, headers=headers)
+        resp.ok = resp.status_code < 400
+        resp.url = resp.request.url
+        resp.content = resp.data
+        return resp
+
+    @pytest.mark.skipif(not with_server or port != '80', reason='no nginx redirects')
     def test_no_user(self):
         urls = [
             f'{self.scheme}://{self.host}:{self.port}/ilx_0101431.ttl',
         ]
         bads = []
         for url in urls:
-            out = requests.get(url, headers={'host': self.hostname})
+            out = self.get(url, headers={'host': self.hostname})
             msg = out.url + '\n' + out.content.decode()
             if not out.ok:
                 bads.append(msg)
 
         assert not bads, '\n'.join(bads)
 
-    @pytest.mark.skipif(port != '80', reason='no nginx redirects')
+    @pytest.mark.skipif(not with_server or port != '80', reason='no nginx redirects')
     def test_no_user_content_type(self):
         urls = [
             f'{self.scheme}://{self.host}:{self.port}/ilx_0101431',
@@ -34,7 +55,7 @@ class TestRoutes(unittest.TestCase):
         ct = 'text/turtle'
         bads = []
         for url in urls:
-            out = requests.get(url, headers={'host': self.hostname, 'Accept':ct})
+            out = self.get(url, headers={'host': self.hostname, 'Accept':ct})
             msg = out.url + '\n' + out.content.decode()
             if not out.ok:
                 bads.append(msg)
@@ -61,7 +82,7 @@ class TestRoutes(unittest.TestCase):
                     expect = ct
 
                 try:
-                    out = requests.get(url, headers={'host': self.hostname, 'Accept': ct})
+                    out = self.get(url, headers={'host': self.hostname, 'Accept': ct})
                 except requests.exceptions.SSLError as e:
                     doskip = 'There was an SSL failure.'
                     continue
@@ -87,7 +108,7 @@ class TestRoutes(unittest.TestCase):
         for base_url in urls:
             for ex in tr.extensions:
                 url = base_url + '.' + ex
-                out = requests.get(url, headers={'host': self.hostname})
+                out = self.get(url, headers={'host': self.hostname})
                 #if ex == 'jsonld':
                     #print(out.json())
                 assert out.ok, out.url + '\n' + out.content.decode()
@@ -113,7 +134,7 @@ class TestRoutes(unittest.TestCase):
             for frag in frags:
                 url = f'{self.scheme}://{self.host}:{self.port}/base/{frag}'
                 ct = 'text/turtle'
-                out = requests.get(url, headers={'host': self.hostname, 'Accept':ct})
+                out = self.get(url, headers={'host': self.hostname, 'Accept':ct})
                 msg = out.url + '\n' + out.content.decode()
                 oct = out.headers['Content-Type']
                 if not out.ok:

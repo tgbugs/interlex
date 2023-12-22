@@ -1,7 +1,7 @@
 import unittest
 import requests
 from pyontutils.ontutils import url_blaster
-from interlex.uri import uriStructure
+from interlex.uri import uriStructure, run_uri
 from interlex.core import make_paths
 from interlex.config import ilx_pattern
 from interlex.config import test_host, test_port
@@ -60,14 +60,66 @@ class RouteTester:
     host = test_host
     port = test_port
     scheme = 'http'
+    with_server = False
 
     @property
     def prefix(self):
         port = f':{self.port}' if self.port else ''
         return f'{self.scheme}://{self.host}{port}'
 
+    @classmethod
+    def setUpClass(cls):
+        cls.app = run_uri()
+        cls.client = cls.app.test_client()
+        cls.runner = cls.app.test_cli_runner()
+
+    def setUp(self):
+        if self.with_server:
+            self.url_blaster = staticmethod(url_blaster)
+            self.get = staticmethod(requests.get)
+        else:
+            self.url_blaster = self._url_blaster
+            self.get = self._get
+
+    def _url_blaster(
+            self, urls, rate, timeout=5, verbose=False, debug=False,
+            method='head', fail=False, negative=False, ok_test=lambda r: r.ok):
+        meth = getattr(self.client, method)
+        fails = []
+        all_ = [self._fix_resp(meth(url)) for url in urls]
+        not_ok = [_.url for _ in all_ if not ok_test(_)]
+        print('Failed:')
+        if not_ok:
+            for nok in not_ok:
+                print(nok)
+            ln = len(not_ok)
+            lt = len(urls)
+            lo = lt - ln
+            msg = f'{ln} urls out of {lt} ({ln / lt * 100:2.2f}%) are not ok. D:'
+            print(msg)  # always print to get around joblib issues
+            if negative and fail:
+                if len(not_ok) == len(all_):
+                    raise AssertionError('Everything failed!')
+            elif fail:
+                raise AssertionError(f'{msg}\n' + '\n'.join(sorted(not_ok)))
+
+        else:
+            print(f'OK. All {len(urls)} urls passed! :D')
+
+    def _fix_resp(self, resp):
+        resp.ok = resp.status_code < 400
+        resp.url = resp.request.url
+        resp.content = resp.data
+        return resp
+
+    def _get(self, url, headers={}):
+        resp = self.client.get(url, headers=headers)
+        self._fix_resp(resp)
+        return resp
+
 
 class TestRoutes(RouteTester, unittest.TestCase):
+
     def test_routes(self):
         routes = makeTestRoutes()  # up limite here for more tests, 2 is about max reasonable
         # TODO a way to mark expected failures
@@ -82,11 +134,12 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         def ok_test(r):
             if r.status_code == 501:
-                log.info(f'TODO: {r.request.path_url}')
+                path = r.request.path_url if self.with_server else r.request.path
+                log.info(f'TODO: {path}')
 
             return r.ok or r.status_code == 501
 
-        url_blaster(urls, 0, fail=True, ok_test=ok_test)
+        self.url_blaster(urls, 0, fail=True, ok_test=ok_test)
 
     def test_negative(self):
         urls = [
@@ -96,7 +149,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
         [print(u) for u in urls]
         try:
             try:
-                url_blaster(urls, 0, fail=True, negative=True)
+                self.url_blaster(urls, 0, fail=True, negative=True)
                 raise ValueError('All urls should have failed.')
             except AssertionError:
                 pass
@@ -105,28 +158,28 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
     def test_lexical_no_external_redirect(self):
         url = f'{self.prefix}/base/lexical/liver'
-        resp = requests.get(url)
+        resp = self.get(url)
         assert self.host in resp.url
 
 
 class TestApiDocs(RouteTester, unittest.TestCase):
     def test_docs(self):
         urls = [f'{self.prefix}/docs']  # NOTE /docs/ should fail?
-        url_blaster(urls, 0, fail=True)
+        self.url_blaster(urls, 0, fail=True)
 
     def test_swagger_json(self):
         urls = [f'{self.prefix}/docs/swagger.json']
-        url_blaster(urls, 0, fail=True)
+        self.url_blaster(urls, 0, fail=True)
 
     def test_swaggerui_content(self):
         urls = [f'{self.prefix}/docs/swaggerui/favicon-16x16.png']
-        url_blaster(urls, 0, fail=True)
+        self.url_blaster(urls, 0, fail=True)
 
     def test_swagger_not_at_root(self):
         urls = [f'{self.prefix}/swagger.json', f'{self.prefix}/swaggerui/favicon-16x16.png']
         try:
             try:
-                url_blaster(urls, 0, fail=True, negative=True)
+                self.url_blaster(urls, 0, fail=True, negative=True)
                 raise ValueError('All urls should have failed.')
             except AssertionError:
                 pass

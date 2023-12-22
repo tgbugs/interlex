@@ -408,8 +408,8 @@ class Endpoints:
         elif page == 'api-token':
             return 'TODO-lol-token'
 
-        breakpoint()
-
+        else:
+            return abort(404)
 
     def _ilx(self, group, frag_pref, id, func):
         PREFIXES, graph = self.getGroupCuries(group)

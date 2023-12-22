@@ -73,7 +73,7 @@ class TripleRender:
 
     def check(self, request):
         best = request.accept_mimetypes.best
-        mimetype = (best if
+        mimetype = (best if best and  # sometimes best can be None
                     best != '*/*' and
                     'application/signed-exchange' not in best
                     else 'text/html')
