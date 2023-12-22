@@ -16,7 +16,8 @@ __version__ = find_version('interlex/__init__.py')
 with open('README.md', 'rt') as f:
     long_description = f.read()
 
-tests_require = ['pytest',]
+alt_require = ['mysql-connector', 'pymysql']
+tests_require = ['pytest',] + alt_require
 setup(name='interlex',
       version=__version__,
       description='A terminology management system.',
@@ -34,6 +35,7 @@ setup(name='interlex',
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
         'Programming Language :: Python :: Implementation :: CPython',
         'Programming Language :: Python :: Implementation :: PyPy',
         'Operating System :: POSIX :: Linux',
@@ -53,9 +55,9 @@ setup(name='interlex',
           'rdflib>=6.0.2',
           "psycopg2; implementation_name != 'pypy'",
           "psycopg2cffi; implementation_name == 'pypy'",
-          'pyontutils>=0.1.30',
+          'pyontutils>=0.1.35',
       ],
-      extras_require={'dev': ['mysql-connector'],
+      extras_require={'dev': alt_require,
                       'elasticsearch': ['elasticsearch'],
                       'test': tests_require,
                      },
