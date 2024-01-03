@@ -68,6 +68,11 @@ setup(name='interlex',
           ],
       },
       data_files=[('share/interlex/sql', [f.as_posix() for f in Path('sql').iterdir()]),
-                  ('share/interlex/resources', ['reserved-usernames-len-gt-4.txt']),
+                  ('share/interlex/resources', [
+                      f'resources/{f}' for f in
+                      ('reserved-usernames-len-gt-4.txt',
+                       'interlex.rc',
+                       'interlex.confd',
+                       )]),
                   ]  # FIXME package_data
      )
