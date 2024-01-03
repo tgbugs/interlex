@@ -12,6 +12,12 @@ ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
 SQL="${ABS_PATH}/../sql/"
 RESOURCES="${ABS_PATH}/../resources/"
 
+if [ ! -d "${SQL}" ]; then
+  # installed outside of git
+  SQL="${ABS_PATH}/../share/interlex/sql/"
+  RESOURCES="${ABS_PATH}/../share/interlex/resources/"
+fi
+
 if [ -z $1 ]; then
     PORT=5432
 else
