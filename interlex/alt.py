@@ -22,7 +22,8 @@ def dbUri(user='nif_eelg_secure', host='nif-mysql.crbs.ucsd.edu', port=3306, dat
     return DB_URI.format(**db_cfg_kwargs)
 
 
-def server_alt(db=None, dburi=dbUri()):
+def server_alt(db=None, dburi=None):
+    dburi = dburi if dburi else dbUri()
     app = Flask('InterLex alt server')
     app.config['SQLALCHEMY_DATABASE_URI'] = dburi
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
