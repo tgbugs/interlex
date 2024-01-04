@@ -25,10 +25,18 @@
          'environment-variables': 'INTERLEX_TEST_DATABASE',},
 
      # alt
-     'alt-db-user': 'nif_eelg_secure',
-     'alt-db-host': 'nif-mysql.crbs.ucsd.edu',
-     'alt-db-port': 3306,
-     'alt-db-database': 'nif_eelg',
+     'alt-db-user': {
+         'default': 'nif_eelg_secure',
+         'environment-variables': 'INTERLEX_ALT_DB_USER'},
+     'alt-db-host': {
+         'default': 'nif-mysql.crbs.ucsd.edu',
+         'environment-variables': 'INTERLEX_ALT_DB_HOST'},
+     'alt-db-port': {
+         'default': 3306,
+         'environment-variables': 'INTERLEX_ALT_DB_PORT'},
+     'alt-db-database': {
+         'default': 'nif_eelg',
+         'environment-variables': 'INTERLEX_ALT_DB_DATABASE'},
 
      # db
      'db-user': {
