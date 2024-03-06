@@ -168,7 +168,11 @@ class MysqlExport:
         sql = 'SELECT * FROM terms WHERE ilx = :ilx'
 
         rp = self.session_execute(sql, args)
-        term = next(rp)
+        try:
+            term = next(rp)
+        except StopIteration as e:
+            return
+
         try:
             next(rp)
             raise exc.ShouldNotHappenError(f'too many results for {ilx_fragment}')
@@ -345,6 +349,9 @@ class MysqlExport:
 
     def _call_fragment(self, ilx_fragment, ontology=False):
         term = self.term(ilx_fragment)  # FIXME handle value error or no?
+        if term is None:
+            return tuple()
+
         if ontology and term.type == 'TermSet':  # XXX design flaw to have to branch here but oh well
             return self._termset_triples((term,))
 
