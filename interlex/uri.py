@@ -21,9 +21,9 @@ class DocsApi(Api):
     def _register_apidoc(self, app: Flask) -> None:
         conf = app.extensions.setdefault('restx', {})
         custom_apidoc = apidoc.Apidoc('restx_doc', 'flask_restx.apidoc',
-                                        template_folder='templates',
-                                        static_folder=(Path(apidoc.__file__).parent / 'static').as_posix(),
-                                        static_url_path='/docs/swaggerui')
+                                      template_folder='templates',
+                                      static_folder=(Path(apidoc.__file__).parent / 'static').as_posix(),
+                                      static_url_path='/docs/swaggerui')
 
         @custom_apidoc.add_app_template_global
         def swagger_static(filename: str) -> str:
@@ -45,6 +45,12 @@ class DocsApi(Api):
                 resource_class_args=(self, )
             )
             self.endpoints.add(endpoint)
+
+    def make_response(self, data, *args, **kwargs):
+        # this only affects /docs/swagger.json right now
+        resp = super().make_response(data, *args, **kwargs)
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp
 
 
 def uriStructure():
