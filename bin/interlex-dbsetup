@@ -33,16 +33,16 @@ fi
 echo running dbsetup for ${DATABASE}
 
 # postgres setup (these need to fail loudly)
-psql -U postgres -h localhost -p $PORT -d postgres  -f "${SQL}/postgres.sql" -v database=$DATABASE &&
-psql -U postgres -h localhost -p $PORT -d $DATABASE -f "${SQL}/extensions.sql" &&
+psql -U postgres -h localhost -p $PORT -d postgres  -f "${SQL}/postgres.sql" -v ON_ERROR_STOP=on -v database=$DATABASE
+psql -U postgres -h localhost -p $PORT -d $DATABASE -f "${SQL}/extensions.sql" -v ON_ERROR_STOP=on
 
 # interlex-admin setup
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/schemas.sql" &&
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/groups.sql" &&
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/triples.sql" &&
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/user-uris.sql" &&
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/inserts.sql" -v resources=${RESOURCES}  &&
-psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/permissions.sql" -v database=$DATABASE
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/schemas.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/groups.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/triples.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/user-uris.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/inserts.sql" -v ON_ERROR_STOP=on -v resources=${RESOURCES}
+psql -U interlex-admin -h localhost -p $PORT -d $DATABASE -f "${SQL}/permissions.sql" -v ON_ERROR_STOP=on -v database=$DATABASE
 
 # tests
 export DBSETUPTEST=1
