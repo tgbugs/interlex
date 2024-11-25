@@ -116,7 +116,7 @@ mysql \
 --host=127.0.0.1 \
 --port=33067 \
 --database=nif_eelg \
- < ~/files/interlex/interlex-dump-2023-*.sql
+ < ~/files/interlex/interlex-dump-2024-*.sql
 #+end_src
 
 ** Sync with mysql
@@ -151,7 +151,7 @@ If you are running interlex via =interlex-uri= replace the =-o= from these comma
 2. Repeat for as many ontologies as you want, for example =http://ontology.neuinfo.org/NIF/ttl/nif.ttl=
    NOTE: currently this does not pull in the transitive closure.
 ** Load curies
-1. In the venv run =interlex post curies -o base= and then =interlex post curies -o $YOURUSERNAME=
+1. In the venv run =interlex post curies --local --group base= and then =interlex post curies --local --group $YOURUSERNAME=
 * Performance notes
 ** load
 #+begin_src bash

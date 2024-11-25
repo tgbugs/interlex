@@ -413,7 +413,7 @@ class Endpoints:
 
     def _ilx(self, group, frag_pref, id, func):
         PREFIXES, graph = self.getGroupCuries(group)
-        resp = self.queries.getById(id, group)
+        resp = self.queries.getById(frag_pref, id, group)
         #log.debug(resp)
         # TODO formatting rules for subject and objects
         object_to_existing = self.queries.getResponseExisting(resp, type='o')
@@ -424,9 +424,10 @@ class Endpoints:
         # TODO list users with variants from base and/org curated
         # we need an 'uncurated not latest' or do we?
         if group == 'base':
-            title = f'ILX:{id}'
+            _pref = frag_pref.upper() # FIXME TODO frag_pref -> curie using getGroupCuries
+            title = f'{_pref}:{id}'
         else:
-            title = f'ilx.{group}:ilx_{id}'
+            title = f'ilx.{group}:{frag_pref}_{id}'
 
         if func == tripleRender.ttl_html:  # FIXME hackish?
             # FIXME getting additional content from the db based on file type

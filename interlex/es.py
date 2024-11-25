@@ -291,26 +291,26 @@ class DbToEs:
 
 def _main():
     user = 'tgbugs'
-    def byId(id, user):
-        resp = q.getById(id, user)
+    def byId(frag_pref, id, user):
+        resp = q.getById(frag_pref, id, user)
         g = makeGraph('temp', prefixes=PREFIXES)
         te = TripleExporter()
         _ = [g.g.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
         record = makeRecord(g.g, user)
         return record
 
-    def addById(id, user):
-        record = byId(id, user)
+    def addById(frag_pref, id, user):
+        record = byId(frag_pref, id, user)
         return esAdd(**record)
 
     #asdf = search('test')
     #print(asdf)
     #out = byId('0100100', user)
     #print(out)
-    #success = [addById(f'{i:0>7}', user)  # FIXME super slow, should batch...
+    #success = [addById('ilx', f'{i:0>7}', user)  # FIXME super slow, should batch...
     #for i in range(100100, 100500)]
     # single shot?
-    record = [byId(f'{i:0>7}', user)  # FIXME super slow to get the bnodes :/
+    record = [byId('ilx', f'{i:0>7}', user)  # FIXME super slow to get the bnodes :/
               for i in range(100100, 100101)]
 
     derp = search('UBERON:0000955')  # FIXME now this is broken, can't even hit the exact match >_<

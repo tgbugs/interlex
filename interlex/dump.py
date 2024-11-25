@@ -830,10 +830,10 @@ class Queries:
         resp = list(self.session_execute(sql, args))
         return resp
 
-    def getById(self, id, user):
+    def getById(self, frag_pref, id, user):
         """ return all triples associated with an interlex id (curie suffix) """
-        uri = f'http://uri.interlex.org/base/ilx_{id}'  # FIXME reference_host from db ...
-        args = dict(uri=uri, id=id, p=str(ilxtr.hasExistingId))
+        uri = f'http://uri.interlex.org/base/{frag_pref}_{id}'  # FIXME reference_host from db ...
+        args = dict(uri=uri, prefix=frag_pref, id=id, p=str(ilxtr.hasExistingId))
         #sql = ('SELECT e.iri, c.p, c.o, c.qualifier_id, c.transform_rule_id '
                 #'FROM existing_iris as e JOIN core as c ON c.s = e.iri OR c.s = :uri '
                 #'WHERE e.ilx_id = :id')
@@ -858,12 +858,14 @@ class Queries:
         # TODO user's view...
 
         # remember kids! don't use left join!
+
+        # FIXME TODO this needs to be rewritten to work with the history tables
         sql = '''
         WITH graph AS (
             SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity
             FROM triples as t JOIN existing_iris as e
             ON s = iri
-            WHERE ilx_id = :id
+            WHERE ilx_prefix = :prefix AND ilx_id = :id
             UNION
             SELECT s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity
             FROM triples
@@ -876,7 +878,7 @@ class Queries:
             WHERE sg.subgraph_identity = g.subgraph_identity AND sg.s is NULL
         )
         SELECT * FROM graph UNION SELECT * from subgraphs
-        UNION SELECT :uri, NULL, :p, iri, NULL, NULL, NULL, NULL, NULL FROM existing_iris WHERE ilx_id = :id;
+        UNION SELECT :uri, NULL, :p, iri, NULL, NULL, NULL, NULL, NULL FROM existing_iris WHERE ilx_prefix = :prefix AND ilx_id = :id;
         '''
         # FIXME serialization choices means that any and all ilx ids that are pulled out from here need
         # to have their existing ids pulled in as well, it is just easy to get the existing of the primary
@@ -887,7 +889,7 @@ class Queries:
         SELECT *
             FROM ({sql}) as sq
             LEFT JOIN existing_iris
-            ON ilx_id = ilxIdFromIri(sq.o)
+            ON ilx_prefix = ilxPrefixFromIri(sq.o) AND ilx_id = ilxIdFromIri(sq.o)
             WHERE uri_host(sq.o) = reference_host();  -- OR TRUE; -- works but super slow
         '''
 
@@ -910,7 +912,9 @@ class Queries:
         # TODO handle the unmapped case (currently literally all of them)
         gen = self.session_execute(sql, args)
         try:
-            ilx_id = next(gen).ilx_id
+            guri = next(gen)
+            ilx_prefix = guri.ilx_prefix
+            ilx_id = guri.ilx_id
         except StopIteration:
             return tuple()
         # since group_id and uri_path are the primary key
@@ -918,9 +922,9 @@ class Queries:
         # we also constrain group_id + ilx_id to be unique
 
         if redirect:
-            return ilx_id
+            return ilx_prefix, ilx_id
         else:
-            return self.getById(group, ilx_id)
+            return self.getById(group, ilx_prefix, ilx_id)
 
     def getResponseExisting(self, resp, type='o'):
         rh = self.reference_host

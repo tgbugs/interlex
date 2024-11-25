@@ -315,13 +315,16 @@ class Post(clif.Dispatcher):
                 if ext == 'json':
                     data = json.load(f)
                 elif ext == 'ttl':
-                    graph = rdflib.Graph().parse(f, format='ttl')
+                    from pyontutils.core import OntResPath
+                    orp = OntResPath(path)
+                    graph = orp.metadata().graph
+                    #graph = OntGraph().parse(f, format='ttl')
                     # TODO allow <url> a ilxr:Curies typed record
                     data = {k:str(v) for k, v in graph.namespaces()}
                 elif ext == 'yml' or ext == 'yaml':
                     data = yaml.load(f)
                 else:
-                    raise TypeError(f'Don\'t know how to handle {ext} files')
+                    raise TypeError(f"Don't know how to handle {ext} files")
 
             resp = requests.post(url, json=data, headers=headers)
         elif self.options.curie_prefix:

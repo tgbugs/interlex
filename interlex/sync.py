@@ -29,7 +29,7 @@ class InterLexLoad:
         # and does it with significantly less memory usage (< 1 gig)
         self.batchsize = batchsize
         TripleLoader = TripleLoaderFactory(db.session)
-        self.loader = TripleLoader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/interlex')
+        self.loader = TripleLoader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/ontologies/interlex')
 
         self.queries = Queries(self.loader.session)
         self.do_cdes = do_cdes
@@ -100,6 +100,7 @@ class InterLexLoad:
         self.loader.Loader._bound_name = name
         #self.loader.expected_bound_name = name
         self.loader._serialization = repr((name, self.triples)).encode()
+        self.loader.name = name  # avoid name = None error, has to be set manually right now since we use TripleLoader directly
         expected_bound_name = name
         setup_ok = self.loader(expected_bound_name)
 
