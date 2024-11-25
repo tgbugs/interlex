@@ -12,10 +12,13 @@ INSERT INTO fragment_prefix_sequences (prefix, suffix_max, current_pad) VALUES
 ALTER TABLE groups DISABLE TRIGGER groupname_length_check;
 -- base
 
-INSERT INTO groups (id, groupname, own_role) VALUES (0, 'base', 'builtin');  -- not an org, base for everything, root 0
+INSERT INTO groups (id, groupname, own_role) VALUES (0, 'empty', 'builtin');  -- we need the empty group to simplify handling the empty perspective
+--(, 'base', 'builtin');  -- not an org, base for everything, root 0
+
 
 INSERT INTO groups (groupname, own_role) VALUES
        -- builtins
+       ('base', 'builtin'),  -- not an org, base for everything, can't be root 0 because we have uris that resolve
        ('latest', 'builtin'),
        ('origin', 'builtin'),
        ('curated', 'builtin'),
@@ -23,6 +26,20 @@ INSERT INTO groups (groupname, own_role) VALUES
        -- ('types', 'builtin')
        -- ('history', 'builtin') -- TODO consdier the right way to pull this off
        ;
+
+-- perspectives
+
+INSERT INTO perspectives (id, group_id, name, default_group_perspective) VALUES
+-- the empty perspective, it is owned by the base group for
+-- convenience XXX given that base currently has real semantics we may
+-- want to have an empty group too
+(0, 0, 'empty', FALSE),
+(1, 1, 'base', FALSE); -- FIXME HACK this might not match as expected
+
+--INSERT INTO perspective_parent (perspective, parent, datetime) VALUES ();
+
+-- back to groups
+
 
 INSERT INTO groups (groupname) VALUES
        -- users
