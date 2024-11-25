@@ -1,0 +1,69 @@
+# -*- orgstrap-cypher: sha256; orgstrap-norm-func-name: orgstrap-norm-func--dprp-1-0; orgstrap-block-checksum: 41c0973b8709171406d6ddef97a4070279c65a47610715ef044eda4953a8c072; -*-
+# [[orgstrap][jump to the orgstrap block for this file]]
+
+#+name: orgstrap-shebang
+#+begin_src bash :eval never :results none :exports none
+set -e "-C" "-e" "-e"
+{ null=/dev/null;} > "${null:=/dev/null}"
+{ args=;file=;MyInvocation=;__p=$(mktemp -d);touch ${__p}/=;chmod +x ${__p}/=;__op=$PATH;PATH=${__p}:$PATH;} > "${null}"
+$file = $MyInvocation.MyCommand.Source
+{ file=$0;PATH=$__op;rm ${__p}/=;rmdir ${__p};} > "${null}"
+emacs -batch -no-site-file -eval "(let (vc-follow-symlinks) (defun orgstrap--confirm-eval (l _) (not (memq (intern l) '(elisp emacs-lisp)))) (let ((file (pop argv)) enable-local-variables) (find-file-literally file) (end-of-line) (when (eq (char-before) ?\^m) (let ((coding-system-for-read 'utf-8)) (revert-buffer nil t t)))) (let ((enable-local-eval t) (enable-local-variables :all) (major-mode 'org-mode) find-file-literally) (require 'org) (org-set-regexps-and-options) (hack-local-variables)))" "${file}" -- ${args} "${@}"
+exit
+<# powershell open
+#+end_src
+
+* sql
+:PROPERTIES:
+:header-args:sql+: :engine postgresql
+:header-args:sql+: :dbhost localhost
+:header-args:sql+: :dbuser interlex-user
+:header-args:sql+: :database interlex_test_2024_11
+:END:
+** scratch
+#+begin_src sql
+-- write queries here
+#+end_src
+
+** examples
+*** get_all_values_example
+#+begin_src sql
+select * from triples limit 10;
+#+end_src
+
+#+RESULTS:
+| id | triple_identity | s                 | s_blank | p                                                       | o                      | o_lit                                                      | o_blank | datatype                 | language | subgraph_identity |
+|----+-----------------+-------------------+---------+---------------------------------------------------------+------------------------+------------------------------------------------------------+---------+--------------------------+----------+-------------------|
+|  1 |                 | http://test.url/1 |         | http://test.url/annotationProperty                      |                        | your father was a hampster                                 |         |                          |          |                   |
+|  2 |                 | http://test.url/1 |         | http://test.url/annotationProperty                      | http://test.url/object |                                                            |         |                          |          |                   |
+|  3 |                 | http://test.url/1 |         | http://test.url/annotationProperty                      |                        | object                                                     |         | http://test.url/datatype |          |                   |
+|  4 |                 | http://test.url/1 |         | http://test.url/annotationProperty                      |                        | object                                                     |         |                          | ja       |                   |
+|  5 |                 | annotation        |       1 | https://this-is-an-annotation-on-a-triple-maybe.maybe/? |                        | YAY COMMENTS USING THE DISTINGUSHING POWER OF NOTHINGNESS! |         |                          |          |                   |
+
+** admin
+:PROPERTIES:
+:header-args:sql+: :dbuser interlex-admin
+:END:
+#+begin_src sql
+-- run admin queries here, e.g. defining functions
+#+end_src
+
+* Bootstrap :noexport:
+#+name: orgstrap
+#+begin_src elisp :results none :exports none :lexical yes
+(defun fix-ocbe-queries () ; FIXME LOL yeah name collisions DO happen and YES this is why I implemented `defvar-local'
+  (setq-local
+   org-confirm-babel-evaluate
+   (lambda (lang body)
+     ;;(message "%S" body)
+     (not
+      (or
+       (member lang '("sql")))))))
+(fix-ocbe-queries)
+#+end_src
+
+** Local Variables :ARCHIVE:
+# close powershell comment #>
+# Local Variables:
+# eval: (progn (setq-local orgstrap-min-org-version "8.2.10") (let ((a (org-version)) (n orgstrap-min-org-version)) (or (fboundp #'orgstrap--confirm-eval) (not n) (string< n a) (string= n a) (error "Your Org is too old! %s < %s" a n))) (defun orgstrap-norm-func--dprp-1-0 (body) (let ((p (read (concat "(progn\n" body "\n)"))) (m '(defun defun-local defmacro defvar defvar-local defconst defcustom)) print-quoted print-length print-level) (cl-labels ((f (b) (cl-loop for e in b when (listp e) do (or (and (memq (car e) m) (let ((n (nthcdr 4 e))) (and (stringp (nth 3 e)) (or (cl-subseq m 3) n) (f n) (or (setcdr (cddr e) n) t)))) (f e))) p)) (prin1-to-string (f p))))) (unless (boundp 'orgstrap-norm-func) (defvar-local orgstrap-norm-func orgstrap-norm-func-name)) (defun orgstrap-norm-embd (body) (funcall orgstrap-norm-func body)) (unless (fboundp #'orgstrap-norm) (defalias 'orgstrap-norm #'orgstrap-norm-embd)) (defun orgstrap--confirm-eval-minimal (lang body) (not (and (member lang '("elisp" "emacs-lisp")) (eq orgstrap-block-checksum (intern (secure-hash orgstrap-cypher (orgstrap-norm body))))))) (unless (fboundp #'orgstrap--confirm-eval) (defalias 'orgstrap--confirm-eval #'orgstrap--confirm-eval-minimal)) (let (enable-local-eval) (vc-find-file-hook)) (let ((ocbe org-confirm-babel-evaluate) (obs (org-babel-find-named-block "orgstrap"))) (if obs (unwind-protect (save-excursion (setq-local orgstrap-norm-func orgstrap-norm-func-name) (setq-local org-confirm-babel-evaluate #'orgstrap--confirm-eval) (goto-char obs) (org-babel-execute-src-block)) (when (eq org-confirm-babel-evaluate #'orgstrap--confirm-eval) (setq-local org-confirm-babel-evaluate ocbe)) (ignore-errors (org-set-visibility-according-to-property))) (warn "No orgstrap block."))))
+# End:
