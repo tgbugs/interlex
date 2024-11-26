@@ -143,7 +143,7 @@ get strange errors.
 ** Start the message broker
 for example
 #+begin_src bash
-INTERLEX_DATABASE=__interlex_sync BROKER_URL=amqp://interlex-user:ilu123@localhost:5672/interlex EPYTHON=pypy3 celery --app interlex.tasks worker
+INTERLEX_DATABASE=__interlex_sync BROKER_URL=$(python -c 'from interlex.config import auth; print(auth.get("mq-broker-url"))') EPYTHON=pypy3 celery --app interlex.tasks worker
 #+end_src
 ** Load ontologies
 If you are running interlex via =interlex-uri= replace the =-o= from these commands with =-c=.
