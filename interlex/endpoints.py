@@ -209,10 +209,13 @@ class Endpoints:
             return f'Unknown prefix {prefix}', 404
 
     def get_func(self, nodes):
-        ilx_get = ilx_pattern + '.<extension>'
+        #ilx_get = ilx_pattern + '.<extension>'  # FIXME TODO where did we need this again?
         mapping = {
-            ilx_pattern:self.ilx,
-            ilx_get:self.ilx_get,
+            'ilx':self.ilx,
+            'other':self.other,
+            '*versions':self.versions,
+            #ilx_get:self.ilx_get,
+            '*ilx_get':self.ilx_get,
             'ops':self.ops,
             'priv':self.priv,
             'lexical':self.lexical,
@@ -241,12 +244,20 @@ class Endpoints:
             'prov':self.prov,
 
             'mapped':self.mapped,
+
+            'new-entity': self.new_entity,
+            'modify-a-b': self.modify_a_b,
+            'modify-add-rem': self.modify_add_rem,
         }
         for node in nodes[::-1]:
             if node in mapping:
                 return mapping[node]
         else:
             raise KeyError(f'could not find any value for {nodes}')
+
+    def new_entity(self): return 'NOT IMPLEMENTED\n', 400
+    def modify_a_b(self): return 'NOT IMPLEMENTED\n', 400
+    def modify_add_rem(self): return 'NOT IMPLEMENTED\n', 400
 
     def mapped(self, group):
         # see the alt implementation of external/mapped for use case

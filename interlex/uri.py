@@ -6,7 +6,7 @@ from flask_restx.api import SwaggerView
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 from interlex import config
-from interlex.core import dbUri, mqUri, diffCuries
+from interlex.core import dbUri, mqUri, diffCuries, remove_terminals, TERMINAL
 from interlex.core import RegexConverter, make_paths, makeParamsValues
 from interlex.utils import printD, makeSimpleLogger
 from interlex.tasks import cel
@@ -62,31 +62,39 @@ def uriStructure():
         '*uris_version': 'version',
         '*<uris_filename>': '<filename>',
         '*<path:uris_ont_p>': '<path:ont_path>',
+        '*ilx_pattern': ilx_pattern,
+        '*ilx_get': ilx_get,
         '*ont_ilx_get': ilx_get,
         '*contributions_ont': 'contributions',
         '*external': 'external',  # FIXME TEMP
+        '*versions': 'versions',
         #'*<other_group_diff>': '<other_group>',  # FIXME consider whether this is a good idea ...
     }
 
     def path_to_route(node):
         return path_names[node] if node in path_names else node
 
-    basic = [ilx_pattern, 'readable']
+    basic = ['*ilx_pattern', 'readable']
     branches = ['uris', 'curies', 'ontologies', 'versions']  # 'prov'
     compare = ['own', 'diff']
     version_compare = []  # TODO? probably best to deal with the recursion in make_paths
     versioned_ids = basic + ['curies', 'uris']
     intermediate_filename = ['<filename>.<extension>', '<filename>']
     uris_intermediate_filename = ['<filename>.<extension>', '*<uris_filename>']
+    spec_ext = ['spec', 'spec.<extension>']
+    # reminder: None is used to mark branches that are also terminals
     parent_child = {
-        '<group>':             basic + [ilx_get, 'lexical'] + branches + compare + ['ops', 'priv', 'contributions', 'upload', 'prov', 'external'],
+        '<group>':             basic + ['*ilx_get', 'lexical'] + branches + compare + [
+            'ops', 'priv', 'contributions', 'upload', 'prov', 'external',
+            'new-entity', 'modify-a-b', 'modify-add-rem'],
         'ops':                 ['<operation>'],  # in the uri api top level ops are not meaningful  # FIXME likely merge ...
         'priv':                ['<page>'],  # XXX TODO see if we really need this also probably want /<group>/priv/settings/<sub>
 
+        '*ilx_pattern':        [None, 'other', '*versions'],  # FIXME this is now doing a stupid redirect to ilx_pattern/ >_<
         '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
         '<other_group_diff>':  basic + ['lexical'] + branches,
         'lexical':             ['<label>'],
-        'readable':            ['<word>'],
+        'readable':            ['<word>'],  # FIXME no path here? i mean i guess?
         'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
         '<epoch_verstr_id>':   versioned_ids + version_compare,
         #'ontologies':          [2, ilx_get, '*uris_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
@@ -100,9 +108,10 @@ def uriStructure():
         '*<uris_filename>':    [None, '*uris_version'],
         '*uris_version':       ['<epoch_verstr_ont>'],
 
-        '<filename>':          [None, 'version'],
+        '<filename>':          [None, 'version'] + spec_ext,
         'version':             ['<epoch_verstr_ont>'],
         '<epoch_verstr_ont>':  ['<filename_terminal>', '<filename_terminal>.<extension>'],
+        '<filename_terminal>': [None,] + spec_ext,
         'curies':              [None, '<prefix_iri_curie>'],  # external onts can be referenced from here...
         'uris':                ['<path:uri_path>'],  # TODO no ilx_ check here as well as in database
         'own':                 ['<other_group>'],
@@ -118,9 +127,15 @@ def uriStructure():
         'triples':             ['<triple>'],  # integer
     }
     node_methods = {'curies_':['GET', 'POST'],
+                    'ontologies_':['GET'],
                     'upload':['HEAD', 'POST'],
+                    'modify-add-rem':['PATCH'],  # accepts add remove ban requires both add and remove but can be empty for either only for bulk
+                    'modify-a-b':['PATCH'],  # takes a before and after so that the backend can generate the add and remove subset
+                    #'versions':['GET'],
+                    'spec':['GET', 'POST', 'PATCH'],  # post to create a new ontology with that name i think
                     #'<prefix_iri_curie>':[],  only prefixes can be updated...?
-                    ilx_pattern:['GET', 'PATCH'],
+                    'ilx':['GET', 'PATCH'],  # FIXME why is this compliaing?
+                    #'*ilx_pattern':['GET', 'PATCH'],
                     '<word>':['GET', 'PATCH'],
                     '<filename>':['GET', 'POST'],
                     '<filename>.<extension>':['GET', 'POST'],
@@ -134,14 +149,16 @@ def uriStructure():
 
 
 def add_leafbranches(nodes):
-    if nodes[-1] == '':
+    if nodes[-1] == TERMINAL:
         prefix = tuple(nodes[:-2])
         if 'curies' in nodes:
             nodes = prefix + ('curies_',)
-        if nodes == ['', '<group>', 'ontologies', '']:  # only at depth 2
+        elif nodes == ['', '<group>', 'ontologies', '']:  # only at depth 2
             nodes = prefix + ('ontologies_',)
-        if 'contributions' in nodes:
+        elif 'contributions' in nodes:
             nodes = prefix + ('contributions_',)
+        elif '*ilx_pattern' in nodes:
+            nodes = prefix + ('ilx',)
         else:
             log.debug(f'possibly unhandled leafbranch {nodes}')
 
@@ -187,12 +204,39 @@ def build_endpoints(db):
 
     return route_endpoint_mapper, endpoints
 
+_known_default = (
+    #'other',
+    #'*ilx_get'
+    '',  # unhandled terminal case
+    'other',
+    '*ilx_get',
+    '<label>',
+    '<path:uri_path>',
+    '<prefix_iri_curie>',  # FIXME maybe allow patch to change individual curie and post to create?
+    '*ont_ilx_get',
+    '<filename_terminal>',
+    '<filename_terminal>.<extension>',
+    '<word>',
 
+)
 def route_methods(nodes, node_methods):
-    if 'diff' not in nodes and 'version' not in nodes and 'versions' not in nodes and nodes[-1] in node_methods:
-        methods = node_methods[nodes[-1]]
+    default_methods = ['GET', 'HEAD']
+    def erms(extra=''):
+        if nodes[-1] not in _known_default:
+            msg = f'using default methods GET HEAD for {nodes[-1]}{extra}'
+            log.warning(msg)
+
+
+    if 'diff' not in nodes and 'version' not in nodes and 'versions' not in nodes:
+        if nodes[-1] in node_methods:
+            methods = node_methods[nodes[-1]]
+        else:
+            erms()
+            methods = default_methods
     else:
-        methods = ['GET', 'HEAD']
+        erms(' but was diff or version')
+        methods = default_methods
+
 
     return methods
 
@@ -308,7 +352,11 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
 
     parent_child, node_methods, path_to_route = structure() # uri path nodes
     paths = list(make_paths(parent_child))                  # paths
-    routes = ['/'.join(path_to_route(node) for node in path) for path in paths]
+    routes = ['/'.join(remove_terminals([path_to_route(node) for node in path])) for path in paths]
+
+    @app.route('/favicon.ico')
+    def route_fav():
+        return b'GO AWAY'
 
     @app.route('/api/job/<jobid>')
     def route_api_job(jobid):
@@ -343,7 +391,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
             name, path = k, ''
 
         if path:
-            log.debug(f'{name:<40}{path:<130}{v}')
+            log.debug(f'{name:<40}{path:<140}{v}')
         #printD(k, v)
 
     runonce()

@@ -106,15 +106,20 @@ class getName:
 
         return value
 
-    def __call__(self, value):
+    def __call__(self, value, type=None):
         value = self.valueCheck(value)
-        if value in self.value_to_name:
+        if type is not None and (value, type) in self.value_to_name:
+            return self.value_to_name[value, type]
+        elif type is None and value in self.value_to_name:
             return self.value_to_name[value]
         else:
             self.counter += 1
             name = 'v' + str(self.counter)
 
-            self.value_to_name[value] = name
+            if type is None:
+                self.value_to_name[value] = name
+            else:
+                self.value_to_name[value, type] = name
 
             return name
 
@@ -370,6 +375,20 @@ def server_api(db=None, dburi=dbUri()):
     return app
 
 
+class Terminal: pass
+TERMINAL = Terminal()
+
+
+def remove_terminals(route):
+    if TERMINAL in route:
+        route = route[:-1]
+        if TERMINAL in route:
+            msg = f'TERMINAL not at end of route !? {route}'
+            raise ValueError(msg)  # FIXME error type
+
+    return route
+
+
 def make_paths(parent_child, parent='<group>', options=tuple(), limit=9999, depth=0, path_names=tuple()):
     """ path_names is actually a dict, but hey mutable defaults """
 
@@ -409,12 +428,12 @@ def make_paths(parent_child, parent='<group>', options=tuple(), limit=9999, dept
                 path += option,
                 yield path
         elif parent is None:  # branches that are also terminals
-            yield '',
+            yield TERMINAL,
         elif parent == depth:
             # branchers that are also terminals at a given depth
             # where the depth should be considered as the zero indexed
             # depth of the empty string following the slash
-            yield '',
+            yield TERMINAL,
         elif isinstance(parent, int):
             pass  # skip other depths
         else:
