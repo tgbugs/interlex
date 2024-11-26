@@ -213,7 +213,7 @@ ilxtr:ncbitaxon-root ilxtr:subClassOf-serialize-as NCBITaxon: .
 # handle specific classes
 ilxtr:some-class ilxtr:serialize-as ilxtr: .
 #+end_src
-* Do we allow no =/base/= triples in the triples table?
+* Do we allow non =/base/= triples in the triples table?
 :PROPERTIES:
 :CREATED:  [2024-11-26 Tue 01:07]
 :END:
