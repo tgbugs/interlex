@@ -2,7 +2,7 @@ import unittest
 import requests
 from pyontutils.ontutils import url_blaster
 from interlex.uri import uriStructure, run_uri
-from interlex.core import make_paths
+from interlex.core import make_paths, remove_terminals
 from interlex.config import ilx_pattern
 from interlex.config import test_host, test_port
 from interlex.utils import log
@@ -52,7 +52,7 @@ def makeTestRoutes(limit=1):
     }
     # make cartesian product of combinations
     paths = make_paths(parent_child, options=options, limit=limit)
-    routes = ['/'.join(path_to_route(node) for node in path) for path in paths]
+    routes = ['/'.join(remove_terminals([path_to_route(node) for node in path])) for path in paths]
     return routes
 
 

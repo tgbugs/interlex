@@ -221,11 +221,11 @@ class GraphIdentities:
         if self._bound_name is None:
             subjects = self.graph[:rdf.type:owl.Ontology]  # FIXME use OntResIri
             # FIXME this should be erroring on no bound names?
-            self._bound_name = str(next(subjects))
+            self._bound_name = next(subjects)
             try:
                 extra = next(subjects)
                 raise exc.LoadError('More than one owl:Ontology in this file!\n'
-                                    '{self.ontology_iri}\n{extra}\n', 409)
+                                    f'{self.ontology_iri}\n{extra}\n', 409)
             except StopIteration:
                 pass
 
@@ -548,6 +548,24 @@ class GraphLoader(GraphIdentities):
         #assert lc == lr, f'lengths {lc} != {lr} do not match {columns!r} {record}'
         return columns, record, fix
 
+    def check_triple(self, s, p, o):  # XXX TODO
+        # see [[file:../docs/explaining.org::*Do we allow no =/base/= triples in the triples table?]]
+        return
+        # FIXME looks like we will need to pass reference_host in here somehow :/
+        # it is better to do this check while iterating over all the triples during
+        # load instead of trying to iterate through them multiple times (even though
+        # we already do that e.g. to compute identities)
+        reference_host = 'uri.interlex.org'
+        scheme = 'http'  # FIXME also need the scheme
+        uri_prefix = f'{scheme}://{reference_host}/base/'
+        def check_ent(e):
+            if reference_host in e and '/uris/' not in e and not e.startswith(uri_prefix):
+                msg = 'please only upload /base/ iris in ontologies'
+                raise ValueError(msg)
+
+        for e in (s, p, o):
+            check_ent(e)
+
     def make_load_records(self, serialization_identity, curies_done, metadata_done, data_done, ident_exists):
         # if you need to test pass in lambda i:False for ident_exists
         # TODO resursive on type?
@@ -571,6 +589,7 @@ class GraphLoader(GraphIdentities):
             to_insert = defaultdict(list)  # should all be unique
             to_fix = defaultdict(list)
             for p, o in sorted(self.metadata, key=sortkey):  # FIXME resolve bnode ordering issue?
+                self.check_triple(bn, p, o)
                 columns, record, fix = self.make_row(bn, p,  o)
                 to_insert[columns].append(record)
                 if fix is not None:
@@ -582,6 +601,7 @@ class GraphLoader(GraphIdentities):
             to_insert = defaultdict(list)  # should all be unique
             to_fix = defaultdict(list)
             for s, p, o in sorted(self.data, key=sortkey):  # FIXME resolve bnode ordering issue? or was it already?
+                self.check_triple(s, p, o)
                 columns, record, fix = self.make_row(s, p, o)
                 to_insert[columns].append(record)
                 if fix is not None:
@@ -1110,10 +1130,10 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         def all_nn(case):
             b, d, e = case
             if not b == d == e:
-                return 'Bound names do not match! {b} {d} {e}', 400
+                return f'Bound names do not match! {b!r} {d!r} {e!r}', 400
 
         def all_none(case):
-            if self.reference_name != 'https://{self.reference_host}/{self.group}/upload':
+            if self.reference_name != f'https://{self.reference_host}/{self.group}/upload':
                 return 'No bound name, please use your upload endpoint', 400
 
         def set_d(case):
@@ -1134,14 +1154,16 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         return bde_switch
 
     @exc.hasErrors(exc.LoadError)
-    def load(self):
+    def load(self, commit=True):
         output = ''
         try:
             output += self.load_event()
-            self.times['commit_begin'] = time.time()
-            self.session.commit()
-            self.times['commit_end'] = time.time()
-            self.cache_on_success()
+            if commit:
+                self.times['commit_begin'] = time.time()
+                self.session.commit()
+                self.times['commit_end'] = time.time()
+                self.cache_on_success()
+
             return output
         except BaseException as e:
             self.session.rollback()
@@ -1331,7 +1353,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             sql = 'SELECT name, expected_bound_name FROM reference_names WHERE name = :name'
             try:
                 res = next(self.session_execute(sql, dict(name=self._reference_name)))
-                self._expected_bound_name = res.expected_bound_name
+                self._expected_bound_name = rdflib.URIRef(res.expected_bound_name)
                 self.reference_name_in_db = True
             except StopIteration:
                 # set it by setting self.expected_bound_name = something (including None)
@@ -1835,8 +1857,8 @@ class FileFromPostFactory(FileFromIRIFactory):
                    f'WHERE {name_type} = :name')
             try:
                 res = next(self.session_execute(sql, dict(name=self.Loader.bound_name)))
-                self._reference_name = res.name
-                self._expected_bound_name = res.expected_bound_name
+                self._reference_name = rdflib.URIRef(res.name)
+                self._expected_bound_name = rdflib.URIRef(res.expected_bound_name)
                 self.reference_name_in_db = True
             except StopIteration:
                 if self.create:
@@ -1849,9 +1871,11 @@ class FileFromPostFactory(FileFromIRIFactory):
                         self.reference_name = self.Loader.bound_name
                         self.name = self.Loader.bound_name
                     elif name_type == 'expected_bound_name':
-                        name_suffix = urlparse(self.Loader.bound_name).path[1:]
+                        url = urlparse(self.Loader.bound_name)
+                        name_suffix = url.path[1:]
+                        #breakpoint()  # FIXME TODO we need the host in there too for this and TODO need to detect external ontid vs internal ontid
                         name = f'{self.scheme}://' + os.path.join(name_prefix, name_suffix)
-                        self.reference_name = name
+                        self.reference_name = rdflib.URIRef(name)
                         self.expected_bound_name = self.Loader.bound_name  # FIXME a hack to trigger INSERT ...
                     else:
                         raise BaseException('wat this should never happen')

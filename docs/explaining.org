@@ -213,6 +213,73 @@ ilxtr:ncbitaxon-root ilxtr:subClassOf-serialize-as NCBITaxon: .
 # handle specific classes
 ilxtr:some-class ilxtr:serialize-as ilxtr: .
 #+end_src
+* Do we allow no =/base/= triples in the triples table?
+:PROPERTIES:
+:CREATED:  [2024-11-26 Tue 01:07]
+:END:
+FIXME TODO it is not clear whether this is the correct way to protect
+users from interference i think the real correct way is with
+perspectives and frame boundaries so that anyone can insert triples
+that use another person's namespace but when someone tries to merge
+them in it won't work
+
+that said, even when we have the ability for users to fully control
+the contents of their perspective it is probably still desireable to
+catch a non-canonical usage though the question is whether other
+people can upload ontologies that contain e.g. ilxtr terms and
+predicates and the answer there is clearly yes, but the mapping gets a
+bit convoluted
+
+for now this function does nothing because perspectives are the right
+permissioning boudary to prevent other users from messing with a
+particular users terms ... ugh ...  so annoying to try to balance the
+behavior here
+
+the other area that we need to check is that the user is not uploading
+triples that reference interlex generated ids ... or that if they do
+they need to indicate that they will allow interlex to convert the ids
+internally so that they match the user's conventions, e.g. by changing
+the local conventions for the file
+
+the more general issue is whether we allow anything other that
+uri.interlex.org/base triples in the triples table specifically
+because all conversion to group or perspective specific form should
+technically happen in a second pass I think i already discussed this
+at some point, but i think it makes the situation a bit clearer,
+internally interlex runs on perspectives and all the internal triples
+use the same base namespace, but once we go outside of interlex all
+those different perspectives have to be able to coexist in the same
+unified perspective, in order to do that any perspective specific
+modifications to terms need to be included, transfomred into their
+user's namespace
+
+this actually suggests that there are two additional buildin groups
+that we need, union and unified
+
+the union group, which is how everything works at the moment, we keep
+all triples that anyone has ever added and merge them via existing
+iris and everything is in /base/ the union group is sort of the borg
+group because all distinctiveness is wiped away
+
+the other is the unified perspective, this is where all perspectives
+coexist at once because their distinctiveness is maintained, but only
+for the bits that they have modified though in that file curated,
+latest, and base could lead to a triplication of the content ...
+
+EXCEPT that if we send jsonld with user specific ids then we will need
+a preprocessing step where everything is converted back to base
+... ugh so many tradeoffs and risk of polluting the triples table with
+crazy combinatorics if we don't do it though /uris/ are excluded from
+the restriction however ...
+
+XXX yet another argh ... if we take the unified perspective described
+above, there is pretty much no way to ingest that because there is no
+one use that can reenter all the triples without violating the
+contract that users can only modify their own perspectives, in
+principle though it might be possible to make modifications from it
+because the variant classes will be identified by the id from their
+user's namespace
+
 * Bugs
 ** Implicit context based on api user
 On reflection having the context of the api shift based on what api

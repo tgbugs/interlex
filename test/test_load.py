@@ -3,9 +3,11 @@ import unittest
 from unittest.mock import MagicMock
 import pytest
 from pathlib import Path
+from sqlalchemy.sql import text as sql_text
 from interlex import exceptions as exc
 from interlex.core import FakeSession
-from interlex.load import FileFromFileFactory, FileFromIRIFactory
+from interlex.load import FileFromFileFactory, FileFromIRIFactory, TripleLoaderFactory
+from interlex.dump import Queries, TripleExporter
 from interlex.config import auth
 from .setup_testing_db import getSession
 
@@ -94,6 +96,73 @@ class TestLoader(unittest.TestCase):
         assert setup_ok is not None, 'by default nasty has multiple bound names this should have failed'
         # 1) names do not match
         # 2) value already inserted
+
+    def test_roundtrip(self):
+        import rdflib
+        import uuid
+        from pyontutils.namespaces import rdf, rdfs, owl, ilxtr
+        from pyontutils.core import OntGraph
+        graph = OntGraph()
+        bn0 = rdflib.BNode()
+        bn1 = rdflib.BNode()
+        ontid = rdflib.URIRef('http://uri.interlex.org/tgbugs/ontologies/uris/test-roundtrip')
+        trips = (
+            (ontid, rdf.type, owl.Ontology),  # FIXME using a /uris/ iri instead of an /ontologies/ uri for owl:Ontology should be an error
+            (ontid, ilxtr.load_it_anyway, rdflib.Literal(uuid.uuid4().hex)),
+            (ilxtr.thing, rdf.type, owl.Class),
+            (ilxtr.thing, ilxtr.pred1, bn0),
+            (bn0, ilxtr.pred2, rdflib.Literal('lit1')),
+            (bn0, ilxtr.pred3, ilxtr.obj1),
+            (bn0, ilxtr.pred4, bn1),
+            (bn1, ilxtr.pred5, rdflib.Literal('lit2')),
+            (bn1, ilxtr.pred6, ilxtr.obj2),
+        )
+        for t in trips:
+            graph.add(t)
+
+        def load_graph(session, graph):
+            TripleLoader = TripleLoaderFactory(session)
+            user = 'tgbugs'
+            # FIXME TODO need a better way to deal with reference names :/
+            # XXX and here we can also see why requiring ebn is dumb
+            bound_name = graph.boundIdentifier
+            loader = TripleLoader(user=user, group=user, reference_name=bound_name)
+            # FIXME reference name should not be required, should come
+            # from bound name, and if there is no bound name then that is
+            # a separate issue ...
+            loader._serialization = graph.serialize(format='nifttl')  # XXX FIXME load_event expects a serialization id even if some graphs may not have one
+            loader._graph = graph
+            check_failed = loader.check(bound_name)
+            if check_failed:
+                raise exc.LoadError(check_failed)
+            setup_failed = loader(expected_bound_name=bound_name)  # XXX FIXME rdflib.URIRef vs str types ... SIGH SIGH SIGH
+            if setup_failed:
+                raise exc.LoadError(setup_failed)
+            http_resp = loader.load(commit=False)  # XXX FIXME really should not be returning an http response here, so incredibly complected
+
+        session = getSession()
+        load_graph(session, graph)
+        q = Queries(session)
+        o_rows = q.getBySubject(ontid, None)
+        t_rows = q.getBySubject(ilxtr.thing, None)
+        rows = o_rows + t_rows
+        te = TripleExporter()
+        out_graph = OntGraph()
+        # FIXME TODO curies etc.
+        _ = [out_graph.add(te.triple(*r)) for r in rows]
+        # FIXME TODO really need the single query to reconstruct a specific loaded ontology
+
+        try:
+            # some simple checks first
+            assert len(graph) == len(out_graph), (graph.debug(), out_graph.debug(), f'graph lengths do not match {len(graph)} != {len(out_graph)}')[-1]
+            breakpoint()
+
+            if False:
+                sql = 'select * from triples where s = :ontid or s = :tid'
+                res = session.execute(sql_text(sql), params=dict(ontid=ontid, tid=ilxtr.thing))
+                rows = list(res)
+        finally:
+            session.rollback()
 
     @staticmethod
     def do_loader(loader, n, ebn):
