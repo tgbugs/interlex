@@ -234,26 +234,63 @@ class GraphIdentities:
     @property
     def metadata(self):
         yield from self.metadata_named
+        # FIXME getting triples to condense up to pairs is going to be a pita
         yield from self.metadata_unnamed
 
     @property
     def metadata_raw(self):
-        yield from self.graph[self.bound_name::]
+        _metadata_subject_or_dangle_bnodes = set()
+        nexts = [self.bound_name]
+        for i in range(9999):  # avoid infinite loop
+            if not nexts:
+                break
+
+            _nexts = []
+            for s in nexts:
+                for p, o in self.graph[s::]:
+                    # XXX metadata is NOT pairs as soon as bnodes appear
+                    # the subject might be None at the top ... ugh this
+                    # makes things annoying
+                    yield s, p, o
+                    if isinstance(o, rdflib.BNode):
+                        _nexts.append(o)
+                        _metadata_subject_or_dangle_bnodes.add(o)
+            nexts = _nexts
+
+        else:
+            breakpoint()
+            raise ValueError('cycle in graph ???')
+
+        self._metadata_subject_or_dangle_bnodes = _metadata_subject_or_dangle_bnodes
 
     @property
     def metadata_named(self):
-        for p, o in self.metadata_raw:
-            if not isinstance(o, rdflib.BNode):
-                yield p, o
+        # FIXME this is utterly broken now too :/
+        # the question is whether the named subset includes only triples without any bnodes
+        # and I think historically named has to do with whether the object is a bnode
+        # not whether the subject is a uriref
+        for s, p, o in self.metadata_raw:
+            if not isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode):
+                yield None, p, o
 
     @property
     def metadata_unnamed(self):
         if not hasattr(self, '_blank_identities'):
             self.process_graph()
 
-        for p, o in self.metadata_raw:
-            if isinstance(o, rdflib.BNode):
-                yield p, self._blank_identities[o]
+        for s, p, o in self.metadata_raw:
+            if isinstance(s, rdflib.BNode) or isinstance(o, rdflib.BNode):
+                if isinstance(s, rdflib.URIRef):
+                    s = None
+                else:
+                    #s = self._subgraph_and_integer[s]
+                    s = self._blank_identities[s]
+
+                if isinstance(o, rdflib.BNode):
+                    #o = self._subgraph_and_integer[o]
+                    o = self._blank_identities[o]
+
+                yield s, p, o
 
     @property
     def data(self):
@@ -263,7 +300,10 @@ class GraphIdentities:
     @property
     def data_raw(self):
         bn = self.bound_name
-        yield from (t for t in self.graph if t[0] != bn)
+        list(self.metadata_raw)  # populate self._metadata_subject_or_dangle_bnodes
+        # FIXME this is now quite a bit slower than it was originally
+        # and it is doing a whole lot of rework :/
+        yield from (t for t in self.graph if t[0] != bn and t[0] not in self._metadata_subject_or_dangle_bnodes)
 
     @property
     def data_named(self):
@@ -276,10 +316,25 @@ class GraphIdentities:
         if not hasattr(self, '_blank_identities'):
             self.process_graph()
 
-        for s, p, o in self.data_raw:  # FIXME shouldn't this be if isinstance(s, rdflib.BNode) ????
-            if not isinstance(s, rdflib.BNode) and isinstance(o, rdflib.BNode):
-                # TODO this does not cover free trips
-                yield s, p, self._blank_identities[o]
+        for s, p, o in self.data_raw:
+            # the s not bnode version was back when we handled connected subgraphs separately
+            if any(isinstance(e, rdflib.BNode) for e in (s, p, o)):  # XXX to ensure symmetry with data_named above
+                try:
+                    # XXX NOTE there is quite some confusion in the naming, but as of ibnode v3 the identities
+                    # that we are using for the "subgraph" are just the head subject identity, NOT the identity
+                    # of all the triples, this is ok, and is convenient because it will eventually allow us to
+                    # simplify things
+
+                    #_s = rdflib.BNode(self._subgraph_and_integer[s]) if isinstance(s, rdflib.BNode) else s
+                    _s = self._blank_identities[s] if isinstance(s, rdflib.BNode) else s
+                    #_p = self._blank_identities[p] if isinstance(p, rdflib.BNode) else p  # XXX this case should NEVER happen
+                    _p = p
+                    #_o = rdflib.BNode(self._subgraph_and_integer[o]) if isinstance(o, rdflib.BNode) else o
+                    _o = self._blank_identities[o] if isinstance(o, rdflib.BNode) else o
+                    yield _s, _p, _o
+                except KeyError as e:
+                    breakpoint()
+                    raise e
 
     @property
     def subgraphs(self):
@@ -377,12 +432,13 @@ class GraphIdentities:
         return IdentityBNode(value).identity
 
     def process_graph(self):
-        def normalize(cmax, t, existing):
+        def normalize(cmax, t, existing, sgid):
             for e in t:
                 if isinstance(e, rdflib.BNode):
                     if e not in existing:
                         cmax += 1
                         existing[e] = cmax
+                        self._subgraph_and_integer[e] = sgid, cmax
 
                     yield existing[e]
                 else:
@@ -399,16 +455,21 @@ class GraphIdentities:
             o = bnode_last(o)
             return p, o, s
 
-        def normgraph(head_subject, subgraph):
+        def normgraph(head_subject, subgraph, sgid, none_subject=None):
             """ replace the bnodes with local integers inside the graph """
             # make sure we are working only on the subjectGraph
             # since we technically aren't supposed to use IdentityBNode.subgraph_mappings
             # since it is polluted
             _osg = subgraph
-            g = OntGraph().populate_from_triples(subgraph)
+            try:
+                g = OntGraph().populate_from_triples((((none_subject if s is None else s), p, o) for s, p, o in subgraph))
+            except Exception as e:
+                breakpoint()
+                raise e
             subgraph = list(g.subjectGraph(head_subject))
 
             cmax = 0
+            self._subgraph_and_integer[head_subject] = sgid, cmax
             existing = {head_subject:0}  # FIXME the head of a list is arbitrary :/
             normalized = []
             for trip in sorted(subgraph, key=sortkey):
@@ -425,28 +486,40 @@ class GraphIdentities:
                         # this particular example is avoided above via subjectGraph
                         raise TypeError('This should never happen!')
 
-                *ntrip, cmax = normalize(cmax, trip, existing)
+                *ntrip, cmax = normalize(cmax, trip, existing, sgid)
                 normalized.append(tuple(ntrip))  # today we learned that * -> list
             return tuple(normalized)
 
         datas = ('metadata', self.metadata_raw), ('data', self.data_raw)
+        self._blank_identities = {}
+        self._identity_to_bnode = {}
+        self._free_subgraph_identities = {}
+        self._subgraph_and_integer = {}
         for name, data in datas:
             log.debug(f'running {name} identity')
             idents = IdentityBNode(data, debug=True)
+            setattr(self, '_' + name + '_raw_identity', idents)  # FIXME this will interfere with setting transaction cache contents in get_identity ???
+            self._transaction_cache_identities.add(idents)
+            # also we want to make sure our rewritten graph has the same identity as the raw form
 
             log.debug(f'running {name} free subgraph identities')
-            free_subgraph_identities = {
-                identity:normgraph(s, idents.subgraph_mappings[s])
-                for s, identity in idents.unnamed_subgraph_identities.items()}
+            free_subgraph_identities = {  # FIXME this is ideneity free subgraphs
+                # idents.unnamed_subgraph_identities[s]
+                identity:normgraph(s, idents.subgraph_mappings[s], identity)
+                for s, identity in idents.unnamed_subgraph_identities.items()
+            }
+
+            self._free_subgraph_identities.update(free_subgraph_identities)  # technically a noop for metadata
 
             log.debug(f'running {name} blank/bnode identities')
             # XXX using bnode_identities instead of idents._blank_identities
             # I think it is working but we need to do some roundtrip checks
-            self._blank_identities = idents.bnode_identities
-            inverse = {v:k for k, v in idents.bnode_identities.items()}
 
-            if name == 'data':
-                self._free_subgraph_identities = free_subgraph_identities
+            self._blank_identities.update(idents.bnode_identities)
+            self._blank_identities.update(idents.unnamed_subgraph_identities)
+            inverse = {v:k for k, v in idents.bnode_identities.items()}
+            inverse.update({v:k for k, v in idents.unnamed_subgraph_identities.items()})
+            self._identity_to_bnode.update(inverse)  # XXX it is stupid and silly to be going back and forth so many times >_<
 
             # FIXME isn't this doing ... nothing ??? other than trying to produce a key error ???
             #log.debug(f'running {name} connected object identities (though not sure why?)')
@@ -454,9 +527,11 @@ class GraphIdentities:
                 #idents.subgraph_mappings[o]
 
             log.debug(f'running {name} connected subgraph identities')
-            connected_subgraph_identities = {
-                identity:normgraph(o, idents.subgraph_mappings[o])
-                for identity, o in idents.connected_object_identities.items()}
+
+            csi_subject = self.bound_name if name == 'metadata' else None
+            connected_subgraph_identities = {  # FIXME this is identity subgraphs ...
+                idents.bnode_identities[o]:normgraph(o, idents.subgraph_mappings[o], idents.bnode_identities[o], none_subject=csi_subject)
+                for o in idents.connected_heads}
 
             setattr(self, '_' + name + '_connected_subgraph_identities',
                     connected_subgraph_identities)
@@ -466,13 +541,35 @@ class GraphIdentities:
                 if self.debug:
                     breakpoint()
 
+        self._transaction_cache_identities.update(self._blank_identities.values())  # XXX likely redundant
+        self._transaction_cache_identities.update(self._free_subgraph_identities)
+        self._transaction_cache_identities.update(self._data_connected_subgraph_identities)
+        self._transaction_cache_identities.update(self._metadata_connected_subgraph_identities)
+
 
 class GraphLoader(GraphIdentities):
 
     @staticmethod
-    def make_row(s, p, o, subgraph_identity=None):
+    def make_row(s, p, o, subgraph_and_integer, identity_to_bnode, subgraph_identity=None,):
 
         fix = None
+
+        s_subgraph_identity, o_subgraph_identity = None, None
+
+        """
+        if isinstance(s, tuple):
+            s_subgraph_identity, s_blank = s
+            subgraph_identity = s_subgraph_identity
+            s = s_blank
+
+        if isinstance(o, tuple):
+            o_subgraph_identity, o_blank = o
+            subgraph_identity = o_subgraph_identity
+            o = s_blank
+
+        if s_subgraph_identity is not None and o_subgraph_identity is not None:
+            assert s_subgraph_identity == o_subgraph_identity, f'sgid mismatch {s_subgraph_identity} != {o_subgraph_identity}'
+        """
 
         def str_None(thing):
             return str(thing) if thing is not None else thing
@@ -488,10 +585,19 @@ class GraphLoader(GraphIdentities):
         # assume p is uriref, issues should be caught before here
         p = str(p)
 
+        if type(s) == bytes:
+            s_subgraph_identity, s = subgraph_and_integer[identity_to_bnode[s]]
+            subgraph_identity = s_subgraph_identity
+
         if type(o) == bytes:
             # if an identity is supplied as an object shift it automatically
-            subgraph_identity = o
-            o = 0
+            #subgraph_identity = o
+            #o = 0
+            o_subgraph_identity, o = subgraph_and_integer[identity_to_bnode[o]]
+            subgraph_identity = o_subgraph_identity
+
+        if s_subgraph_identity is not None and o_subgraph_identity is not None:
+            assert s_subgraph_identity == o_subgraph_identity, f'sgid mismatch {s_subgraph_identity} != {o_subgraph_identity}'
 
         if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.URIRef):
             columns = 's, p, o'
@@ -570,6 +676,11 @@ class GraphLoader(GraphIdentities):
         # if you need to test pass in lambda i:False for ident_exists
         # TODO resursive on type?
         # s, s_blank, p, o, o_lit, datatype, language, subgraph_identity
+        debug = True
+        if debug:
+            all_trips = set(self.graph)
+            done_trips = set()
+
         if not curies_done:
             c = []
             to_insert = {'serialization_identity, curie_prefix, iri_prefix':c}
@@ -578,6 +689,16 @@ class GraphLoader(GraphIdentities):
                 c.append((serialization_identity, curie_prefix, iri_prefix))
 
             yield 'INSERT INTO curies', '', to_insert, to_fix
+
+        def back_convert_sigh(s, p, o):
+            # FIXME SO DUMB
+            if type(s) == bytes:
+                s = self._identity_to_bnode[s]
+
+            if type(o) == bytes:
+                o = self._identity_to_bnode[o]
+
+            return s, p, o
 
         def sortkey(triple):  # FIXME this a bad way to sort...
             return tuple(e if isinstance(e, str) else str(e) for e in triple)
@@ -588,24 +709,39 @@ class GraphLoader(GraphIdentities):
         if not metadata_done:
             to_insert = defaultdict(list)  # should all be unique
             to_fix = defaultdict(list)
-            for p, o in sorted(self.metadata, key=sortkey):  # FIXME resolve bnode ordering issue?
-                self.check_triple(bn, p, o)
-                columns, record, fix = self.make_row(bn, p,  o)
+            for s, p, o in sorted(self.metadata, key=sortkey):  # FIXME resolve bnode ordering issue?
+                s = bn if s is None else s
+                self.check_triple(s, p, o)
+                columns, record, fix = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode)
                 to_insert[columns].append(record)
                 if fix is not None:
                     to_fix[columns].append((record, fix))
+
+                if debug:
+                    done_trips.add(back_convert_sigh(s, p, o))
 
             yield prefix, suffix, to_insert, to_fix
 
         if not data_done:
             to_insert = defaultdict(list)  # should all be unique
             to_fix = defaultdict(list)
+            # FIXME between data_named and subgraph_identities we have
+            # the set of triples that have a named subject and bn object
+            # those are needed to complete the graph but are not easily accessible :/
+            # and the rules from the go with the subgraph identities :/
+            # FIXME if we iterate over self.data here then we dont need to go over subgraph identities below ya?
+            # but we could also just fill blank_ids here except for the slight misalignment issue where s, p, blank triples never get added
             for s, p, o in sorted(self.data, key=sortkey):  # FIXME resolve bnode ordering issue? or was it already?
+                # FIXME wait, how did this ever work, make_row has always needed identity for bnodes
+                # if there was a subgraph involved also, data includes cases where the subject is a bnode ... wtf
                 self.check_triple(s, p, o)
-                columns, record, fix = self.make_row(s, p, o)
+                columns, record, fix = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode)
                 to_insert[columns].append(record)
                 if fix is not None:
                     to_fix[columns].append((record, fix))
+
+                if debug:
+                    done_trips.add(back_convert_sigh(s, p, o))
 
             yield prefix, suffix, to_insert, to_fix
 
@@ -630,6 +766,13 @@ class GraphLoader(GraphIdentities):
         # connected and free
         to_insert = defaultdict(list)  # should all be unique due to having already been identified
         to_fix = defaultdict(list)
+        def has_bnodes(g):
+            for s, p, o in g:
+                for e in (s, o):
+                    if isinstance(e, rdflib.BNode):
+                        return True
+
+        assert self.subgraph_identities or not has_bnodes(self.graph), 'missing subgraph identities in a graph with bnodes'
         for identity, subgraph in self.subgraph_identities.items():
             if self.debug:
                 printD(identity)
@@ -640,7 +783,7 @@ class GraphLoader(GraphIdentities):
 
             if not ident_exists(identity):  # we run a batch check before
                 for t in sorted(subgraph, key=intfirst):
-                    columns, record, fix = self.make_row(*t, subgraph_identity=identity)
+                    columns, record, fix = self.make_row(*t, self._subgraph_and_integer, self._identity_to_bnode, subgraph_identity=identity)
                     to_insert[columns].append(record)
                     if fix is not None:
                         to_fix[columns].append((record, fix))
@@ -648,6 +791,16 @@ class GraphLoader(GraphIdentities):
                     # however the order can be reconstructed on the way out...
                     # the trick however is to know which identities we need to
                     # insert for free subgraphs?
+                    if debug:
+                        #done_trips.add(t)
+                        done_trips.add(back_convert_sigh(*t))
+
+        if debug:
+            missing_trips = all_trips - done_trips
+            if missing_trips:
+                breakpoint()
+                msg = f'the following trips were not prepared for insert: {missing_trips}'
+                raise exc.LoadError(msg)
 
         prefix = 'INSERT INTO triples'
         suffix = 'ON CONFLICT DO NOTHING'  # FIXME BAD

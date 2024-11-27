@@ -103,19 +103,29 @@ class TestLoader(unittest.TestCase):
         from pyontutils.namespaces import rdf, rdfs, owl, ilxtr
         from pyontutils.core import OntGraph
         graph = OntGraph()
+        bnm = rdflib.BNode()
         bn0 = rdflib.BNode()
         bn1 = rdflib.BNode()
-        ontid = rdflib.URIRef('http://uri.interlex.org/tgbugs/ontologies/uris/test-roundtrip')
+        bnh = rdflib.BNode()
+        bn2 = rdflib.BNode()
+        differ = uuid.uuid4().hex
+        ontid = rdflib.URIRef(f'http://uri.interlex.org/tgbugs/ontologies/uris/test-roundtrip/{differ}')
+        thingid = ilxtr[f'thing-{differ}']
         trips = (
             (ontid, rdf.type, owl.Ontology),  # FIXME using a /uris/ iri instead of an /ontologies/ uri for owl:Ontology should be an error
-            (ontid, ilxtr.load_it_anyway, rdflib.Literal(uuid.uuid4().hex)),
-            (ilxtr.thing, rdf.type, owl.Class),
-            (ilxtr.thing, ilxtr.pred1, bn0),
+            (ontid, ilxtr.load_it_anyway, rdflib.Literal(differ)),
+            (ontid, ilxtr.mpred0, bnm),
+            (bnm, ilxtr.mpred1, rdflib.Literal('mlit1')),
+            (thingid, rdf.type, owl.Class),
+            (thingid, ilxtr.pred1, bn0),
             (bn0, ilxtr.pred2, rdflib.Literal('lit1')),
             (bn0, ilxtr.pred3, ilxtr.obj1),
             (bn0, ilxtr.pred4, bn1),
             (bn1, ilxtr.pred5, rdflib.Literal('lit2')),
             (bn1, ilxtr.pred6, ilxtr.obj2),
+            (bnh, ilxtr.pred7, ilxtr.obj3),
+            (bnh, ilxtr.pred8, bn2),
+            (bn2, ilxtr.pred9, rdflib.Literal('lit3')),
         )
         for t in trips:
             graph.add(t)
@@ -144,7 +154,9 @@ class TestLoader(unittest.TestCase):
         load_graph(session, graph)
         q = Queries(session)
         o_rows = q.getBySubject(ontid, None)
-        t_rows = q.getBySubject(ilxtr.thing, None)
+        t_rows = q.getBySubject(thingid, None)
+        # FIXME yeah missing the free subgraphs, which is not at all surprising
+        # because it is not clear how we would retrieve them anyway
         rows = o_rows + t_rows
         te = TripleExporter()
         out_graph = OntGraph()
