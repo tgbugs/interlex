@@ -98,6 +98,12 @@ class TestLoader(unittest.TestCase):
         # 2) value already inserted
 
     def test_roundtrip(self):
+        # FIXME TODO one issue this reveals is that we do not correctly handle load failure cases
+        # so right now when we try to load uberon, fma, etc. because they failed to load before and
+        # we did not confirm that ingest happened successfully but we did insert into the identities
+        # table, the issue is that we can't correct the data because we only computed on the python
+        # side and never closed the loop coming back, so we need to close the loop before coming back
+        # doing that should also make it possible to create restartable ingest at some point
         import rdflib
         import uuid
         from pyontutils.namespaces import rdf, rdfs, owl, ilxtr
@@ -108,6 +114,8 @@ class TestLoader(unittest.TestCase):
         bn1 = rdflib.BNode()
         bnh = rdflib.BNode()
         bn2 = rdflib.BNode()
+        bnh2 = rdflib.BNode()
+        bn3 = rdflib.BNode()
         differ = uuid.uuid4().hex
         ontid = rdflib.URIRef(f'http://uri.interlex.org/tgbugs/ontologies/uris/test-roundtrip/{differ}')
         thingid = ilxtr[f'thing-{differ}']
@@ -123,9 +131,19 @@ class TestLoader(unittest.TestCase):
             (bn0, ilxtr.pred4, bn1),
             (bn1, ilxtr.pred5, rdflib.Literal('lit2')),
             (bn1, ilxtr.pred6, ilxtr.obj2),
+
             (bnh, ilxtr.pred7, ilxtr.obj3),
             (bnh, ilxtr.pred8, bn2),
             (bn2, ilxtr.pred9, rdflib.Literal('lit3')),
+
+            # TODO
+            # need to figure out the preferred way to handle cases where
+            # free subgraphs are duplicated, ideally of course they would not be
+            # but sometimes we may have to ingest a serialized form that does
+            # have this, and we won't be able to roundtrip
+            (bnh2, ilxtr.pred7, ilxtr.obj3),
+            (bnh2, ilxtr.pred8, bn3),
+            (bn3, ilxtr.pred9, rdflib.Literal('lit3')),
         )
         for t in trips:
             graph.add(t)

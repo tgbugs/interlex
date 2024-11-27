@@ -127,7 +127,7 @@ class GraphIdentities:
 
         self._curies_identity = None
         #self._subgraph_identities = None  # not used
-        #self._connected_subgraph_identities = None  # not used
+        self._connected_subgraph_identities = None
         self._metadata_connected_subgraph_identities = None
         self._data_connected_subgraph_identities = None
         self._free_subgraph_identities = None
@@ -176,10 +176,15 @@ class GraphIdentities:
 
     @property
     def connected_subgraph_identities(self):
-        return {**self.metadata_connected_subgraph_identities, **self.data_connected_subgraph_identities}
+        #return {**self.metadata_connected_subgraph_identities, **self.data_connected_subgraph_identities}
+        if self._connected_subgraph_identities is None:
+            self.process_graph()
+
+        return self._connected_subgraph_identities
 
     @property
     def metadata_connected_subgraph_identities(self):
+        raise NotImplementedError('metadata connected has been merged')
         if self._metadata_connected_subgraph_identities is None:
             self.process_graph()
 
@@ -187,6 +192,7 @@ class GraphIdentities:
 
     @property
     def data_connected_subgraph_identities(self):
+        raise NotImplementedError('data connected has been merged')
         if self._data_connected_subgraph_identities is None:
             self.process_graph()
 
@@ -219,15 +225,14 @@ class GraphIdentities:
     @property
     def bound_name(self):
         if self._bound_name is None:
-            subjects = self.graph[:rdf.type:owl.Ontology]  # FIXME use OntResIri
+            subjects = list(self.graph.boundIdentifiers)
+            #subjects = self.graph[:rdf.type:owl.Ontology]  # FIXME use OntResIri
             # FIXME this should be erroring on no bound names?
-            self._bound_name = next(subjects)
-            try:
-                extra = next(subjects)
-                raise exc.LoadError('More than one owl:Ontology in this file!\n'
-                                    f'{self.ontology_iri}\n{extra}\n', 409)
-            except StopIteration:
-                pass
+            if subjects:
+                self._bound_name = subjects[0]
+                if len(subjects) > 1:
+                    raise exc.LoadError('More than one owl:Ontology in this file!\n'
+                                        f'{self.ontology_iri}\n{extra}\n', 409)
 
         return self._bound_name
 
@@ -362,8 +367,9 @@ class GraphIdentities:
 
     @property
     def bound_name_count(self):
-        if self.bound_name:
-            return 1
+        return len(list(self.graph.boundIdentifiers))  # see self.graph.metadata_type_markers
+        #if self.bound_name:
+            #return 1
 
     @property
     def curies_count(self):
@@ -379,11 +385,12 @@ class GraphIdentities:
 
     @property
     def metadata_count(self):
-        return self.metadata_named_count + sum(self.metadata_connected_counts.values())
+        return len(list(self.graph.subjectGraph(self.bound_name)))
+        #return self.metadata_named_count + sum(self.metadata_connected_counts.values())
 
     @property
     def data_named_count(self):  # FIXME unnamed should be called tainted
-        return len(list(self.data))
+        return len(list(self.data_named))
 
     @property
     def data_connected_counts(self):
@@ -391,12 +398,14 @@ class GraphIdentities:
 
     @property
     def data_count(self):
-        return self.data_named_count + sum(self.data_connected_counts.values())
+        return len(list(self.data))  # self.data is already data_named + data_unnamed ... aka data_connected ...
+        #return self.data_named_count + sum(self.data_connected_counts.values())
 
     @property
     def connected_counts(self):
         # NOTE this double counts if added to metadata_counts and data_counts
-        return {**self.data_connected_counts, **self.data_connected_counts}
+        return {i:len(sg) for i, sg in self.connected_subgraph_identities.items()}
+        #return {**self.data_connected_counts, **self.data_connected_counts}
 
     @property
     def free_counts(self):
@@ -404,6 +413,7 @@ class GraphIdentities:
 
     @property
     def counts(self):
+        # FIXME i think we want the whole graph too yeah?
         counts = {self.curies_identity:self.curies_count,
                   self.metadata_identity:self.metadata_count,
                   self.data_identity:self.data_count,
@@ -489,6 +499,55 @@ class GraphIdentities:
                 *ntrip, cmax = normalize(cmax, trip, existing, sgid)
                 normalized.append(tuple(ntrip))  # today we learned that * -> list
             return tuple(normalized)
+
+        # hey kids watch this
+        ibn = IdentityBNode(self.graph, debug=True)  # FIXME TODO should be able to compute data id by removing the metadata id from the final listing
+        self._metadata_identity = ibn.subject_embedded_identities[self.bound_name]
+        # this definition for _metadata_identity is not quite the same as the old way
+        # the old way is equivalent to IdentityBNode([ibn.subject_embedded_identities[self.bound_name]]
+        # we don't use the subject condensed identity here because we do actually need to know that the
+        # metadata was for this particular ontology, and while it might be strage for ontology metadata
+        # to be the same between different ontologies, consider the case where there is only the ontid
+        # TODO see if we need to use the list variant that is equivalent to the old way
+        self._data_identity = ibn.ordered_identity(*[v for v in ibn.all_idents_new if v != self._metadata_identity], separator=False)
+        # FIXME how to deal with files that have multiple metadata records and thus multiple metadata identities ???
+        # this def for _data_identity produces the same result as the traditional way of IdentityBNode(self.data_raw)
+        # note that IdentityBNode(self.data) produces different results due to the presence of checksums directly
+        # howevever IdentityBNode([back_convert_sigh(*t) for t in self.data]) should produce the same result, except
+        # when dealing with the non-injective case where there are duplicate unnamed subgraphs which is a FIXME TODO
+        self._subgraph_and_integer = {}
+        self._blank_identities = {**ibn.bnode_identities, **ibn.unnamed_subgraph_identities}
+        itb = {}  # XXX FIXME unfortunately non-injectivity is a giant pita because of how we pass stuff around when generating rows
+        non_injective = set()
+        for v, k in self._blank_identities.items():
+            if k in itb:
+                ev = itb[k]
+                if isinstance(ev, list):
+                    ev.append(v)
+                    non_injective.add(v)
+                else:
+                    itb[k] = [ev, v]
+                    non_injective.add(v)
+                    non_injective.add(ev)
+
+                log.warning(f'free subgraph duplication! {k}: {itb[k]}')
+
+            else:
+                itb[k] = v
+
+        self._non_injective = non_injective
+        self._identity_to_bnode = {v:k for k, v in self._blank_identities.items()}
+        self._connected_subgraph_identities = {
+            ibn.bnode_identities[o]:normgraph(o, ibn.subgraph_mappings[o], ibn.bnode_identities[o])
+            for o in ibn.connected_heads}
+        self._free_subgraph_identities = {
+                identity:normgraph(s, ibn.subgraph_mappings[s], identity)
+                for s, identity in ibn.unnamed_subgraph_identities.items()}
+
+        self._transaction_cache_identities.update(self._blank_identities.values())  # XXX likely redundant
+        self._transaction_cache_identities.update(self._free_subgraph_identities)
+        self._transaction_cache_identities.update(self._connected_subgraph_identities)
+        return
 
         datas = ('metadata', self.metadata_raw), ('data', self.data_raw)
         self._blank_identities = {}
@@ -797,7 +856,27 @@ class GraphLoader(GraphIdentities):
 
         if debug:
             missing_trips = all_trips - done_trips
+            if self._non_injective:
+                omt = missing_trips
+                missing_trips = set(t for t in missing_trips if t[0] not in self._non_injective)
+                due_to_non_injective = omt - missing_trips
+                msg = f'the following trips have non-injective issues {due_to_non_injective}'
+                log.warning(msg)
+
             if missing_trips:
+                # XXX the non-injective nature of free subgraphs means that a file might have multiple
+                # copies of the same graph and when we run back_convert_sigh it normalizes those to the
+                # same going the other way, to insert happens twice but the database knows it is the same
+                # triple so it will deduplicate it, however this check here does not know, and also how
+                # the heck are we generating duplicate annotations !??!? i think these are probably coming
+                # from duplicate annotations on synonym type ???
+
+                # XXX in this case though it is EVEN weirder because somehow the EXACT SAME TRIPLE WITH
+                # THE EXACT SAME BNODE has been inserted into the graph twice or something ???
+                # how can that even happen ??!!? or no, that isn't what happened, it is just that
+                # idents.bnode_identities assumes injectivity incorrectly and there are two identical
+                # graphs in the input that use different bnode ids but we can't recover one of them because
+                # we don't get the full list ... ok, it is clear where to start fixing this
                 breakpoint()
                 msg = f'the following trips were not prepared for insert: {missing_trips}'
                 raise exc.LoadError(msg)
