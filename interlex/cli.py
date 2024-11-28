@@ -305,7 +305,7 @@ class Post(clif.Dispatcher):
     def curies(self):  # FIXME post should smart update? or switch to patch?
         scheme, host, group, headers = self._post()
         filename = self.options.curies_filename
-        url = f'{scheme}://{host}/{group}/curies/'  # https duh
+        url = f'{scheme}://{host}/{group}/curies'  # https duh
         #printD(url, args)
         # FIXME /curies redirects to get...
         if filename:

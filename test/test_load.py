@@ -119,12 +119,37 @@ class TestLoader(unittest.TestCase):
         differ = uuid.uuid4().hex
         ontid = rdflib.URIRef(f'http://uri.interlex.org/tgbugs/ontologies/uris/test-roundtrip/{differ}')
         thingid = ilxtr[f'thing-{differ}']
+
+        evilid = ilxtr[f'evil-{differ}']
+        evilid2 = ilxtr[f'evil2-{differ}']
+        ebn1 = rdflib.BNode()
+        ebn2 = rdflib.BNode()
+        ebn3 = rdflib.BNode()
+        ebn4 = rdflib.BNode()
+        ebn5 = rdflib.BNode()
+        # FIXME TODO I can do something EVEN MORE EVIL which is to have an explicit bnode that is referenced by both the metadata and data
+        # sections !!!! what do we do in that case ??? include the subgraph in both when computing the id! have impl though :/
+        sebn0 = rdflib.BNode()
+
+        # TODO need to test the the case where a list is
+        # a subgraph of two different graphs
+
         trips = (
             (ontid, rdf.type, owl.Ontology),  # FIXME using a /uris/ iri instead of an /ontologies/ uri for owl:Ontology should be an error
             (ontid, ilxtr.load_it_anyway, rdflib.Literal(differ)),
             (ontid, ilxtr.mpred0, bnm),
             (bnm, ilxtr.mpred1, rdflib.Literal('mlit1')),
+            (ontid, ilxtr.mpred2, sebn0),
+
+            # if someone actually does this then in practice it is very likely that
+            # we will wind up with a dangling bnode because we cut the serialization
+            # at the end of the metadata entity no matter what
+            # XXX hilariously though the ingestion process already successfully
+            # roundtrips this likely because we use subjectGraph
+            (sebn0, ilxtr.EVIL, rdflib.Literal('EXTREMELY EVIL')),
+
             (thingid, rdf.type, owl.Class),
+            (thingid, ilxtr.pred0, sebn0),
             (thingid, ilxtr.pred1, bn0),
             (bn0, ilxtr.pred2, rdflib.Literal('lit1')),
             (bn0, ilxtr.pred3, ilxtr.obj1),
@@ -144,6 +169,20 @@ class TestLoader(unittest.TestCase):
             (bnh2, ilxtr.pred7, ilxtr.obj3),
             (bnh2, ilxtr.pred8, bn3),
             (bn3, ilxtr.pred9, rdflib.Literal('lit3')),
+
+            # for maximum evil, observe the following super duper non-injective cases
+            (evilid, rdf.type, owl.Class),
+            (evilid, ilxtr.pred10, ebn1),
+            (ebn1, ilxtr.pred, ilxtr.obj),
+            (evilid, ilxtr.pred11, ebn2),
+            (ebn2, ilxtr.pred, ilxtr.obj),
+            (evilid2, ilxtr.pred12, ebn2),
+            (evilid2, ilxtr.pred13, ebn5),
+            (ebn5, ilxtr.pred, ilxtr.obj),
+            (evilid, rdf.type, owl.Class),
+            (ebn3, ilxtr.pred, ilxtr.obj),
+            (ebn4, ilxtr.pred, ilxtr.obj),
+
         )
         for t in trips:
             graph.add(t)
@@ -173,9 +212,11 @@ class TestLoader(unittest.TestCase):
         q = Queries(session)
         o_rows = q.getBySubject(ontid, None)
         t_rows = q.getBySubject(thingid, None)
+        e_rows = q.getBySubject(evilid, None)
+        e2_rows = q.getBySubject(evilid2, None)
         # FIXME yeah missing the free subgraphs, which is not at all surprising
         # because it is not clear how we would retrieve them anyway
-        rows = o_rows + t_rows
+        rows = o_rows + t_rows + e_rows + e2_rows
         te = TripleExporter()
         out_graph = OntGraph()
         # FIXME TODO curies etc.
@@ -197,25 +238,43 @@ class TestLoader(unittest.TestCase):
     @staticmethod
     def do_loader(loader, n, ebn):
         check_failed = loader.check(n)
+        if check_failed:
+            raise exc.LoadError(check_failed)
+
         setup_failed = loader(ebn)
-        out = loader.load()
+        if setup_failed:
+            raise exc.LoadError(setup_failed)
+
+        out = loader.load(commit=False)
         return out
 
-    @pytest.mark.skip('manual test')
-    def test_small_resource(self):
-        from interlex.endpoints import Endpoints  # FIXME
+    def _do_test_uri(self, uri_string):
+        #from interlex.endpoints import Endpoints  # FIXME
+        from urllib.parse import urlparse
+        import rdflib
         s = getSession()
-        class db:
-            session = s
-        endpoints = Endpoints(db)
-        FileFromIRI = FileFromIRIFactory(db.session)
-        rh = 'uri.interlex.org'  #FIXME
-        loader = FileFromIRI('tgbugs', 'tgbugs', '', rh)
-        iri = 'http://purl.obolibrary.org/obo/ro.owl'
+        #class db:
+            #session = s
+        #endpoints = Endpoints(db)
+        #FileFromIRI = FileFromIRIFactory(db.session)
+        FileFromIRI = FileFromIRIFactory(s)
+        #rh = 'uri.interlex.org'  #FIXME
+        user = 'tgbugs'
+        iri = rdflib.URIRef(uri_string)
+        url = urlparse(iri)
+        # FIXME need to populate reference names
+        reference_name = rdflib.URIRef(f'http://uri.interlex.org/base/ontologies/{url.netloc}{url.path}')
+        loader = FileFromIRI(user, user, reference_name)
         try:
             out = self.do_loader(loader, iri, iri)
         finally:
+            s.rollback()
             s.close()
+
+    @pytest.mark.skip('manual test')
+    def test_small_resource(self):
+        uri_string = 'http://purl.obolibrary.org/obo/ro.owl'
+        self._do_test_uri(uri_string)
 
     @pytest.mark.skip('manual test')
     def test_small_file(self):

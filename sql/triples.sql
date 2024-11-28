@@ -765,7 +765,8 @@ CREATE TABLE triples(
        o_blank integer, -- this is internal for (s_blank p o_blank) and triples.id for (s, p, o_blank)
        datatype uri,
        language varchar(10), -- FIXME can we put these in the datatype column as just strings?
-       subgraph_identity bytea, -- FIXME how do we distingish identical subgraphs from explicit bnodes? XXX i.e. o_blank issue to avoid duplicating unnamed subgraphs on reserialization
+       subgraph_identity bytea, -- FIXME how do we distingish identical subgraphs from explicit bnodes? XXX i.e. o_blank issue to avoid duplicating unnamed subgraphs on reserialization XXX this is a real nightmare (see the test_rountrip example graph >_<)
+       subgraph_replica integer,  -- only needed for s_blank = 0 or o_blank = 0 gives the replica number, normally it will be zero for non-duplicate subgraphs, this migth seem to kick the can down the road for other subgraphs, but i think we only need it on the 0th case because we will duplicate the other subgraph triples once for each replica TODO figure out the constraints, IF o_blank AND s_blank share the same replica then we know that the bnode is explicit
        -- FIXME SIGH as much as I want to enforce leading/trailing there are some edge cases
        -- such as when importing, or when referring to the contents of a whitespace string
        -- I think what we will have to do is add a set of immediate fixes on ingest that we always run

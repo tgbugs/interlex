@@ -288,12 +288,32 @@ class GraphIdentities:
                 if isinstance(s, rdflib.URIRef):
                     s = None
                 else:
-                    #s = self._subgraph_and_integer[s]
-                    s = self._blank_identities[s]
+                    try:
+                        sid = self._blank_identities[s]
+                        ssgid, srep, sind = self._subgraph_and_integer[s]
+                        _s = sid, srep, sind, ssgid
+                    except KeyError as e:
+                        if p in (rdf.rest, rdf.first):
+                            _s = s
+                            srep = None
+                        else:
+                            raise e
+
+                    s = _s
 
                 if isinstance(o, rdflib.BNode):
-                    #o = self._subgraph_and_integer[o]
-                    o = self._blank_identities[o]
+                    try:
+                        oid = self._blank_identities[o]
+                        osgid, orep, oind = self._subgraph_and_integer[o]
+                        _o = oid, orep, oind, osgid
+                    except KeyError as e:
+                        if p in (rdf.rest, rdf.first):
+                            _o = o
+                            orep = None
+                        else:
+                            raise e
+
+                    o = _o
 
                 yield s, p, o
 
@@ -322,24 +342,38 @@ class GraphIdentities:
             self.process_graph()
 
         for s, p, o in self.data_raw:
-            # the s not bnode version was back when we handled connected subgraphs separately
-            if any(isinstance(e, rdflib.BNode) for e in (s, p, o)):  # XXX to ensure symmetry with data_named above
-                try:
-                    # XXX NOTE there is quite some confusion in the naming, but as of ibnode v3 the identities
-                    # that we are using for the "subgraph" are just the head subject identity, NOT the identity
-                    # of all the triples, this is ok, and is convenient because it will eventually allow us to
-                    # simplify things
+            if any(isinstance(e, rdflib.BNode) for e in (s, p, o)):  # to ensure symmetry with data_named above
+                if isinstance(s, rdflib.BNode):
+                    try:
+                        sid = self._blank_identities[s]
+                        ssgid, srep, sind = self._subgraph_and_integer[s]
+                        _s = sid, srep, sind, ssgid
+                    except KeyError as e:
+                        if p in (rdf.rest, rdf.first):
+                            _s = s
+                            srep = None
+                        else:
+                            raise e
+                else:
+                    _s = s
 
-                    #_s = rdflib.BNode(self._subgraph_and_integer[s]) if isinstance(s, rdflib.BNode) else s
-                    _s = self._blank_identities[s] if isinstance(s, rdflib.BNode) else s
-                    #_p = self._blank_identities[p] if isinstance(p, rdflib.BNode) else p  # XXX this case should NEVER happen
-                    _p = p
-                    #_o = rdflib.BNode(self._subgraph_and_integer[o]) if isinstance(o, rdflib.BNode) else o
-                    _o = self._blank_identities[o] if isinstance(o, rdflib.BNode) else o
-                    yield _s, _p, _o
-                except KeyError as e:
-                    breakpoint()
-                    raise e
+                _p = p
+
+                if isinstance(o, rdflib.BNode):
+                    try:
+                        oid = self._blank_identities[o]
+                        osgid, orep, oind = self._subgraph_and_integer[o]
+                        _o = oid, orep, oind, osgid
+                    except KeyError as e:
+                        if p in (rdf.rest, rdf.first):
+                            _o = o
+                            orep = None
+                        else:
+                            raise e
+                else:
+                    _o = o
+
+                yield _s, _p, _o
 
     @property
     def subgraphs(self):
@@ -385,8 +419,11 @@ class GraphIdentities:
 
     @property
     def metadata_count(self):
-        return len(list(self.graph.subjectGraph(self.bound_name)))
         #return self.metadata_named_count + sum(self.metadata_connected_counts.values())
+        if self.bound_name:
+            return len(list(self.graph.subjectGraph(self.bound_name)))
+        else:
+            return 0
 
     @property
     def data_named_count(self):  # FIXME unnamed should be called tainted
@@ -442,13 +479,15 @@ class GraphIdentities:
         return IdentityBNode(value).identity
 
     def process_graph(self):
-        def normalize(cmax, t, existing, sgid):
+        def normalize(cmax, t, existing, sgid, replica):
             for e in t:
                 if isinstance(e, rdflib.BNode):
                     if e not in existing:
                         cmax += 1
                         existing[e] = cmax
-                        self._subgraph_and_integer[e] = sgid, cmax
+                        if e in self._subgraph_and_integer:
+                            breakpoint()
+                        self._subgraph_and_integer[e] = sgid, replica, cmax
 
                     yield existing[e]
                 else:
@@ -479,7 +518,18 @@ class GraphIdentities:
             subgraph = list(g.subjectGraph(head_subject))
 
             cmax = 0
-            self._subgraph_and_integer[head_subject] = sgid, cmax
+
+            if head_subject in self._non_injective:
+                reps = self._itbni[self._blank_identities[head_subject]]
+                # replica ordering is arbitrary but also doesn't really matter
+                replica = reps.index(head_subject)
+            else:
+                replica = 0
+
+            if head_subject in self._subgraph_and_integer:
+                breakpoint()
+
+            self._subgraph_and_integer[head_subject] = sgid, replica, cmax
             existing = {head_subject:0}  # FIXME the head of a list is arbitrary :/
             normalized = []
             for trip in sorted(subgraph, key=sortkey):
@@ -496,13 +546,17 @@ class GraphIdentities:
                         # this particular example is avoided above via subjectGraph
                         raise TypeError('This should never happen!')
 
-                *ntrip, cmax = normalize(cmax, trip, existing, sgid)
+                *ntrip, cmax = normalize(cmax, trip, existing, sgid, replica)
                 normalized.append(tuple(ntrip))  # today we learned that * -> list
             return tuple(normalized)
 
         # hey kids watch this
         ibn = IdentityBNode(self.graph, debug=True)  # FIXME TODO should be able to compute data id by removing the metadata id from the final listing
-        self._metadata_identity = ibn.subject_embedded_identities[self.bound_name]
+        if list(self.metadata_raw):
+            self._metadata_identity = ibn.subject_embedded_identities[self.bound_name]
+        else:
+            self._metadata_identity = ibn.null_identity  # FIXME not sure if want?
+
         # this definition for _metadata_identity is not quite the same as the old way
         # the old way is equivalent to IdentityBNode([ibn.subject_embedded_identities[self.bound_name]]
         # we don't use the subject condensed identity here because we do actually need to know that the
@@ -535,6 +589,7 @@ class GraphIdentities:
             else:
                 itb[k] = v
 
+        self._itbni = itb
         self._non_injective = non_injective
         self._identity_to_bnode = {v:k for k, v in self._blank_identities.items()}
         self._connected_subgraph_identities = {
@@ -544,11 +599,15 @@ class GraphIdentities:
                 identity:normgraph(s, ibn.subgraph_mappings[s], identity)
                 for s, identity in ibn.unnamed_subgraph_identities.items()}
 
+        self._ibn = ibn  # for debug
+        self._are_you_kidding_me = {v:k for k, v in self._subgraph_and_integer.items()}  # if you want to invert something invert something >_<
         self._transaction_cache_identities.update(self._blank_identities.values())  # XXX likely redundant
         self._transaction_cache_identities.update(self._free_subgraph_identities)
         self._transaction_cache_identities.update(self._connected_subgraph_identities)
+        #breakpoint()
         return
 
+        """
         datas = ('metadata', self.metadata_raw), ('data', self.data_raw)
         self._blank_identities = {}
         self._identity_to_bnode = {}
@@ -604,16 +663,18 @@ class GraphIdentities:
         self._transaction_cache_identities.update(self._free_subgraph_identities)
         self._transaction_cache_identities.update(self._data_connected_subgraph_identities)
         self._transaction_cache_identities.update(self._metadata_connected_subgraph_identities)
+        """
 
 
 class GraphLoader(GraphIdentities):
 
     @staticmethod
-    def make_row(s, p, o, subgraph_and_integer, identity_to_bnode, subgraph_identity=None,):
+    def make_row(s, p, o, subgraph_and_integer, identity_to_bnode, self, subgraph_identity=None,):
+        # IT'S NOT A METHOD
+
+        ot = s, p, o
 
         fix = None
-
-        s_subgraph_identity, o_subgraph_identity = None, None
 
         """
         if isinstance(s, tuple):
@@ -641,77 +702,202 @@ class GraphLoader(GraphIdentities):
                 l[i] = o_lit_strip
                 return tuple(l)
 
+        s_subgraph_identity, o_subgraph_identity = None, None
+        replica, s_replica, o_replica = None, None, None
+
+        if type(s) == tuple:
+            sid, s_replica, sind, s_subgraph_identity = s
+            #sbn = self._are_you_kidding_me[s_subgraph_identity, s_replica, sind]
+            s = sind
+            subgraph_identity = s_subgraph_identity
+        elif type(s) == rdflib.BNode:
+            sid = None
+            sbn = s
+            s_subgraph_identity, s_replica, s = subgraph_and_integer[sbn]
+            subgraph_identity = s_subgraph_identity
+
+        if type(o) == tuple:
+            oid, o_replica, oind, o_subgraph_identity = o
+            #obn = self._are_you_kidding_me[o_subgraph_identity, o_replica, oind]
+            o = oind
+            subgraph_identity = o_subgraph_identity
+        elif type(o) == rdflib.BNode:
+            oid = None
+            obn = o
+            o_subgraph_identity, o_replica, o = subgraph_and_integer[obn]
+            subgraph_identity = o_subgraph_identity
+
+        if type(s) == int and type(o) == int and s == o:
+            tsigh = (sbn, p, obn)
+            if tsigh not in self.graph:
+                breakpoint()
+                # gotta be something with how the replica value is being set/determined
+                raise NotImplementedError('how is this even possible')
+
+            sigh_s, sigh_o = sbn in self._non_injective, obn in self._non_injective
+            sigh = (
+                # sigh clearly shows the problem along with derp_o
+                # it is that somehow o is somehow selecting the wrong replica, the right one can be
+                # seen in derp_o but is not the one specified by o_replica :/ maybe o_replica is being overwritten ???
+                (s, s_replica, sid, sbn, s_subgraph_identity),
+                (o, o_replica, oid, obn, o_subgraph_identity),
+            )
+            if sigh_s:
+                derp_s = [self._subgraph_and_integer[sbn] for sbn in self._itbni[sid]]
+            if sigh_o:
+                # FIXME somehow we have replicate 0 and 2 but not 1 ?!?!
+                derp_o = [self._subgraph_and_integer[obn] for obn in self._itbni[oid]]
+            breakpoint()
+            raise NotImplementedError('ugh')
+
+        if s_subgraph_identity is not None and o_subgraph_identity is not None:
+            if s_subgraph_identity != o_subgraph_identity:
+                # FIXME I'm betting this is another non-injective issue :/
+                # yes, but in a different place, specifically in the subgraph_and_integer place it seems
+                # because you can have complex expressions inside lists in rdf :/ ... ah no ... some
+                # XXX hrm, not quite so simple it seems
+                # seems like cases where there is a bnode that was the head of a list may head the sgid
+                # to be different somehow
+
+                # fixed most of these but still having issues related to lists where the full list is duplicated as the annotation target (eek?!)
+                # there should be duplicated structure? or rather, there is another injective point when mapping subgraph identity to bnode identity?
+                # XXX the reason why we don't detect this case in normgraph is because the object in question is
+                # in a subgraph in a list so the object id is never entered except possibly in ibn.bnode_identities ???
+                breakpoint()
+            assert s_subgraph_identity == o_subgraph_identity, f'sgid mismatch {s_subgraph_identity} != {o_subgraph_identity}'
+
+        if s_replica is not None and o_replica is not None:
+            #msg = f'should not be possible to have both s and o replica not None {s_replica} {o_replica}'
+            if s_replica != o_replica:
+                msg = f'mismatch s and o replica not None {s_replica} {o_replica}'
+                raise ValueError(msg)
+            replica = s_replica
+        elif s_replica is not None:
+            replica = s_replica
+        elif o_replica is not None:
+            replica = o_replica
+
+        if (type(ot[0]) == tuple or type(ot[-1]) == tuple) and replica is None:
+            breakpoint()
+            raise NotImplementedError('wat')
+
+        _replica = replica
+
         # assume p is uriref, issues should be caught before here
         p = str(p)
 
-        if type(s) == bytes:
-            s_subgraph_identity, s = subgraph_and_integer[identity_to_bnode[s]]
-            subgraph_identity = s_subgraph_identity
-
-        if type(o) == bytes:
-            # if an identity is supplied as an object shift it automatically
-            #subgraph_identity = o
-            #o = 0
-            o_subgraph_identity, o = subgraph_and_integer[identity_to_bnode[o]]
-            subgraph_identity = o_subgraph_identity
-
-        if s_subgraph_identity is not None and o_subgraph_identity is not None:
-            assert s_subgraph_identity == o_subgraph_identity, f'sgid mismatch {s_subgraph_identity} != {o_subgraph_identity}'
+        # FIXME TODO triple identity is not straight forward right now
+        # we technically don't need it for subgraphs because those
+        # pretty much always have to be pulled in together, so only
+        # the named subset will get triple ids that are distinct from
+        # a subgraph id, the alternative would be to also provided
+        # triple identities for triples with blank nodes, but that
+        # isn't actually helpful because it already requires having
+        # digested the whole subgraph to get the deterministic checksum
+        # for all the objects, so it doesn't speed anything up more
+        # than what we already have with the identified subgraphs
+        # making sure that the subgraph identifier is what we expect
+        # and documenting exactly which value it uses is thus critical
 
         if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.URIRef):
-            columns = 's, p, o'
+            """
+            tis = dict(
+                triple_identity = IdentityBNode((s, ot[1], o)),
+                triple_identity_alt_1 = IdentityBNode((str(s), p, str(o))),
+                triple_identity_alt_2 = IdentityBNode((s, p, o)),  # same as 1 and 0, also simplest, so good to go
+                triple_identity_alt_3 = IdentityBNode(((s, p, o),)),
+                ti_t = IdentityBNode((s + p + o,)),
+                ti_s1 = IdentityBNode(str(s) + str(p) + str(o)),
+                ti_s2 = IdentityBNode((str(s + p + o),)),
+                ti_s3 = IdentityBNode(str(s + p + o)),
+                ti_s4 = IdentityBNode(str(s + ' ' + p + ' ' + o)),
+                WAAAAA = IdentityBNode(s + p + o),  # XXX hilariously broken right now
+            )
+            """
+            triple_identity = IdentityBNode((s, p, o)).identity
+            columns = 's, p, o, triple_identity'
             record = (str(s),
                       p,
-                      str(o))
+                      str(o),
+                      triple_identity)
 
         elif isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.Literal):
-            columns = 's, p, o_lit, datatype, language'
+            triple_identity = IdentityBNode((s, p, o)).identity
+            columns = 's, p, o_lit, datatype, language, triple_identity'
             o_lit = str(o)
             record = (str(s),
                       p,
                       o_lit,
                       str_None(o.datatype),
-                      str_None(o.language))
+                      str_None(o.language),
+                      triple_identity)
             fix = ols(o_lit, record, 2)
 
         elif isinstance(s, rdflib.URIRef) and isinstance(o, int) and subgraph_identity is not None:
-            columns = 's, p, o_blank, subgraph_identity'
+            assert o == 0 and o_replica is not None  # FIXME TODO constraint in database
+            columns = 's, p, o_blank, subgraph_identity, subgraph_replica'
             record = (str(s),
                       p,
                       o,
-                      subgraph_identity)
+                      subgraph_identity,
+                      replica)
 
         elif isinstance(s, int) and isinstance(o, int) and subgraph_identity is not None:
-            columns = 's_blank, p, o_blank, subgraph_identity'
+            if s == 0: assert s_replica is not None  # FIXME TODO constraint in database
+            if s > 0:
+                # discard replica here because we only keep it because
+                # we have to map back to an exact known bnode not just
+                # regenerate the subgraph for s_blank > 0
+                replica = None
+            columns = 's_blank, p, o_blank, subgraph_identity, subgraph_replica'
             record = (s,
                       p,
                       o,
-                      subgraph_identity)
+                      subgraph_identity,
+                      replica)
 
         elif isinstance(s, int) and isinstance(o, rdflib.URIRef) and subgraph_identity is not None:
-            columns = 's_blank, p, o, subgraph_identity'
+            if s == 0: assert s_replica is not None  # FIXME TODO constraint in database
+            if s > 0:
+                # discard replica here because we only keep it because
+                # we have to map back to an exact known bnode not just
+                # regenerate the subgraph for s_blank > 0
+                replica = None
+
+            columns = 's_blank, p, o, subgraph_identity, subgraph_replica'
             record = (s,
                       p,
                       str(o),
-                      subgraph_identity)
+                      subgraph_identity,
+                      replica)
 
         elif isinstance(s, int) and isinstance(o, rdflib.Literal) and subgraph_identity is not None:
-            columns = 's_blank, p, o_lit, datatype, language, subgraph_identity'
+            if s == 0: assert s_replica is not None  # FIXME TODO constraint in database
+            if s > 0:
+                # discard replica here because we only keep it because
+                # we have to map back to an exact known bnode not just
+                # regenerate the subgraph for s_blank > 0
+                replica = None
+
+            columns = 's_blank, p, o_lit, datatype, language, subgraph_identity, subgraph_replica'
             o_lit = str(o)
             record = (s,
                       p,
                       o_lit,
                       str_None(o.datatype),
                       str_None(o.language),
-                      subgraph_identity)
+                      subgraph_identity,
+                      replica)
             fix = ols(o_lit, record, 2)
 
         else:
+            # expecting to land here when we get bnodes from rdf lists
+            breakpoint()
             raise ValueError(f'{s} {p} {o} {subgraph_identity} has an unknown or invalid type signature')
 
         #lc, lr = len(columns.split(', ')), len(record)
         #assert lc == lr, f'lengths {lc} != {lr} do not match {columns!r} {record}'
-        return columns, record, fix
+        return columns, record, fix, _replica
 
     def check_triple(self, s, p, o):  # XXX TODO
         # see [[file:../docs/explaining.org::*Do we allow no =/base/= triples in the triples table?]]
@@ -749,13 +935,24 @@ class GraphLoader(GraphIdentities):
 
             yield 'INSERT INTO curies', '', to_insert, to_fix
 
-        def back_convert_sigh(s, p, o):
+        def back_convert_sigh(s, p, o, replica):
+            _os, _oo = s, o
             # FIXME SO DUMB
-            if type(s) == bytes:
-                s = self._identity_to_bnode[s]
+            # FIXME is this somehow non-injective !??!?! YES YES IT IS :D
+            # so, if there are somehow duplicate unnamed graphs we don't catch them
+            if type(s) == tuple:
+                sid, s_replica, sind, ssgid = s
+                s = self._are_you_kidding_me[ssgid, s_replica, sind]
+                if s_replica != replica:
+                    breakpoint()
+                assert s_replica == replica, f'sigh {s_replica} {replica}'
 
-            if type(o) == bytes:
-                o = self._identity_to_bnode[o]
+            if type(o) == tuple:
+                oid, o_replica, oind, osgid = o
+                o = self._are_you_kidding_me[osgid, o_replica, oind]
+                if o_replica != replica:
+                    breakpoint()
+                assert o_replica == replica, f'sigh {o_replica} {replica}'
 
             return s, p, o
 
@@ -771,13 +968,14 @@ class GraphLoader(GraphIdentities):
             for s, p, o in sorted(self.metadata, key=sortkey):  # FIXME resolve bnode ordering issue?
                 s = bn if s is None else s
                 self.check_triple(s, p, o)
-                columns, record, fix = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode)
+                columns, record, fix, replica = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
                 to_insert[columns].append(record)
                 if fix is not None:
                     to_fix[columns].append((record, fix))
 
                 if debug:
-                    done_trips.add(back_convert_sigh(s, p, o))
+                    done_trips.add(back_convert_sigh(s, p, o, replica))
+                    #[done_trips.add(t) for t in back_convert_sigh(s, p, o)]
 
             yield prefix, suffix, to_insert, to_fix
 
@@ -794,13 +992,14 @@ class GraphLoader(GraphIdentities):
                 # FIXME wait, how did this ever work, make_row has always needed identity for bnodes
                 # if there was a subgraph involved also, data includes cases where the subject is a bnode ... wtf
                 self.check_triple(s, p, o)
-                columns, record, fix = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode)
+                columns, record, fix, replica = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
                 to_insert[columns].append(record)
                 if fix is not None:
                     to_fix[columns].append((record, fix))
 
                 if debug:
-                    done_trips.add(back_convert_sigh(s, p, o))
+                    done_trips.add(back_convert_sigh(s, p, o, replica))
+                    #[done_trips.add(t) for t in back_convert_sigh(s, p, o)]
 
             yield prefix, suffix, to_insert, to_fix
 
@@ -831,6 +1030,8 @@ class GraphLoader(GraphIdentities):
                     if isinstance(e, rdflib.BNode):
                         return True
 
+        # FIXME all this is _supposed_ to have already been handled when we iterate over data above ????? data unnamed should have this stuff in it ???
+        """
         assert self.subgraph_identities or not has_bnodes(self.graph), 'missing subgraph identities in a graph with bnodes'
         for identity, subgraph in self.subgraph_identities.items():
             if self.debug:
@@ -853,16 +1054,35 @@ class GraphLoader(GraphIdentities):
                     if debug:
                         #done_trips.add(t)
                         done_trips.add(back_convert_sigh(*t))
+                        #[done_trips.add(t) for t in back_convert_sigh(*t)]
 
+        """
         if debug:
+            oops_trips = done_trips - all_trips
+            if oops_trips:
+                breakpoint()
+                raise NotImplementedError('NotImplementedCorrectlyError more like ...')
+
             missing_trips = all_trips - done_trips
             if self._non_injective:
+                # FIXME this is still not right because it removes ALL the subjects
+                # without properly checking for matched sets ...
+                injes = [v for v in self._identity_to_bnode.values() if isinstance(v, list)]
                 omt = missing_trips
-                missing_trips = set(t for t in missing_trips if t[0] not in self._non_injective)
+                missing_trips = set(t for t in missing_trips
+                                    if t[0] not in self._non_injective
+                                    # yes, seemingly duplicate linker triples can get left out too
+                                    # if the identity of the connected subgraph is also a free subgraph!
+                                    # ARGH
+                                    and t[2] not in self._non_injective)
                 due_to_non_injective = omt - missing_trips
-                msg = f'the following trips have non-injective issues {due_to_non_injective}'
-                log.warning(msg)
+                if due_to_non_injective:
+                    msg = f'the following trips have non-injective issues {due_to_non_injective}'
+                    log.warning(msg)
+            else:
+                due_to_non_injective = set()
 
+            msg = ''
             if missing_trips:
                 # XXX the non-injective nature of free subgraphs means that a file might have multiple
                 # copies of the same graph and when we run back_convert_sigh it normalizes those to the
@@ -877,8 +1097,17 @@ class GraphLoader(GraphIdentities):
                 # idents.bnode_identities assumes injectivity incorrectly and there are two identical
                 # graphs in the input that use different bnode ids but we can't recover one of them because
                 # we don't get the full list ... ok, it is clear where to start fixing this
-                breakpoint()
                 msg = f'the following trips were not prepared for insert: {missing_trips}'
+
+            if due_to_non_injective:
+                _msg = f'the following trips were not prepared for insert due to non-injective issues: {due_to_non_injective}'
+                if msg:
+                    msg += '\nin addition ' + _msg
+                else:
+                    msg = _msg
+
+            if msg:
+                breakpoint()
                 raise exc.LoadError(msg)
 
         prefix = 'INSERT INTO triples'
@@ -1376,7 +1605,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             ((NOTN, NOTN, NOTN), all_nn),
             ((___n, ___n, ___n), all_none),  # fail if not on
             ((NOTN, ___n, ___n), set_d),  # OK bn as ebn
-            ((___n, NOTN, ___n), bn_none, self.expected_bound_name),
+            ((___n, NOTN, ___n), bn_none, self.expected_bound_name),  # FIXME resolving ebn at switch definition time vs at call time
             ((___n, ___n, NOTN), bn_none, expected_bound_name),
             ((___n, NOTN, NOTN), bn_none, None, 'existing expected bound name exists and does not match new'),
             ((NOTN, ___n, NOTN), pairs, 'bound name does not match new expected bound name'),
@@ -1429,7 +1658,6 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                     output += (f'WARNING: Existing expected bound name {self.expected_bound_name} '
                                f'already exists for reference name {self.reference_name}.\n')
         """
-
 
     # names
     @property
@@ -1633,7 +1861,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             # data + structure of data + decoupling rules + identity function on data
             # eg bound_name is raw bytes + rdf:type owl:Ontology as subset rule
             counts = self.Loader.counts
-            counts[self.serialization_identity] = self.Loader.data_count
+            counts[self.serialization_identity] = self.Loader.data_count + self.Loader.metadata_count
             self._identity_triple_count = counts
 
         return self._identity_triple_count[identity]
@@ -1699,10 +1927,17 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                         ('subgraph', *self.Loader.free_subgraph_identities))
         assert not any(v is None for t, *vs in types_idents
                        for v in vs), f'oops! {[(t, v) for t, v in types if v is None]}'
-        values = ((i, type, self.identity_triple_count(i))
+        values = [(i, type, self.identity_triple_count(i))
                   for type, *identities in types_idents
-                  for i in identities)
-        vt, params_i = makeParamsValues(values, constants=(':rn',))
+                  for i in identities]
+
+        try:
+            wat = makeParamsValues(values, constants=(':rn',))
+            vt, params_i = wat
+        except Exception as e:
+            breakpoint()  # FIXME SIGH some nonsense here
+            raise e
+
         params_i['rn'] = self.reference_name
         sql_ident = sql_ident_base + vt + ' ON CONFLICT DO NOTHING'  # TODO FIXME XXX THIS IS BAD
         #breakpoint()  # TODO
@@ -1892,7 +2127,7 @@ class FileFromFileFactory(FileFromBaseFactory):
         return super().check(name)
 
     def __call__(self, expected_bound_name):
-        setup_ok = super().__call__(expected_bound_name)
+        setup_failed = super().__call__(expected_bound_name)
         # XXX leaving this as a warning don't pass graph in directly
         # to this class it _should_ fail subclasss TripleLoader if you need that
         # make sure we have populated values before unsetting path
@@ -1900,7 +2135,7 @@ class FileFromFileFactory(FileFromBaseFactory):
         # self.format
         # self.serialization
         self.path = None  # avoid poluting the class namespace
-        return setup_ok
+        return setup_failed
 
     @property
     def serialization(self):
@@ -1948,7 +2183,7 @@ class FileFromIRIFactory(FileFromBaseFactory):
         if expected_bound_name is None:
             expected_bound_name = self.name  # TODO better error for when prepare has not been called
 
-        super().__call__(expected_bound_name)
+        return super().__call__(expected_bound_name)
 
     @property
     def header(self):
@@ -2063,7 +2298,7 @@ class FileFromPostFactory(FileFromIRIFactory):
         self._serialization = serialization
 
         self.reference_name
-        super().__call__(self.expected_bound_name)
+        return super().__call__(self.expected_bound_name)
 
     @property
     def serialization(self):

@@ -3,7 +3,7 @@ import rdflib
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.sql import text as sql_text
 from pyontutils import combinators as cmb
-from pyontutils.core import OntId
+from pyontutils.core import OntId, OntGraph
 from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import ILX, ilxtr, oboInOwl, owl, rdf, rdfs
 from pyontutils.namespaces import definition
@@ -91,12 +91,12 @@ class InterLexLoad:
             #'WHERE fragment_prefix_sequences.prefix = EXCLUDED.prefix')], [params])
 
         if self.graph is None:
-            self.graph = rdflib.Graph()
+            self.graph = OntGraph()  # rdflib.Graph()
             mg = makeGraph('', graph=self.graph)  # FIXME I swear I fixed this already
             [mg.add_trip(*t) for t in self.triples]
 
         self.loader._graph = self.graph
-        name = 'http://toms.ilx.dump/TODO'
+        name = rdflib.URIRef('http://toms.ilx.dump/TODO')
         self.loader.Loader._bound_name = name
         #self.loader.expected_bound_name = name
         self.loader._serialization = repr((name, self.triples)).encode()
