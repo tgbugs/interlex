@@ -206,17 +206,23 @@ class TestLoader(unittest.TestCase):
             if setup_failed:
                 raise exc.LoadError(setup_failed)
             http_resp = loader.load(commit=False)  # XXX FIXME really should not be returning an http response here, so incredibly complected
+            return loader
 
         session = getSession()
-        load_graph(session, graph)
+        loader = load_graph(session, graph)
         q = Queries(session)
-        o_rows = q.getBySubject(ontid, None)
-        t_rows = q.getBySubject(thingid, None)
-        e_rows = q.getBySubject(evilid, None)
-        e2_rows = q.getBySubject(evilid2, None)
-        # FIXME yeah missing the free subgraphs, which is not at all surprising
-        # because it is not clear how we would retrieve them anyway
-        rows = o_rows + t_rows + e_rows + e2_rows
+        hrm = q.getGraphByBoundName(ontid)
+        if True:
+            rows = hrm
+        else:
+            o_rows = q.getBySubject(ontid, None)
+            t_rows = q.getBySubject(thingid, None)
+            e_rows = q.getBySubject(evilid, None)
+            e2_rows = q.getBySubject(evilid2, None)
+            # FIXME yeah missing the free subgraphs, which is not at all surprising
+            # because it is not clear how we would retrieve them anyway
+            rows = o_rows + t_rows + e_rows + e2_rows
+
         te = TripleExporter()
         out_graph = OntGraph()
         # FIXME TODO curies etc.

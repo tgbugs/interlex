@@ -809,6 +809,68 @@ class Queries:
         resp = list(self.session_execute(sql, args))
         return resp
 
+    def getReplicasByIdentity(self, identity):
+        # XXX this should probably not be used, there should be a join variant that will properly attach the replicas for the given identity and produce ALL the duplicated triples in a single pass
+        args = dict(identity=identity)
+        sql = '''
+        select * from subgraph_replicas where data_or_metadata_identity = :identity
+        '''
+        resp = list(self.session_execute(sql, args))
+        return resp
+
+    def getGraphByBoundName(self, bound_name):
+        # defaults to latest probably
+        # FIXME need to do a query to get the latest first and then call getGraphByIdentity instead of the direct way we do it here, but this is ok for now
+        # if we ran this once there were multiple identities pulled in we would serialize all versions into a single file
+
+        args = dict(bound_name=bound_name)
+        # TODO currently a first pass, we will need a separate query to subgraph_replicas to deal with the non-injective issues but it it is 
+        # FIXME TODO actually there might be a not completely horrible way to achieve this by using some join variant so that all the subgraph
+        # rows duplicate themselves per replica ... actually we should definitely be able to do that ...
+        sql = '''
+select
+t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity -- , t.subgraph_replica
+from identity_relations as ird
+join identity_named_triples_ingest as inti on ird.o = inti.subject_embedded_identity
+join triples as t on inti.triple_identity = t.triple_identity
+where ird.s in
+(select irs.o
+ -- ir.s, ir.p, ir.o, ids.type, dids.type
+from identity_relations as irs
+join identities as ids on irs.o = ids.identity
+where
+ids.type = 'data' and
+irs.s in (select identity from identities as ids join reference_names as rns on rns.name = ids.reference_name  where ids.type = 'serialization' and rns.expected_bound_name = :bound_name)
+)
+UNION
+select
+t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity -- , t.subgraph_replica
+from triples as t
+where
+t.subgraph_identity in
+(select irs.o
+from identity_relations as irs
+join identities as ids on irs.o = ids.identity
+where
+ids.type = 'subgraph' and
+irs.s in (select identity from identities as ids join reference_names as rns on rns.name = ids.reference_name  where ids.type = 'serialization' and rns.expected_bound_name = :bound_name)
+)
+        '''
+        resp = list(self.session_execute(sql, args))
+        return resp
+
+
+    def getGraphByIdentity(self, identity):
+        args = dict(identity=identity)
+        # FIXME going to have to deal with replicas and matching replicas between versions :/
+        sql = '''
+        WITH graph AS (
+
+        ), subgraphs AS ()
+        '''
+        resp = list(self.session_execute(sql, args))
+        return resp
+
     def getBySubject(self, subject, user):
         # FIXME ah uri normalization ... what to do about you
         args = dict(uri=subject)

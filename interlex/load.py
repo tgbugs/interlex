@@ -171,6 +171,11 @@ class GraphIdentities:
         return self.get_identity('data')
 
     @property
+    def data_named_subject_identities(self):
+        bn = self.bound_name
+        return {v:k for k, v in self._ibn.subject_embedded_identities.items() if isinstance(k, rdflib.URIRef) and k != bn}
+
+    @property
     def subgraph_identities(self):
         return {**self.connected_subgraph_identities, **self.free_subgraph_identities}
 
@@ -434,6 +439,11 @@ class GraphIdentities:
         return {i:len(sg) for i, sg in self.data_connected_subgraph_identities.items()}
 
     @property
+    def data_named_subject_counts(self):
+        # FIXME TODO make sure these match on roundtrip
+        return {k:len(self._ibn.subject_identities[k]) for k in self.data_named_subject_identities}
+
+    @property
     def data_count(self):
         return len(list(self.data))  # self.data is already data_named + data_unnamed ... aka data_connected ...
         #return self.data_named_count + sum(self.data_connected_counts.values())
@@ -454,6 +464,7 @@ class GraphIdentities:
         counts = {self.curies_identity:self.curies_count,
                   self.metadata_identity:self.metadata_count,
                   self.data_identity:self.data_count,
+                  **self.data_named_subject_counts,
                   **self.connected_counts,
                   **self.free_counts}
 
@@ -799,6 +810,8 @@ class GraphLoader(GraphIdentities):
         # making sure that the subgraph identifier is what we expect
         # and documenting exactly which value it uses is thus critical
 
+        triple_identity = None
+        subject_embedded_identity = None
         if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.URIRef):
             """
             tis = dict(
@@ -814,6 +827,7 @@ class GraphLoader(GraphIdentities):
                 WAAAAA = IdentityBNode(s + p + o),  # XXX hilariously broken right now
             )
             """
+            subject_embedded_identity = self._ibn.subject_embedded_identities[s]
             triple_identity = IdentityBNode((s, p, o)).identity
             columns = 's, p, o, triple_identity'
             record = (str(s),
@@ -822,6 +836,7 @@ class GraphLoader(GraphIdentities):
                       triple_identity)
 
         elif isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.Literal):
+            subject_embedded_identity = self._ibn.subject_embedded_identities[s]
             triple_identity = IdentityBNode((s, p, o)).identity
             columns = 's, p, o_lit, datatype, language, triple_identity'
             o_lit = str(o)
@@ -897,7 +912,7 @@ class GraphLoader(GraphIdentities):
 
         #lc, lr = len(columns.split(', ')), len(record)
         #assert lc == lr, f'lengths {lc} != {lr} do not match {columns!r} {record}'
-        return columns, record, fix, _replica
+        return columns, record, fix, _replica, subject_embedded_identity, triple_identity
 
     def check_triple(self, s, p, o):  # XXX TODO
         # see [[file:../docs/explaining.org::*Do we allow no =/base/= triples in the triples table?]]
@@ -928,6 +943,8 @@ class GraphLoader(GraphIdentities):
 
         if not curies_done:
             c = []
+            # FIXME serialization_identity is not always present if triples never passed through
+            # a definite serialized form, fortunately
             to_insert = {'serialization_identity, curie_prefix, iri_prefix':c}
             to_fix = {}
             for curie_prefix, iri_prefix in sorted(self.curies):  # FIXME ordering issue
@@ -959,16 +976,28 @@ class GraphLoader(GraphIdentities):
         def sortkey(triple):  # FIXME this a bad way to sort...
             return tuple(e if isinstance(e, str) else str(e) for e in triple)
 
+        identity_triples = []
         prefix = 'INSERT INTO triples'
         suffix = 'ON CONFLICT DO NOTHING'  # FIXME BAD
+        # NOTE we cannot use ON CONFICT (s, p, o) DO SOMETHING because we actually need to match multiple unique constraints
+        # which postgres currently cannot achieve, so if a triple identity is missing then we are out of luck
+        # and have to issue a manual fix
         bn = self.bound_name
         if not metadata_done:
             to_insert = defaultdict(list)  # should all be unique
             to_fix = defaultdict(list)
+            mi = self.metadata_identity
             for s, p, o in sorted(self.metadata, key=sortkey):  # FIXME resolve bnode ordering issue?
                 s = bn if s is None else s
                 self.check_triple(s, p, o)
-                columns, record, fix, replica = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
+                columns, record, fix, replica, seid, tid = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
+                if seid is not None:
+                    # FIXME seid here should always be the same as metadata_identity which will simplify insert
+                    if seid != mi:
+                        breakpoint()
+                    assert seid == mi
+                    identity_triples.append((seid, tid))
+
                 to_insert[columns].append(record)
                 if fix is not None:
                     to_fix[columns].append((record, fix))
@@ -992,7 +1021,10 @@ class GraphLoader(GraphIdentities):
                 # FIXME wait, how did this ever work, make_row has always needed identity for bnodes
                 # if there was a subgraph involved also, data includes cases where the subject is a bnode ... wtf
                 self.check_triple(s, p, o)
-                columns, record, fix, replica = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
+                columns, record, fix, replica, seid, tid = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
+                if seid is not None:
+                    identity_triples.append((seid, tid))
+
                 to_insert[columns].append(record)
                 if fix is not None:
                     to_fix[columns].append((record, fix))
@@ -1002,6 +1034,17 @@ class GraphLoader(GraphIdentities):
                     #[done_trips.add(t) for t in back_convert_sigh(s, p, o)]
 
             yield prefix, suffix, to_insert, to_fix
+
+        # identity triples mapping, we need the triple id to subject embedded identity, which for bnode headed subgraphs is the same
+        to_insert = defaultdict(list)
+        to_fix = defaultdict(list)
+        prefix = 'INSERT INTO identity_named_triples_ingest'
+        suffix = ''
+        #suffix = 'ON CONFLICT DO NOTHING'
+        to_insert['subject_embedded_identity, triple_identity'] = identity_triples
+        #'INSERT INTO identities (reference_name, identity, type, triples_count VALUES'
+        #'INSERT INTO identity_relations'
+        yield prefix, suffix, to_insert, to_fix
 
         def int_str(e, pref=' ' * 5):
             return pref + f'{e:0>5}' if isinstance(e, int) else e
@@ -1057,6 +1100,11 @@ class GraphLoader(GraphIdentities):
                         #[done_trips.add(t) for t in back_convert_sigh(*t)]
 
         """
+        prefix = 'INSERT INTO triples'
+        suffix = 'ON CONFLICT DO NOTHING'  # FIXME BAD
+        if to_insert:
+            yield prefix, suffix, {k:v for k, v in to_insert.items()}, dict(to_fix)
+
         if debug:
             oops_trips = done_trips - all_trips
             if oops_trips:
@@ -1110,10 +1158,6 @@ class GraphLoader(GraphIdentities):
                 breakpoint()
                 raise exc.LoadError(msg)
 
-        prefix = 'INSERT INTO triples'
-        suffix = 'ON CONFLICT DO NOTHING'  # FIXME BAD
-        if to_insert:
-            yield prefix, suffix, {k:v for k, v in to_insert.items()}, dict(to_fix)
 
 
 class LoadProv:
@@ -1924,6 +1968,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                         #('bound_name', self.bound_name_identity),
                         ('metadata', self.Loader.metadata_identity),
                         ('data', self.Loader.data_identity),
+                        ('subject_graph', *self.Loader.data_named_subject_identities),  # these ids are for non bnode only, the identity is computed over the whole subject graph, but only the named set of triples need to be inserted into the identities to triples table
                         ('subgraph', *self.Loader.free_subgraph_identities))
         assert not any(v is None for t, *vs in types_idents
                        for v in vs), f'oops! {[(t, v) for t, v in types if v is None]}'
@@ -1947,9 +1992,16 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         # TODO INSERT INTO name_to_identity
 
         sql_ident_rel_base = 'INSERT INTO identity_relations (p, s, o) VALUES '
-        values_ident_rel = ((self.serialization_identity, part_ident)
-                            for _, *part_idents in types_idents[1:]
-                            for part_ident in part_idents)
+        values_ident_rel = [(self.serialization_identity, part_ident)
+                            for _part, *part_idents in types_idents[1:]
+                            for part_ident in part_idents if
+                            # subject graph is linked via the data, it
+                            # is an extra join in the query but cuts
+                            # the table size in half
+                            _part != 'subject_graph'
+                            ]
+        values_ident_rel += [(self.Loader.data_identity, dnsi)
+                             for dnsi in self.Loader.data_named_subject_identities]
         # TODO dereferencedTo for name -> identity
         vt, params_ir = makeParamsValues(values_ident_rel, constants=(':p',))
         params_ir['p'] = 'hasPart'
