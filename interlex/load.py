@@ -812,6 +812,7 @@ class GraphLoader(GraphIdentities):
 
         triple_identity = None
         subject_embedded_identity = None
+        replica_helper = None
         if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.URIRef):
             """
             tis = dict(
@@ -849,60 +850,42 @@ class GraphLoader(GraphIdentities):
             fix = ols(o_lit, record, 2)
 
         elif isinstance(s, rdflib.URIRef) and isinstance(o, int) and subgraph_identity is not None:
-            assert o == 0 and o_replica is not None  # FIXME TODO constraint in database
-            columns = 's, p, o_blank, subgraph_identity, subgraph_replica'
+            replica_helper = str(s), None, p, subgraph_identity, replica
+            columns = 's, p, o_blank, subgraph_identity'
             record = (str(s),
                       p,
                       o,
-                      subgraph_identity,
-                      replica)
+                      subgraph_identity)
 
         elif isinstance(s, int) and isinstance(o, int) and subgraph_identity is not None:
-            if s == 0: assert s_replica is not None  # FIXME TODO constraint in database
-            if s > 0:
-                # discard replica here because we only keep it because
-                # we have to map back to an exact known bnode not just
-                # regenerate the subgraph for s_blank > 0
-                replica = None
-            columns = 's_blank, p, o_blank, subgraph_identity, subgraph_replica'
+            if s == 0:
+                replica_helper = None, s, p, subgraph_identity, replica
+            columns = 's_blank, p, o_blank, subgraph_identity'
             record = (s,
                       p,
                       o,
-                      subgraph_identity,
-                      replica)
+                      subgraph_identity)
 
         elif isinstance(s, int) and isinstance(o, rdflib.URIRef) and subgraph_identity is not None:
-            if s == 0: assert s_replica is not None  # FIXME TODO constraint in database
-            if s > 0:
-                # discard replica here because we only keep it because
-                # we have to map back to an exact known bnode not just
-                # regenerate the subgraph for s_blank > 0
-                replica = None
-
-            columns = 's_blank, p, o, subgraph_identity, subgraph_replica'
+            if s == 0:
+                replica_helper = None, s, p, subgraph_identity, replica
+            columns = 's_blank, p, o, subgraph_identity'
             record = (s,
                       p,
                       str(o),
-                      subgraph_identity,
-                      replica)
+                      subgraph_identity)
 
         elif isinstance(s, int) and isinstance(o, rdflib.Literal) and subgraph_identity is not None:
-            if s == 0: assert s_replica is not None  # FIXME TODO constraint in database
-            if s > 0:
-                # discard replica here because we only keep it because
-                # we have to map back to an exact known bnode not just
-                # regenerate the subgraph for s_blank > 0
-                replica = None
-
-            columns = 's_blank, p, o_lit, datatype, language, subgraph_identity, subgraph_replica'
+            if s == 0:
+                replica_helper = None, s, p, subgraph_identity, replica
+            columns = 's_blank, p, o_lit, datatype, language, subgraph_identity'
             o_lit = str(o)
             record = (s,
                       p,
                       o_lit,
                       str_None(o.datatype),
                       str_None(o.language),
-                      subgraph_identity,
-                      replica)
+                      subgraph_identity)
             fix = ols(o_lit, record, 2)
 
         else:
@@ -912,7 +895,7 @@ class GraphLoader(GraphIdentities):
 
         #lc, lr = len(columns.split(', ')), len(record)
         #assert lc == lr, f'lengths {lc} != {lr} do not match {columns!r} {record}'
-        return columns, record, fix, _replica, subject_embedded_identity, triple_identity
+        return columns, record, fix, _replica, subject_embedded_identity, triple_identity, replica_helper
 
     def check_triple(self, s, p, o):  # XXX TODO
         # see [[file:../docs/explaining.org::*Do we allow no =/base/= triples in the triples table?]]
@@ -977,6 +960,7 @@ class GraphLoader(GraphIdentities):
             return tuple(e if isinstance(e, str) else str(e) for e in triple)
 
         identity_triples = []
+        replicas = []
         prefix = 'INSERT INTO triples'
         suffix = 'ON CONFLICT DO NOTHING'  # FIXME BAD
         # NOTE we cannot use ON CONFICT (s, p, o) DO SOMETHING because we actually need to match multiple unique constraints
@@ -990,13 +974,18 @@ class GraphLoader(GraphIdentities):
             for s, p, o in sorted(self.metadata, key=sortkey):  # FIXME resolve bnode ordering issue?
                 s = bn if s is None else s
                 self.check_triple(s, p, o)
-                columns, record, fix, replica, seid, tid = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
+                columns, record, fix, replica, seid, tid, rh = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
                 if seid is not None:
                     # FIXME seid here should always be the same as metadata_identity which will simplify insert
                     if seid != mi:
                         breakpoint()
                     assert seid == mi
                     identity_triples.append((seid, tid))
+
+                if rh is not None:
+                    rrow = mi, *rh
+                    if rrow not in replicas:
+                        replicas.append(rrow)
 
                 to_insert[columns].append(record)
                 if fix is not None:
@@ -1011,6 +1000,7 @@ class GraphLoader(GraphIdentities):
         if not data_done:
             to_insert = defaultdict(list)  # should all be unique
             to_fix = defaultdict(list)
+            di = self.data_identity
             # FIXME between data_named and subgraph_identities we have
             # the set of triples that have a named subject and bn object
             # those are needed to complete the graph but are not easily accessible :/
@@ -1021,9 +1011,14 @@ class GraphLoader(GraphIdentities):
                 # FIXME wait, how did this ever work, make_row has always needed identity for bnodes
                 # if there was a subgraph involved also, data includes cases where the subject is a bnode ... wtf
                 self.check_triple(s, p, o)
-                columns, record, fix, replica, seid, tid = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
+                columns, record, fix, replica, seid, tid, rh = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
                 if seid is not None:
                     identity_triples.append((seid, tid))
+
+                if rh is not None:
+                    rrow = di, *rh
+                    if rrow not in replicas:
+                        replicas.append(rrow)
 
                 to_insert[columns].append(record)
                 if fix is not None:
@@ -1044,6 +1039,35 @@ class GraphLoader(GraphIdentities):
         to_insert['subject_embedded_identity, triple_identity'] = identity_triples
         #'INSERT INTO identities (reference_name, identity, type, triples_count VALUES'
         #'INSERT INTO identity_relations'
+        yield prefix, suffix, to_insert, to_fix
+
+        # replicas
+        to_insert = defaultdict(list)
+        to_fix = defaultdict(list)
+        prefix = 'INSERT INTO subgraph_replicas'
+        suffix = ''
+        # only once we have all the replicas collected can we identify
+        # cases where a subgraph appears in the object position first
+        # and cull other references to that same replica, dedupe happens
+        # above because if a head bnode is the subject in multiple triples
+        # then a row will be added each time and that is easier to handle above
+        #rep_object_starts = set([(d, i) for d, s, b, p, i, r in replicas if s is not None])
+        #_replicas_deobj = [  # FIXME this is too restrictive because there are cases where a bnode is both free and a connector (multi-and-no-parent)
+            #(d, s, b, p, i, r) for d, s, b, p, i, r in replicas
+            #if not ((d, i) in rep_object_starts and s is None)]
+        replicas_deobj = replicas
+        #breakpoint()
+        to_insert['data_or_metadata_identity, s, s_blank, p, subgraph_identity, replica'] = replicas_deobj
+        # yes, we do expect multiple duplicate replica rows because a single bnode may appear
+        # in an arbitrary number of places in the graph it is an explicit bnode and the data
+        # that gets inserted into the replicas table will look
+        if False:
+            from collections import Counter
+            wat = Counter(replicas).most_common()
+            hrm = self.subgraph_identities[wat[0][0][-2]]
+            zz = Counter(replicas_deobj).most_common()
+            qq = self.subgraph_identities[zz[0][0][-2]]
+            breakpoint()
         yield prefix, suffix, to_insert, to_fix
 
         def int_str(e, pref=' ' * 5):
