@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 from pathlib import Path
 from sqlalchemy.sql import text as sql_text
+from pyontutils.core import OntGraph
 from interlex import exceptions as exc
 from interlex.core import FakeSession
 from interlex.load import FileFromFileFactory, FileFromIRIFactory, TripleLoaderFactory
@@ -107,7 +108,6 @@ class TestLoader(unittest.TestCase):
         import rdflib
         import uuid
         from pyontutils.namespaces import rdf, rdfs, owl, ilxtr
-        from pyontutils.core import OntGraph
         graph = OntGraph()
         bnm = rdflib.BNode()
         bn0 = rdflib.BNode()
@@ -133,6 +133,12 @@ class TestLoader(unittest.TestCase):
 
         # TODO need to test the the case where a list is
         # a subgraph of two different graphs
+        bnl0 = rdflib.BNode()
+        bnl1 = rdflib.BNode()
+        bnl2 = rdflib.BNode()
+        bnl3 = rdflib.BNode()
+        bnl4 = rdflib.BNode()
+        bnl5 = rdflib.BNode()
 
         trips = (
             (ontid, rdf.type, owl.Ontology),  # FIXME using a /uris/ iri instead of an /ontologies/ uri for owl:Ontology should be an error
@@ -153,13 +159,26 @@ class TestLoader(unittest.TestCase):
             (thingid, ilxtr.pred1, bn0),
             (bn0, ilxtr.pred2, rdflib.Literal('lit1')),
             (bn0, ilxtr.pred3, ilxtr.obj1),
+            (bn0, ilxtr.pred14, rdflib.Literal('lit4')),
             (bn0, ilxtr.pred4, bn1),
             (bn1, ilxtr.pred5, rdflib.Literal('lit2')),
             (bn1, ilxtr.pred6, ilxtr.obj2),
+            # list issues
+            (thingid, ilxtr.pred15, bnl0),
+            (bnl0, rdf.first, ilxtr.obj4),
+            (bnl0, rdf.rest, bnl1),
+            (bnl1, rdf.first, ilxtr.obj5),
+            (bnl1, rdf.rest, rdf.nil),
+            (thingid, ilxtr.pred15, bnl2),
+            (bnl2, rdf.first, ilxtr.obj5),
+            (bnl2, rdf.rest, bnl3),
+            (bnl3, rdf.first, ilxtr.obj4),
+            (bnl3, rdf.rest, rdf.nil),
 
             (bnh, ilxtr.pred7, ilxtr.obj3),
             (bnh, ilxtr.pred8, bn2),
             (bn2, ilxtr.pred9, rdflib.Literal('lit3')),
+            (bnh, ilxtr.pred14, rdflib.Literal('lit4')),
 
             # TODO
             # need to figure out the preferred way to handle cases where
@@ -169,6 +188,7 @@ class TestLoader(unittest.TestCase):
             (bnh2, ilxtr.pred7, ilxtr.obj3),
             (bnh2, ilxtr.pred8, bn3),
             (bn3, ilxtr.pred9, rdflib.Literal('lit3')),
+            (bnh2, ilxtr.pred14, rdflib.Literal('lit4')),
 
             # for maximum evil, observe the following super duper non-injective cases
             (evilid, rdf.type, owl.Class),
@@ -211,10 +231,12 @@ class TestLoader(unittest.TestCase):
         session = getSession()
         loader = load_graph(session, graph)
         q = Queries(session)
-        hrm = q.getGraphByBoundName(ontid)
-        if True:
-            rows = hrm
-        else:
+        rows = q.getGraphByBoundName(ontid)
+        #_ = [print(((*r[:-2], (r[-2].hex() if r[-2] else r[-2]), r[-1]))) for r in rows]
+        #res = list(q.session_execute('select * from triples'))
+        #hrm = [(*r[:-1], (r[-1].hex() if r[-1] else r[-1])) for r in res]
+        #_ = [print(_) for _ in hrm]
+        if False:
             o_rows = q.getBySubject(ontid, None)
             t_rows = q.getBySubject(thingid, None)
             e_rows = q.getBySubject(evilid, None)
@@ -229,9 +251,18 @@ class TestLoader(unittest.TestCase):
         _ = [out_graph.add(te.triple(*r)) for r in rows]
         # FIXME TODO really need the single query to reconstruct a specific loaded ontology
 
+        from ttlser.serializers import CustomTurtleSerializer
+        class AllPredicates:
+            def __contains__(self, other):
+                return True
+
+        CustomTurtleSerializer.no_reorder_list = AllPredicates()
         try:
             # some simple checks first
-            assert len(graph) == len(out_graph), (graph.debug(), out_graph.debug(), f'graph lengths do not match {len(graph)} != {len(out_graph)}')[-1]
+            graph.debug()
+            out_graph.debug()
+            assert len(graph) == len(out_graph), f'graph lengths do not match {len(graph)} != {len(out_graph)}'
+            assert graph.identity() == out_graph.identity()
             breakpoint()
 
             if False:
@@ -258,12 +289,13 @@ class TestLoader(unittest.TestCase):
         #from interlex.endpoints import Endpoints  # FIXME
         from urllib.parse import urlparse
         import rdflib
-        s = getSession()
+        session = getSession(echo=True)
+        q = Queries(session)
         #class db:
             #session = s
         #endpoints = Endpoints(db)
         #FileFromIRI = FileFromIRIFactory(db.session)
-        FileFromIRI = FileFromIRIFactory(s)
+        FileFromIRI = FileFromIRIFactory(session)
         #rh = 'uri.interlex.org'  #FIXME
         user = 'tgbugs'
         iri = rdflib.URIRef(uri_string)
@@ -273,14 +305,26 @@ class TestLoader(unittest.TestCase):
         loader = FileFromIRI(user, user, reference_name)
         try:
             out = self.do_loader(loader, iri, iri)
+            rows = q.getGraphByBoundName(iri)
+            te = TripleExporter()
+            out_graph = OntGraph()
+            out_graph.namespace_manager.populate_from(loader.graph)
+            _ = [out_graph.add(te.triple(*r)) for r in rows]
+            #loader.graph.write(Path('/tmp') / (Path(url.path).name + '.ttl'))
+            #out_graph.write(Path('/tmp') / (Path(url.path).name + '-out.ttl'))
+            assert loader.graph.identity() == out_graph.identity()
         finally:
-            s.rollback()
-            s.close()
+            session.rollback()
+            session.close()
 
     @pytest.mark.skip('manual test')
     def test_small_resource(self):
-        uri_string = 'http://purl.obolibrary.org/obo/ro.owl'
-        self._do_test_uri(uri_string)
+        res = (
+            'http://purl.obolibrary.org/obo/ro.owl',  # looks like we are somehow winding up with two rdf:first values in the same node of an rdf:List
+            'http://purl.obolibrary.org/obo/bfo.owl',  # this one works but now ro is broken
+        )
+        for uri_string in res:
+            self._do_test_uri(uri_string)
 
     @pytest.mark.skip('manual test')
     def test_small_file(self):

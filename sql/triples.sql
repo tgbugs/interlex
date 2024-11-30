@@ -786,19 +786,25 @@ CREATE TABLE triples(
        -- I think what we will have to do is add a set of immediate fixes on ingest that we always run
        -- that work on specific fields and immediately fix things after load as an immediate change set
        -- CHECK (o_lit ~* '(^\S+|\S+$)'),  -- no leading or trailing whitespace TODO also for other columns
-       CHECK (uri_host(s) <> reference_host() OR
-              uri_host(s) = reference_host() AND
-              (uri_path_array(s))[2] !~* 'ilx_' OR -- FIXME or cde_, fde_, etc
-              uri_host(s) = reference_host() AND
+       CHECK ((uri_host(s) <> reference_host()) OR
+             -- currently we prevent users from entering /{group-other-than-base}/{ilx,cde,pde,fde}_ etc.
+             -- however user uris are allowed
+              (uri_host(s) = reference_host() AND (uri_path_array(s))[2] !~* 'ilx_') OR -- FIXME or cde_, fde_, etc
               -- TODO we can't check that the id is actually in the database without a trigger
               -- TODO also prevent users from creating ilx_ fragments in /uris/
               -- only base may have ilx ids, all the rest are by construction from qualifiers
               -- FIXME un hardcode 'base' and 'ilx_'
-              (uri_path_array(s))[1] = 'base' AND
-              (uri_path_array(s))[2] ~* '[a-z]+_[0-9]+'),
+              (uri_host(s) = reference_host() AND (uri_path_array(s))[1] = 'base' AND (uri_path_array(s))[2] ~* '[a-z]+_[0-9]+')),
+       -- these two should always be an exact copy of the checks for s
+       CHECK ((uri_host(p) <> reference_host()) OR
+              (uri_host(p) = reference_host() AND (uri_path_array(p))[2] !~* 'ilx_') OR
+              (uri_host(p) = reference_host() AND (uri_path_array(p))[1] = 'base' AND (uri_path_array(p))[2] ~* '[a-z]+_[0-9]+')),
+       CHECK ((uri_host(o) <> reference_host()) OR
+              (uri_host(o) = reference_host() AND (uri_path_array(o))[2] !~* 'ilx_') OR
+              (uri_host(o) = reference_host() AND (uri_path_array(o))[1] = 'base' AND (uri_path_array(o))[2] ~* '[a-z]+_[0-9]+')),
        CHECK ((s IS NOT NULL AND s_blank IS NULL) OR
               (s IS NULL AND s_blank IS NOT NULL) OR
-              (s = 'annotation' AND s_blank IS NOT NULL)),
+              (s = 'annotation' AND s_blank IS NOT NULL)), -- reminder: this was to speed up retrieval of triples that are part of 3 triple annotation ?
               -- FIXME not validating our URIs in db ... this is useful but should fail
               -- even though rdflib in theory provides quite a bit of validation up from
               -- I actually think it only barfs on serialization or parsing, not from internal
@@ -866,9 +872,7 @@ CREATE UNIQUE INDEX un__triples__s_blank_p_o_md5
        ON triples
        (s_blank, uri_hash(p), uri_hash(o), subgraph_identity)
        WHERE s_blank IS NOT NULL AND
-             o_lit IS NOT NULL AND
-             datatype IS NULL AND
-             language is NULL;
+             o IS NOT NULL;
 
 CREATE UNIQUE INDEX un__triples__s_blank_p_o_lit_md5
        ON triples
@@ -905,6 +909,16 @@ CREATE UNIQUE INDEX un__triples__s_blank_p_o_blank
        (s_blank, uri_hash(p), o_blank, subgraph_identity)
        WHERE s_blank IS NOT NULL AND
              o_blank IS NOT NULL;
+
+/*
+-- FIXME TODO ... we want something like this, but because only want insert to fail
+-- if a triple is already present, we can't use this approach
+CREATE UNIQUE INDEX un__triples_s_blank_rdf_first
+       ON triples
+       (s_blank, subgraph_identity)
+       WHERE s_blank IS NOT NULL AND
+             p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first';
+*/
 
 CREATE INDEX search_index ON triples USING GIN (to_tsvector('english', o_lit)) WHERE o_lit IS NOT NULL;
 

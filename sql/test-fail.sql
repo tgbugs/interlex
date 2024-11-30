@@ -46,6 +46,13 @@ INSERT INTO triples (s, p, o_lit, language) VALUES
         'object',
         'ja');
 
+-- no ilx outside base
+INSERT INTO triples (s, p, o) VALUES ('http://uri.interlex.org/tgbugs/ilx_1234567', 'http://uri.interlex.org/base/ilx_1234567', 'http://uri.interlex.org/base/ilx_1234567');
+
+INSERT INTO triples (s, p, o) VALUES ('http://uri.interlex.org/base/ilx_1234567', 'http://uri.interlex.org/tgbugs/ilx_1234567', 'http://uri.interlex.org/base/ilx_1234567');
+
+INSERT INTO triples (s, p, o) VALUES ('http://uri.interlex.org/base/ilx_1234567', 'http://uri.interlex.org/base/ilx_1234567', 'http://uri.interlex.org/tgbugs/ilx_1234567');
+
 --DELETE FROM triples WHERE s = 'http://test.url/1';  -- FIXME for some reason this fails!? -> .ur/ != .url/
 
 -- emails must be unique (group emails don't exist)
