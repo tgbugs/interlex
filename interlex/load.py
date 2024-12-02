@@ -145,7 +145,7 @@ class GraphIdentities:
         # is there any reason NOT to pub this in as part of the metadata
         # rather than as its own section? We already technically taint
         # the serialization identity no matter what, so I don't see the issue
-        # FIXME SECURITY we will need restrict which existing qualifiers can
+        # FIXME SECURITY we will need to restrict which existing qualifiers can
         # be used as source qualifiers so that someone doesn't accidentally
         # create a qualifier that says 'delete all of interlex' though I suspect
         # that we might be able to be smart about it and translate that into the
@@ -815,11 +815,14 @@ class GraphLoader(GraphIdentities):
         replica_helper = None
         if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.URIRef):
             """
+            _helper_ibn = IdentityBNode('')
             tis = dict(
                 triple_identity = IdentityBNode((s, ot[1], o)),
                 triple_identity_alt_1 = IdentityBNode((str(s), p, str(o))),
-                triple_identity_alt_2 = IdentityBNode((s, p, o)),  # same as 1 and 0, also simplest, so good to go
+                triple_identity_alt_2 = IdentityBNode((s, p, o)),
                 triple_identity_alt_3 = IdentityBNode(((s, p, o),)),
+                triple_identity_alt_4 = IdentityBNode((s, p, o), pot=True),  # this is the one we want and works like (s (p o)) as of v3
+                triple_identity_alt_5 = _helper_ibn.triple_identity(s, p, o).hex(),  # XXX this is an old version 1 thing, don't use it
                 ti_t = IdentityBNode((s + p + o,)),
                 ti_s1 = IdentityBNode(str(s) + str(p) + str(o)),
                 ti_s2 = IdentityBNode((str(s + p + o),)),
@@ -829,7 +832,7 @@ class GraphLoader(GraphIdentities):
             )
             """
             subject_embedded_identity = self._ibn.subject_embedded_identities[s]
-            triple_identity = IdentityBNode((s, p, o)).identity
+            triple_identity = IdentityBNode((s, p, o), pot=True).identity
             columns = 's, p, o, triple_identity'
             record = (str(s),
                       p,
@@ -838,7 +841,7 @@ class GraphLoader(GraphIdentities):
 
         elif isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.Literal):
             subject_embedded_identity = self._ibn.subject_embedded_identities[s]
-            triple_identity = IdentityBNode((s, p, o)).identity
+            triple_identity = IdentityBNode((s, p, o), pot=True).identity
             columns = 's, p, o_lit, datatype, language, triple_identity'
             o_lit = str(o)
             record = (str(s),
@@ -1993,7 +1996,11 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                         ('metadata', self.Loader.metadata_identity),
                         ('data', self.Loader.data_identity),
                         ('subject_graph', *self.Loader.data_named_subject_identities),  # these ids are for non bnode only, the identity is computed over the whole subject graph, but only the named set of triples need to be inserted into the identities to triples table
-                        ('subgraph', *self.Loader.free_subgraph_identities))
+                        # FIXME I'm pretty sure that free subgraph identities aren't mapped anywhere else
+                        # XXX proceed with plan to implement all of this in OntGraph directly since it will
+                        # be infinitely easier to test and verify than this stack of crazyness
+                        # FIXME TODO maybe free -> serialization and connected -> data or metadata?
+                        ('subgraph', *self.Loader.subgraph_identities))
         assert not any(v is None for t, *vs in types_idents
                        for v in vs), f'oops! {[(t, v) for t, v in types if v is None]}'
         values = [(i, type, self.identity_triple_count(i))
@@ -2051,6 +2058,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
         batchsize = 20000  # keep maximum memory usage under control XXX also in sync probably centralize this?
         # 20k better than 80k or 40k probably due to less alloc when parsing or something
+        separate = False
         separates = []
         value_sets = []
         statements = []
@@ -2072,6 +2080,34 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
                 statement = ' '.join((prefix, f'({columns}) VALUES', '{}', suffix))
                 statements.append(statement)
+
+        if self.debug:
+            # test to see whether the named triples we insert into triples matches identity_named_triples_ingest
+            hrm = [v for s, v in zip(statements, value_sets) if 'triple_identity) VALUES' in s and 'identity_named_triples_ingest' not in s]
+            tis = sorted([row[-1] for h in hrm for row in h])
+            stis = set(tis)
+            if len(tis) != len(stis):
+                breakpoint()
+            assert len(tis) == len(stis)
+            idtt = [v for s, v in zip(statements, value_sets) if 'identity_named_triples_ingest' in s][0]
+            idtis = sorted(([p[-1] for ps in idtt for p in ps]
+                            if separate else
+                            [p[-1] for p in idtt]))
+            sidtis = set(idtis)
+            if len(idtis) != len(sidtis):
+                breakpoint()
+            assert len(idtis) == len(sidtis)
+            extra_in_id_to_trips = sidtis - stis
+            missing_in_id_to_trips = stis - sidtis
+            if sidtis != stis:
+                breakpoint()
+            assert sidtis == stis
+            # ... so according to my check here all the triple identities should
+            # be getting inserted, or at least the sets match exactly, which is
+            # obvious from how they are consturcted, but just to make sure we
+            # are sane here on the other end too ... so the problem is after this
+            # XXX maybe related to chunking? surely not
+            #breakpoint()
 
         if any(separates):
             nexecs = sum([len(vals) if sep else 1 for sep, vals in zip(separates, value_sets)])

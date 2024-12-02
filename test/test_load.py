@@ -3,14 +3,25 @@ import unittest
 from unittest.mock import MagicMock
 import pytest
 from pathlib import Path
+import rdflib
 from sqlalchemy.sql import text as sql_text
 from pyontutils.core import OntGraph
 from interlex import exceptions as exc
-from interlex.core import FakeSession
+from interlex.core import FakeSession as FakeSessionBase
 from interlex.load import FileFromFileFactory, FileFromIRIFactory, TripleLoaderFactory
 from interlex.dump import Queries, TripleExporter
 from interlex.config import auth
 from .setup_testing_db import getSession
+
+
+class FakeSession(FakeSessionBase):
+
+    def execute(self, sql, params):
+        if 'expected_bound_name' in sql.text:
+            return (_ for _ in range(0))
+        else:
+            self.current_return_value = (FakeResultProxy for _ in range(1))
+            return super().execute(sql, params)
 
 
 class FakeResultProxy:
@@ -28,14 +39,15 @@ def ident_exists(*args, **kwargs):
 
 
 class TestLoader(unittest.TestCase):
-    session = FakeSession()
-    FileFromFile = FileFromFileFactory(session)
+
     def setUp(self):  # NOTE this runs multiple times
-        self.FileFromFile.refresh()  # clear cached anything
+        self.session = FakeSession()
+        FileFromFileFactory.refresh()  # clear cached anything
+        self.FileFromFile = FileFromFileFactory(self.session)
         self.nasty = auth.get_path('git-local-base') / 'pyontutils/ttlser/test/nasty.ttl'
-        self.nastyebn = 'http://testurl.org/filename.ttl'
-        self.results = (FakeResultProxy for _ in range(999))
-        self.session.execute = MagicMock(return_value=self.results)
+        self.nastyebn = rdflib.URIRef('http://testurl.org/filename.ttl')
+        #self.results = (FakeResultProxy for _ in range(999))
+        #self.session.execute = MagicMock(return_value=self.results)
         self.FileFromFile.ident_exists = ident_exists
 
     def test_loader(self):
@@ -50,34 +62,40 @@ class TestLoader(unittest.TestCase):
         names = [ttl/p for p in paths]
         # TODO the ontology should define the iri path mapping in its own metadata?
         # and/or infer it using the augpathlib logic that I implemented somewhere already?
-        ebns = [os.path.join('http://ontology.neuinfo.org/NIF/ttl', p) for p in paths]
+        ebns = [rdflib.URIRef(os.path.join('http://ontology.neuinfo.org/NIF/ttl', p)) for p in paths]
         for name, ebn in list(zip(names, ebns))[::-1]:
             #self.FileFromFile.session.return_value = results
-            fff = self.FileFromFile('tgbugs', 'tgbugs')  # FIXME get a real test user
-            check_not_ok = fff.check(name)
-            setup_ok = fff(ebn)
-            if setup_ok is not None:
-                raise exc.LoadError(setup_ok)
+            fff = self.FileFromFile(user='tgbugs', group='tgbugs')  # FIXME get a real test user
+            check_failed = fff.check(name)
+            if check_failed:
+                raise exc.LoadError(check_failed)
+
+            setup_failed = fff(ebn)
+            if setup_failed:
+                raise exc.LoadError(setup_failed)
             #fff.process_graph()  # load calls this, but this is what is needed if you want the graph loaded but not sent to interlex
             #fff.subgraph_identities  # after calling process_graph this will work
-            out = fff.load()  # TODO raise error on this one
+            out = fff.load(commit=False)  # TODO raise error on this one
 
     def test_nasty(self, first=True):
-        import rdflib
         from pyontutils.core import rdf, owl
         fff = self.FileFromFile('tgbugs', 'tgbugs')  # FIXME
         graph = rdflib.Graph().parse(self.nasty.as_posix(), format='ttl')
         for s in graph[:rdf.type:owl.Ontology]:
-            if s.toPython() != self.nastyebn:
+            if s != self.nastyebn:
                 graph.remove((s, rdf.type, owl.Ontology))
 
         fff._serialization = graph.serialize(format='nifttl')
         fff._extension = 'ttl'
 
-        check_not_ok = fff.check(self.nasty)
-        setup_ok = fff(self.nastyebn)
-        if setup_ok is not None:
-            raise exc.LoadError(setup_ok)
+        check_failed = fff.check(self.nasty)
+        if check_failed:
+            raise exc.LoadError(check_failed)
+
+        setup_failed = fff(self.nastyebn)
+        if setup_failed is not None:
+            breakpoint()
+            raise exc.LoadError(setup_failed)
 
         out = fff.load()
 
@@ -92,9 +110,12 @@ class TestLoader(unittest.TestCase):
         # TODO test to make sure things fail as expected
         # 0) multiple owl:Ontology sections
         fff = self.FileFromFile('tgbugs', 'tgbugs')  # FIXME
-        check_not_ok = fff.check(self.nasty)
-        setup_ok = fff(self.nastyebn)
-        assert setup_ok is not None, 'by default nasty has multiple bound names this should have failed'
+        check_failed = fff.check(self.nasty)
+        if check_failed:
+            raise exc.LoadError(check_failed)
+
+        setup_failed = fff(self.nastyebn)
+        assert setup_failed is not None, 'by default nasty has multiple bound names this should have failed'
         # 1) names do not match
         # 2) value already inserted
 
@@ -105,7 +126,6 @@ class TestLoader(unittest.TestCase):
         # table, the issue is that we can't correct the data because we only computed on the python
         # side and never closed the loop coming back, so we need to close the loop before coming back
         # doing that should also make it possible to create restartable ingest at some point
-        import rdflib
         import uuid
         from pyontutils.namespaces import rdf, rdfs, owl, ilxtr
         graph = OntGraph()
@@ -288,7 +308,6 @@ class TestLoader(unittest.TestCase):
     def _do_test_uri(self, uri_string):
         #from interlex.endpoints import Endpoints  # FIXME
         from urllib.parse import urlparse
-        import rdflib
         session = getSession(echo=True)
         q = Queries(session)
         #class db:
