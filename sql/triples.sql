@@ -789,19 +789,19 @@ CREATE TABLE triples(
        CHECK ((uri_host(s) <> reference_host()) OR
              -- currently we prevent users from entering /{group-other-than-base}/{ilx,cde,pde,fde}_ etc.
              -- however user uris are allowed
-              (uri_host(s) = reference_host() AND (uri_path_array(s))[2] !~* 'ilx_') OR -- FIXME or cde_, fde_, etc
+              (uri_host(s) = reference_host() AND (uri_path_array(s))[2] !~* '[A-Za-z]+_[0-9]+') OR -- FIXME or cde_, fde_, etc
               -- TODO we can't check that the id is actually in the database without a trigger
               -- TODO also prevent users from creating ilx_ fragments in /uris/
               -- only base may have ilx ids, all the rest are by construction from qualifiers
               -- FIXME un hardcode 'base' and 'ilx_'
-              (uri_host(s) = reference_host() AND (uri_path_array(s))[1] = 'base' AND (uri_path_array(s))[2] ~* '[a-z]+_[0-9]+')),
+              (uri_host(s) = reference_host() AND (uri_path_array(s))[1] = 'base' AND (uri_path_array(s))[2] ~* '[A-Za-z]+_[0-9]+')),
        -- these two should always be an exact copy of the checks for s
        CHECK ((uri_host(p) <> reference_host()) OR
-              (uri_host(p) = reference_host() AND (uri_path_array(p))[2] !~* 'ilx_') OR
-              (uri_host(p) = reference_host() AND (uri_path_array(p))[1] = 'base' AND (uri_path_array(p))[2] ~* '[a-z]+_[0-9]+')),
+              (uri_host(p) = reference_host() AND (uri_path_array(p))[2] !~* '[A-Za-z]+_[0-9]+') OR
+              (uri_host(p) = reference_host() AND (uri_path_array(p))[1] = 'base' AND (uri_path_array(p))[2] ~* '[A-Za-z]+_[0-9]+')),
        CHECK ((uri_host(o) <> reference_host()) OR
-              (uri_host(o) = reference_host() AND (uri_path_array(o))[2] !~* 'ilx_') OR
-              (uri_host(o) = reference_host() AND (uri_path_array(o))[1] = 'base' AND (uri_path_array(o))[2] ~* '[a-z]+_[0-9]+')),
+              (uri_host(o) = reference_host() AND (uri_path_array(o))[2] !~* '[A-Za-z]+_[0-9]+') OR
+              (uri_host(o) = reference_host() AND (uri_path_array(o))[1] = 'base' AND (uri_path_array(o))[2] ~* '[A-Za-z]+_[0-9]+')),
        CHECK ((s IS NOT NULL AND s_blank IS NULL) OR
               (s IS NULL AND s_blank IS NOT NULL) OR
               (s = 'annotation' AND s_blank IS NOT NULL)), -- reminder: this was to speed up retrieval of triples that are part of 3 triple annotation ?
