@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 import rdflib
 from sqlalchemy import create_engine, inspect
@@ -6,7 +7,7 @@ from pyontutils import combinators as cmb
 from pyontutils.core import OntId, OntGraph
 from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import ILX, ilxtr, oboInOwl, owl, rdf, rdfs
-from pyontutils.namespaces import definition
+from pyontutils.namespaces import definition, replacedBy, makeURIs
 from interlex import alt
 from interlex import config
 from interlex import exceptions as exc
@@ -55,23 +56,22 @@ class InterLexLoad:
 
     @exc.bigError
     def local_load(self):
-        from pyontutils.core import makeGraph
         loader = self.loader
-        def lse(s, p):
+        def lse(s, p, load_type='???'):
             # accepts two lists of equal length
             assert len(s) == len(p)
             n = len(p)
-            log.debug('starting batch load')
+            log.debug(f'starting batch load for {load_type}')
             for i, (sql, params) in enumerate(zip(s, p)):
                 loader.session.execute(sql_text(sql), params)
-                msg = f'{((i + 1) / n) * 100:3.0f}% done with batched load'
+                msg = f'{((i + 1) / n) * 100:3.0f}% done with batched load of {load_type}'
                 log.debug(msg)
 
         # start sitting at around 10 gigs in pypy3 (oof)
         # now stays below 8 gigs in pypy3, and below about 1gig in postgres with 40k batch size, much better, 600mb at 20k
-        lse(self.ilx_sql, self.ilx_params)  # 3 gigs in postgres no batching
-        lse(self.eid_sql, self.eid_params)  # 16.4 gigs in postgres with no batching
-        lse(self.uid_sql, self.uid_params)
+        lse(self.ilx_sql, self.ilx_params, 'interlex_ids')  # 3 gigs in postgres no batching
+        lse(self.eid_sql, self.eid_params, 'existing_iris')  # 16.4 gigs in postgres with no batching
+        lse(self.uid_sql, self.uid_params, 'uris')
 
         # FIXME this probably requires admin permissions
         vt, params = makeParamsValues(list(self.current.items()))
@@ -90,22 +90,30 @@ class InterLexLoad:
             #'SET suffix_max = EXCLUDED.suffix_max '
             #'WHERE fragment_prefix_sequences.prefix = EXCLUDED.prefix')], [params])
 
+    @exc.bigError
+    def local_load_part2(self):
         if self.graph is None:
-            self.graph = OntGraph()  # rdflib.Graph()
-            mg = makeGraph('', graph=self.graph)  # FIXME I swear I fixed this already
-            [mg.add_trip(*t) for t in self.triples]
+            from pyontutils.namespaces import PREFIXES as uPREFIXES
+            self.graph = OntGraph()
+            self.graph.namespace_manager.populate_from(uPREFIXES)
+            for t in self.triples:
+                try:
+                    self.graph.add(t)
+                except AssertionError as e:
+                    msg = f'bad type in {t}'
+                    raise TypeError(msg) from e
 
         self.loader._graph = self.graph
         name = rdflib.URIRef('http://toms.ilx.dump/TODO')
         self.loader.Loader._bound_name = name
         #self.loader.expected_bound_name = name
-        self.loader._serialization = repr((name, self.triples)).encode()
+        self.loader._serialization = repr((name, 'lol not a real serialization at all')).encode()  # self.triples  # FIXME TODO not everything has a serialization identity
         self.loader.name = name  # avoid name = None error, has to be set manually right now since we use TripleLoader directly
         expected_bound_name = name
-        setup_ok = self.loader(expected_bound_name)
+        setup_failed = self.loader(expected_bound_name)
 
-        if setup_ok is not None:
-            raise exc.LoadError(setup_ok)
+        if setup_failed is not None:
+            raise exc.LoadError(setup_failed)
 
     @exc.bigError
     def remote_load(self):
@@ -114,6 +122,7 @@ class InterLexLoad:
 
     def load(self):
         self.local_load()
+        self.local_load_part2()
         self.remote_load()
 
     def ids(self):
@@ -136,17 +145,19 @@ class InterLexLoad:
 
     def cull_bads(self, eternal_screaming, values, ind):
         verwat = defaultdict(list)
-        for row in sorted(eternal_screaming, key=lambda r:r[ind('version')], reverse=True):
-            verwat[row[ind('ilx')][4:]].append(row)
+        for row in sorted(eternal_screaming, key=lambda r:r.version, reverse=True):
+            #row[ind('ilx')][4:]
+            pref, ilx = row.ilx[:3], row.ilx[4:]
+            verwat[pref, ilx].append(row)
 
         vervals = list(verwat.values())
 
         ver_curies = defaultdict(lambda:[None, set()])
-        for ilx, rows in verwat.items():
+        for (pref, ilx), rows in verwat.items():
             for row in rows:
-                iri = row[ind('iri')]
-                curie = row[ind('curie')]
-                ver_curies[iri][0] = ilx
+                iri = row.iri  # row[ind('iri')]
+                curie = row.curie  # [ind('curie')]
+                ver_curies[iri][0] = (pref, ilx)
                 ver_curies[iri][1].add(curie)
 
         mult_curies = {k: v for k, v in ver_curies.items() if len(v[1]) > 1}
@@ -158,6 +169,9 @@ class InterLexLoad:
             maybe_mult[iri].append((pref, ilx))
 
         multiple_versions = {k:v for k, v in versions.items() if len(set(v)) > 1}
+        # if there are multiple iris they would be caught in the other steps
+        # these will be the ones that have the same iri in multiple versions
+        bad_versions = set((pref, ilx, nmv) for (pref, ilx), vs in multiple_versions.items() for nmv in sorted(vs)[:-1])
 
         any_mult = {k:v for k, v in maybe_mult.items() if len(v) > 1}
 
@@ -185,17 +199,37 @@ class InterLexLoad:
                 skips.append((pref, id_, iri))
 
         bads = sorted(bads, key=lambda ab:ab[1])
-        _ins_values = [(pref, ilx, iri) for pref, ilx, iri, ver in values if
-                       (pref, ilx, iri) not in bads and
-                       (pref, ilx, iri) not in skips]
-        ins_values = [v for v in _ins_values if 'interlex.org' not in v[2]]
-        user_iris = [v for v in _ins_values if 'interlex.org' in v[2] and 'org/base/' not in v[2]]
-        base_iris = [v for v in _ins_values if 'interlex.org' in v[2] and 'org/base/' in v[2]]
+        # XXX reminder: values comes from start_values and already excludes self referential external ids
+        _ins_values = [
+            (pref, ilx, iri) for pref, ilx, iri, ver in values if
+            (pref, ilx, iri) not in bads and
+            (pref, ilx, iri) not in skips and
+            (pref, ilx, ver) not in bad_versions]
+        ins_values = [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' not in iri]
+        user_iris = [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' in iri and 'org/base/' not in iri]
+        # base are excluded because existing_iris only refer out HOWEVER
+        # how do we deal with deprecated, I don't the we even had a process in place
+        # for this when i was working on this before
+        # FIXME TODO pretty much all the base_iris need to be inserted somewhere at least
+        # i think they go in a deprecation table for speed or something? except that the
+        # terms do exist, I guess one thing to note about the operations of interlex as
+        # a whole is that merges are kind of made globally, except that the existing iris
+        # table is technically per perspective ... ugh what a mess ... the basic rules
+        # apply, in that the old interlex allowed duplicate labels, so there are deprecations
+        # sometimes there will be for this iteration as well ... but the question of how to
+        # to it needs significantly more though, so for how we are going to stick the info
+        # in the triples table and LET THE QUERIER SORT EM OUT
+        base_iris = [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' in iri and 'org/base/' in iri]
+        replacedBys = [(  # this should be injective by construction all the violations should be in bads of one kind or another
+            rdflib.URIRef(eid),
+            replacedBy,
+            rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
+            ) for pref, ilx, eid in base_iris]
         assert len(ins_values) + len(user_iris) + len(base_iris) == len(_ins_values)
         #ins_values += [(v[0], k) for k, v in mult_curies.items()]  # add curies back now fixed
         if self.debug:
             breakpoint()
-        return ins_values, bads, skips, user_iris
+        return ins_values, bads, skips, user_iris, replacedBys
 
     def existing_ids(self):
         insp, engine = self.insp, self.engine
@@ -233,12 +267,19 @@ class InterLexLoad:
         #values = [(row.ilx[4:], row.iri, row.version) for row in query if row.ilx not in row.iri]
         eternal_screaming = list(query)
 
-        # FIXME frag prefs
-        start_values = [(row[ind('ilx')][:3], row[ind('ilx')][4:], row[ind('iri')], row[ind('version')])
+        #start_values = [(row[ind('ilx')][:3], row[ind('ilx')][4:], row[ind('iri')], row[ind('version')])
+                        #for row in eternal_screaming
+                        #if row[ind('ilx')] not in row[ind('iri')]]
+        start_values = [(row.ilx[:3], row.ilx[4:], row.iri, row.version)
                         for row in eternal_screaming
-                        if row[ind('ilx')] not in row[ind('iri')]]
+                        if row.ilx not in row.iri]
 
-        values, bads, skips, user_iris = self.cull_bads(eternal_screaming, start_values, ind)
+        values, bads, skips, user_iris, replacedBys = self.cull_bads(eternal_screaming, start_values, ind)
+        if not self.debug:
+            # major memory consumer
+            # and it does seem that removing it saves quite a bit
+            # along with not storing it with the other values
+            start_values = None
 
         sql_base = 'INSERT INTO existing_iris (group_id, ilx_prefix, ilx_id, iri) VALUES '
         self.eid_sql = []
@@ -250,13 +291,17 @@ class InterLexLoad:
             self.eid_sql.append(sql)
             self.eid_params.append(params)
 
+        self.replacedBys = replacedBys
 
-        self.eid_raw = eternal_screaming
-        self.eid_starts = start_values
-        self.eid_values = values
-        self.eid_bads = bads
+        if self.debug:
+            self.eid_raw = eternal_screaming
+            self.eid_starts = start_values
+            self.eid_values = values
+            self.eid_bads = bads
+
         self.eid_skips = skips
         self.eid_user_iris = user_iris
+
         if self.debug:
             log.debug(bads)
         return sql, params
@@ -267,6 +312,7 @@ class InterLexLoad:
 
         bads = []
 
+        seen_users = set()
         def iri_to_group_uripath(iri):
             if 'interlex.org' not in iri:
                 raise ValueError(f'goofed {iri}')
@@ -275,8 +321,11 @@ class InterLexLoad:
             # have to look inside uris to enforce mapping rules per user
 
             _, user_uris_path = iri.split('interlex.org/', 1)
-            log.debug(user_uris_path)
             user, uris_path = user_uris_path.split('/', 1)
+            if user not in seen_users:
+                log.debug(user_uris_path)
+                seen_users.add(user)
+
             if not uris_path.startswith('uris'):
                 msg = f'not a user uris path {iri}'
                 bads.append(msg)
@@ -325,15 +374,15 @@ class InterLexLoad:
         header_terms = [d['name'] for d in insp.get_columns('terms')]
         queries = dict(
             terms = f'SELECT * from terms WHERE type != "cde"',
-            synonyms = "SELECT * from term_synonyms WHERE literal != ''",
+            synonyms = "SELECT * from term_synonyms WHERE literal != ''",  # FIXME these things have versions too :/
             subClassOf = 'SELECT * from term_superclasses',
-            object_properties = 'SELECT * from term_relationships',
-            annotation_properties = 'SELECT * from term_annotations',  # FIXME we are missing these?
+            object_properties = "SELECT * from term_relationships WHERE withdrawn != '1'",  # FIXME also curation status
+            annotation_properties = "SELECT * from term_annotations WHERE withdrawn != '1'",  # FIXME we are missing these?
             )
         if self.do_cdes:
-            queries['terms'] = 'SELECT * FROM terms'
+            queries['terms'] = 'SELECT * FROM terms'  # FIXME TODO status ??? also deleted/deprecated dection ??? iirc i do that elsewhere ???
         else:
-            queries['cde_ids'] = 'SELECT id, ilx FROM terms where type = "cde"'
+            queries['cde_ids'] = 'SELECT id, ilx FROM terms where type = "cde"'  # FIXME fde pde etc.
 
         with engine.connect() as conn:
             data = {name:conn.execute(sql_text(query)).fetchall()  # FIXME yeah this is gonna be big right?
@@ -343,7 +392,7 @@ class InterLexLoad:
         ilx_index = {}
         id_type = {}
         triples = [(rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),  # FIXME hardcoded structure
-                    oboInOwl.hasDbXref, iri) for pref, ilx, iri in self.eid_skips]  # FIXME broken for new fragment prefixes
+                    oboInOwl.hasDbXref, rdflib.URIRef(iri)) for pref, ilx, iri in self.eid_skips]  # FIXME broken for new fragment prefixes
         type_to_owl = MysqlExport.types
 
         # FIXME handle alternate fragment prefixes!
@@ -358,12 +407,28 @@ class InterLexLoad:
         if not self.do_cdes:
             [addToIndex(row.id, row.ilx[:3], row.ilx[4:], owl.Class) for row in data['cde_ids']]
 
+        def norm_obj(o_raw):
+            o_strip = o_raw.strip()
+            if o_strip != o_raw:
+                msg = f'FIXME this needs to be handled more formally than a debug message ... leading or trailing whitespace: {o_strip!r} != {o_raw!r}'
+                log.debug(msg)
+
+            return o_strip
+
+        triples.extend(self.replacedBys)
+        #replaced_lu = {s: o for s, p, o in self.replacedBys}  # FIXME check injective
+        #replaced = set(self.replacedBys)
+        replaced = set(s for s, p, o in self.replacedBys)
+        self.replacedBys = None  # a bit of cleanup foor memory hopefully
+        obsReason, termsMerged = makeURIs('obsReason', 'termsMerged')
+        deprecated = set()
         bads = []
+        nodefs = []
         for row in data['terms']:
             #id, ilx_with_prefix, _, _, _, _, label, definition, comment, type_
             frag_pref = row.ilx[:3]
             ilx = row.ilx[4:]
-            uri = f'http://uri.interlex.org/base/{frag_pref}_{ilx}'
+            uri = rdflib.URIRef(f'http://uri.interlex.org/base/{frag_pref}_{ilx}')
 
             try:
                 class_ = type_to_owl[row.type]
@@ -373,12 +438,30 @@ class InterLexLoad:
                 # update terms set type = 'term' where id = 304434;
                 continue
 
-            triples.extend((
-                # TODO consider interlex internal? ilxi.label or something?
-                (uri, rdf.type, class_),
-                (uri, rdfs.label, rdflib.Literal(row.label)),
-                (uri, definition, row.definition),
-            ))
+            # TODO consider interlex internal? ilxi.label or something?
+            triples.append((uri, rdf.type, class_))
+            triples.append((uri, rdfs.label, rdflib.Literal(row.label)))
+            if row.definition and (normed_definition := norm_obj(row.definition)):  # if you can't see the invisible assume it is always there
+                triples.append((uri, definition, rdflib.Literal(normed_definition)))  # FIXME ilxr.definition and ilxr.label ? or /base/ ?
+            elif row.definition:
+                log.debug(f'{uri} had a non-empty all whitespace definition')
+            elif row.status == -1:  # deleted
+                pass
+            elif row.status == -2:  # deprecated
+                pass  # many deprecated terms had their content zapped
+            else:
+                nodefs.append(uri)
+
+            if row.status in (-1, -2):  # -1 deleted, -2 deprecated
+                # deleted usually means that there was a flagrant
+                # duplicate that was put in by accident by an
+                # automated process deprecated also basically means
+                # deleted and merged, there are almost no actual
+                # deprecations
+                deprecated.add(uri)
+                triples.append((uri, owl.deprecated, rdflib.Literal(True)))
+                if uri in replaced:
+                    triples.append((uri, obsReason, termsMerged))
 
             # this is the wrong way to do these, have to hit the superless at the moment
             #if row.type == 'fde':
@@ -388,6 +471,11 @@ class InterLexLoad:
 
             addToIndex(row.id, frag_pref, ilx, class_)
 
+        log.debug(f'there were {len(nodefs)} entities missing a definition')
+
+        # dbnr likely includes spam and out of scope? (i.e. we definitely load src to prevent issues also autocomplete)
+        deprecated_but_not_replaced = deprecated - replaced  # FIXME there are nearly 1600 of these as of 2024-12-01
+        replaced_but_still_live = replaced - deprecated
         versions = {k:v for k, v in ilx_index.items() if len(v) > 1}  # where did our dupes go!?
         tid_to_ilx = {v:k for k, vs in ilx_index.items() for v in vs}
 
@@ -397,30 +485,48 @@ class InterLexLoad:
         def baseUri(e):
             # FIXME this is wrong for fde cde pde
             frag_pref, ilx = tid_to_ilx[e]
-            return f'http://uri.interlex.org/base/{frag_pref}_{ilx}'
+            return rdflib.URIRef(f'http://uri.interlex.org/base/{frag_pref}_{ilx}')
 
+        log.debug('synonyms ingest starting')
         synWTF = []
         synWTF_ids = []
+        syn_annos = defaultdict(list)
         for row in data['synonyms']:
-            synid, tid, literal, type, version, time = row
-            # TODO annotation with synonym type
+            synid, tid, literal, type, version, time = row  # FIXME there are definitely duplicates in here
             if not literal:
                 synWTF.append(row)
             elif tid not in tid_to_ilx:
                 synWTF_ids.append(row)
             else:
                 # FIXME somehow possible to get tids that aren't in terms?
-                t = baseUri(tid), ilxr.synonym, rdflib.Literal(literal)
+                t = baseUri(tid), ilxr.synonym, rdflib.Literal(literal)  # FIXME TODO whitespace cleanup
+                # FIXME TODO ilxr.exactSynonym is needed in order to more sanely detect and enforce uniqueness beyond just labels
                 triples.append(t)
                 if type:  # yay for empty string! >_<
                     stype = self.stype_lookup[type]
-                    triples.extend(
-                        cmb.annotation(t, (ilxtr.synonymType, stype)).value)
+                    syn_annos[t].append((ilxtr.synonymType, stype))
+
+        # FIXME determine whether we add these or whether we return all
+        # the rdfstar like things that come out of this and insert them
+        # into a proper table, noting that it is really only possible to
+        # use rdfstar and friends on the fully named subset of the graph
+
+        # FIXME the min 3x increase in the number of triples is very bad here
+        # prefer rdfstar via triple identity so that we don't wind up with
+        # 3x the rows in our internal represenation
+        # TODO ingest by another way
+        #for t, stypes in syn_annos.items():
+        #    if len(stypes) > 1:
+        #        msg = f'multiple syn types {[s[-1] for s in stypes]} for {t}'
+        #        log.debug(msg)
+
+        #    triples.extend(cmb.annotation(t, *stypes).value)
 
         if synWTF_ids:
             # foreign keys kids
             log.warning(f'synonyms table non-existent tids:\n{synWTF_ids}')
 
+        log.debug('object properties ingest starting')
         WTF = []
         for row in data['object_properties']:
             _, s_id, o_id, p_id, *rest = row
@@ -431,6 +537,50 @@ class InterLexLoad:
             except KeyError as e:
                 WTF.append(row)
 
+        re_https = re.compile('^https?://')
+        def normalize_annotation_property_object(o_raw):
+            o_strip = norm_obj(o_raw)
+            if re.match(re_https, o_strip) and ' ' not in o_strip:
+                o = rdflib.URIRef(o_strip)
+                try:
+                    o.n3()
+                    return o
+                except Exception as e:
+                    # oof
+                    # URIRef conversion failed: https://doi.org/10.1002/1097-0185(20010101)262:1<71::AID-AR1012>3.0.CO;2-A
+                    msg = f'URIRef conversion failed: {o}'
+                    log.debug(msg)
+                    return rdflib.Literal(o_strip)
+            else:
+                return rdflib.Literal(o_strip)
+
+        log.debug('annotation properties ingest starting')
+        ap_annos = defaultdict(list)
+        WTFa = []
+        for row in data['annotation_properties']:  # oof knocks total triples to 12.5 mil
+            _, s_id, p_id, o_value, comment, *rest = row
+            o = normalize_annotation_property_object(o_value)
+            try:
+                t = baseUri(s_id), baseUri(p_id), o
+                triples.append(t)
+                if comment:
+                    cstrp = norm_obj(comment)
+                    if cstrp:
+                        ap_annos[t].append((ilxtr.comment, rdflib.Literal(cstrp)))  # FIXME TODO predicate
+            except KeyError as e:
+                WTFa.append(row)
+
+        # XXX definitely cannot do this, it explodes the actual number of triples by 3x
+        # these need a dedicated table to make it tractable, also the combinator is extremely slow it seems
+        # TODO ingest another way
+        #for t, apos in ap_annos.items():  # FIXME see note on syn_annos above
+        #    if len(apos) > 1:
+        #        msg = f'multiple comments {[po[-1] for po in apos]} for {t} ???'
+        #        log.debug(msg)
+
+        #    triples.extend(cmb.annotation(t, *apos).value)
+
+        log.debug('subClassOf ingest starting')
         WTF2 = []
         WTF3 = []
         for row in data['subClassOf']:

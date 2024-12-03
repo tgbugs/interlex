@@ -57,6 +57,7 @@ INSERT INTO groups (groupname) VALUES
        ('obo'),
        ('NDA'),
        ('NINDSCDE'),
+       ('TOPNT'),
        ('MESH'),
        ('FSL'),
        ('FreeSurfer'),

@@ -162,18 +162,28 @@ class GraphIdentities:
 
     @property
     def metadata_identity(self):
-        return self.get_identity('metadata')
+        if not hasattr(self, '_cache_mi'):
+            self._cache_mi = self.get_identity('metadata')
+
+        return self._cache_mi
 
     @property
     def data_identity(self):  # FIXME! this should be data + free_subgraph_identities XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
         # the head triple in all cases is bound to the ontology name
-        moar = sorted(self.free_subgraph_identities)
-        return self.get_identity('data')
+        if not hasattr(self, '_cache_di'):
+            # we cache here even if _data_identity is also cached by get_identity
+            moar = sorted(self.free_subgraph_identities)
+            self._cache_di = self.get_identity('data')
+
+        return self._cache_di
 
     @property
     def data_named_subject_identities(self):
-        bn = self.bound_name
-        return {v:k for k, v in self._ibn.subject_embedded_identities.items() if isinstance(k, rdflib.URIRef) and k != bn}
+        if not hasattr(self, '_cache_dnsi'):
+            bn = self.bound_name
+            self._cache_dnsi = {v:k for k, v in self._ibn.subject_embedded_identities.items() if isinstance(k, rdflib.URIRef) and k != bn}
+
+        return self._cache_dnsi
 
     @property
     def subgraph_identities(self):
@@ -236,8 +246,9 @@ class GraphIdentities:
             if subjects:
                 self._bound_name = subjects[0]
                 if len(subjects) > 1:
-                    raise exc.LoadError('More than one owl:Ontology in this file!\n'
-                                        f'{self.ontology_iri}\n{extra}\n', 409)
+                    raise exc.LoadError(
+                        'More than one owl:Ontology in this file!\n'
+                        f'{self.bound_name}\n{subjects[1:]}\n', 409)
 
         return self._bound_name
 
@@ -595,7 +606,7 @@ class GraphIdentities:
                     non_injective.add(v)
                     non_injective.add(ev)
 
-                log.warning(f'free subgraph duplication! {k}: {itb[k]}')
+                log.warning(f'free subgraph duplication! {k.hex()}: {itb[k]}')
 
             else:
                 itb[k] = v
@@ -910,6 +921,7 @@ class GraphLoader(GraphIdentities):
         reference_host = 'uri.interlex.org'
         scheme = 'http'  # FIXME also need the scheme
         uri_prefix = f'{scheme}://{reference_host}/base/'
+        # NOTE this particular check is handled by postgres itself
         def check_ent(e):
             if reference_host in e and '/uris/' not in e and not e.startswith(uri_prefix):
                 msg = 'please only upload /base/ iris in ontologies'
@@ -919,7 +931,7 @@ class GraphLoader(GraphIdentities):
             check_ent(e)
 
     def make_load_records(self, serialization_identity, curies_done, metadata_done, data_done, ident_exists):
-        # if you need to test pass in lambda i:False for ident_exists
+        # if you need to test, pass in lambda i:False for ident_exists
         # TODO resursive on type?
         # s, s_blank, p, o, o_lit, datatype, language, subgraph_identity
         debug = True
@@ -1010,10 +1022,14 @@ class GraphLoader(GraphIdentities):
             # and the rules from the go with the subgraph identities :/
             # FIXME if we iterate over self.data here then we dont need to go over subgraph identities below ya?
             # but we could also just fill blank_ids here except for the slight misalignment issue where s, p, blank triples never get added
-            for s, p, o in sorted(self.data, key=sortkey):  # FIXME resolve bnode ordering issue? or was it already?
+            log.debug('data sort start')
+            _uh_hrm = sorted(self.data, key=sortkey)  # this takes a bit but not really all that long?
+            log.debug('data make rows start')
+            for s, p, o in _uh_hrm:  # FIXME resolve bnode ordering issue? or was it already?
                 # FIXME wait, how did this ever work, make_row has always needed identity for bnodes
                 # if there was a subgraph involved also, data includes cases where the subject is a bnode ... wtf
                 self.check_triple(s, p, o)
+                # FIXME TODO profile this to see where the issues are
                 columns, record, fix, replica, seid, tid, rh = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
                 if seid is not None:
                     identity_triples.append((seid, tid))
@@ -1032,6 +1048,8 @@ class GraphLoader(GraphIdentities):
                     #[done_trips.add(t) for t in back_convert_sigh(s, p, o)]
 
             yield prefix, suffix, to_insert, to_fix
+
+        log.debug('data make rows done')
 
         # identity triples mapping, we need the triple id to subject embedded identity, which for bnode headed subgraphs is the same
         to_insert = defaultdict(list)
@@ -1894,11 +1912,21 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             raise exc.LoadError('cannot change reference names', 409)
 
     def batch_ident_check(self, *idents):
+        batchsize = 20000
         sql = 'SELECT identity FROM identities WHERE identity IN '
-        values_template, params = makeParamsValues((idents,))
-        res = self.session_execute(sql + values_template, params)
-        existing = set(r.identity for r in res)
-        self._cache_identities.update(existing)
+        sql_params = []
+        for chunk in chunk_list(idents, batchsize):
+            # chunk is in a tuple because a list of bytes is an iterable of iterables
+            values_template, params = makeParamsValues((chunk,))
+            sql_params.append((sql + values_template, params))
+
+        existing = set()
+        for sql_vt, params in sql_params:
+            res = self.session_execute(sql_vt, params)
+            existing.update(set(r.identity for r in res))
+            self._cache_identities.update(existing)
+
+        # FIXME OOF inefficient but yeah
         for ident in idents:
             yield ident in existing
 
@@ -1970,15 +1998,19 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         # can run afterward and verify roundtrip identity
         #ni = self.ident_exists(self.bound_name_identity)  # FIXME usually a waste
 
-        log.debug(f'load start for {si}')
+        log.debug(f'load start for {si.hex()}')
         self.times['load_begin'] = time.time()
         sgids = tuple(self.Loader.subgraph_identities)
+        # FIXME don't we want to include the full graph id too? ...
         idents = (self.Loader.curies_identity,
                   self.Loader.metadata_identity,
                   self.Loader.data_identity,
                   *sgids)
 
+        # FIXME don't bother with the sgids if data is done already ???
         curies_done, metadata_done, data_done, *sg_done = self.batch_ident_check(*idents)
+        sgids_done = [_ for _, d in zip(sgids, sg_done) if d]
+        sg_done = None
 
         #curies_done = self.ident_exists(self.curies_identity)
         #metadata_done = self.ident_exists(self.metadata_identity)
@@ -2007,39 +2039,67 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                   for type, *identities in types_idents
                   for i in identities]
 
-        try:
-            wat = makeParamsValues(values, constants=(':rn',))
-            vt, params_i = wat
-        except Exception as e:
-            breakpoint()  # FIXME SIGH some nonsense here
-            raise e
+        batchsize = 20000
+        sql_ident_params = []
+        for chunk in chunk_list(values, batchsize):
+            try:
+                wat = makeParamsValues(chunk, constants=(':rn',))
+                vt, params_i = wat
+            except Exception as e:
+                breakpoint()  # FIXME SIGH some nonsense here
+                raise e
 
-        params_i['rn'] = self.reference_name
-        sql_ident = sql_ident_base + vt + ' ON CONFLICT DO NOTHING'  # TODO FIXME XXX THIS IS BAD
-        #breakpoint()  # TODO
-        log.debug(f'load identifies for {si}')
-        self.session_execute(sql_ident, params_i)
+            params_i['rn'] = self.reference_name
+            sql_ident = sql_ident_base + vt + ' ON CONFLICT DO NOTHING'  # TODO FIXME XXX THIS IS BAD
+            sql_ident_params.append((sql_ident, params_i))
+            #breakpoint()  # TODO
+
+        log.debug(f'load identities for {si.hex()}')
+        n = len(sql_ident_params)
+        for i, (sql_ident, params_i) in enumerate(sql_ident_params):
+            self.session_execute(sql_ident, params_i)
+            msg = f'{((i + 1) / n) * 100:3.0f}% done with batched load of identities for {si.hex()}'
+            log.debug(msg)
+
+        values = None
+        sql_ident_params = None
 
         # TODO INSERT INTO name_to_identity
 
+        log.debug(f'starting preload prep for identity_relations for {si.hex()}')
         sql_ident_rel_base = 'INSERT INTO identity_relations (p, s, o) VALUES '
         values_ident_rel = [(self.serialization_identity, part_ident)
                             for _part, *part_idents in types_idents[1:]
-                            for part_ident in part_idents if
+                            if _part != 'subject_graph'
                             # subject graph is linked via the data, it
                             # is an extra join in the query but cuts
                             # the table size in half
-                            _part != 'subject_graph'
+                            for part_ident in part_idents
                             ]
-        values_ident_rel += [(self.Loader.data_identity, dnsi)
-                             for dnsi in self.Loader.data_named_subject_identities]
-        # TODO dereferencedTo for name -> identity
-        vt, params_ir = makeParamsValues(values_ident_rel, constants=(':p',))
-        params_ir['p'] = 'hasPart'
-        sql_rel_ident = sql_ident_rel_base + vt
-        log.debug(f'load identity_relations for {si}')
-        self.session_execute(sql_rel_ident, params_ir)
+        log.debug(f'starting named subjects for identity_relations for {si.hex()}')
+        # FIXME this is somehow insasnely slow for loading with cdes
+        di = self.Loader.data_identity
+        values_ident_rel += [
+            (di, dnsi) for dnsi in self.Loader.data_named_subject_identities]
 
+        log.debug(f'starting chunking for identity_relations for {si.hex()}')
+        sql_irel_params = []
+        for chunk in chunk_list(values_ident_rel, batchsize):
+            # TODO dereferencedTo for name -> identity
+            vt, params_ir = makeParamsValues(chunk, constants=(':p',))
+            params_ir['p'] = 'hasPart'
+            sql_rel_ident = sql_ident_rel_base + vt
+            sql_irel_params.append((sql_rel_ident, params_ir))
+
+        log.debug(f'load identity_relations for {si.hex()}')
+        n = len(sql_irel_params)
+        for i, (sql_rel_ident, params_ir) in enumerate(sql_irel_params):
+            self.session_execute(sql_rel_ident, params_ir)
+            msg = f'{((i + 1) / n) * 100:3.0f}% done with batched load of identity_relations for {si.hex()}'
+            log.debug(msg)
+
+        values_ident_rel = None
+        sql_irel_params = None
         # 'INSERT INTO qualifiers (identity, group_id)'
         # FIXME this should happen automatically in the database
         # we just need to get the value back out
@@ -2047,7 +2107,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         params_le = dict(si=si, g=self.group, u=self.user)
         sql_le = ('INSERT INTO load_events (serialization_identity, group_id, user_id) '
                   'VALUES (:si, idFromGroupname(:g), idFromGroupname(:u))')
-        log.debug(f'load load_events for {si}')
+        log.debug(f'load load_events for {si.hex()}')
         self.session_execute(sql_le, params_le)  # FIXME why is the table always empty ?!?!??!
 
         # TODO get the qualifier id so that it can be 
@@ -2084,7 +2144,10 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         if self.debug:
             # test to see whether the named triples we insert into triples matches identity_named_triples_ingest
             hrm = [v for s, v in zip(statements, value_sets) if 'triple_identity) VALUES' in s and 'identity_named_triples_ingest' not in s]
-            tis = sorted([row[-1] for h in hrm for row in h])
+            tis = sorted(
+                [row[-1] for h in hrm for vs_chunk in h for row in vs_chunk]
+                if separate else
+                [row[-1] for h in hrm for row in h])
             stis = set(tis)
             if len(tis) != len(stis):
                 breakpoint()
@@ -2108,6 +2171,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             # are sane here on the other end too ... so the problem is after this
             # XXX maybe related to chunking? surely not
             #breakpoint()
+            hrm, tis, stis, idtt, idtis, sidtis = None, None, None, None, None, None
 
         if any(separates):
             nexecs = sum([len(vals) if sep else 1 for sep, vals in zip(separates, value_sets)])
@@ -2124,12 +2188,19 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             count = 0
             def _logm():
                 percent = (count / nexecs) * 100
-                msg = f'loading approximately {percent:3.0f}% done'
+                msg = f'loading approximately {percent:3.0f}% done for triples for {si.hex()}'
                 log.debug(msg)
 
-            for separate, values, statement in zip(separates, value_sets, statements):
+            # FIXME this whole thing is massively blocked on disk on the postgres side?
+            # is it all the index updates or what ... this is nutso, possibly the batchsize is too large for triples?
+            # currently looks like it is taking 8 hours !? what the heck is the batch size !?
+            # except that the speed is incredibly variable now up to 50% and was going at an incredibly rapid pace
+            # only to grind to a halt again ??? except no way ... all the triples should have been done first ???
+
+            # memory usage hits up to 27 gigs and then drops to 23, wat
+            for i, (separate, values, statement) in enumerate(zip(separates, value_sets, statements)):
                 if separate:
-                    for chunk in values:
+                    for j, chunk in enumerate(values):
                         count += 1
                         run_statement(chunk, statement)
                         _logm()
