@@ -47,9 +47,11 @@ psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/permiss
 # tests
 export DBSETUPTEST=1
 # FIXME only run tests if we are on testing database probably to avoid pollution?
+export INTERLEX_TEST_PORT=${PORT}
 export INTERLEX_TEST_DATABASE=${DATABASE}
 echo running python tests 
 cd ${ABS_PATH}/../
 pytest test/test_constraints.py
 unset DBSETUPTEST
+unset INTERLEX_TEST_PORT
 unset INTERLEX_TEST_DATABASE
