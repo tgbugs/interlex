@@ -1150,19 +1150,21 @@ class GraphLoader(GraphIdentities):
             #(d, s, b, p, i, r) for d, s, b, p, i, r in replicas
             #if not ((d, i) in rep_object_starts and s is None)]
         replicas_deobj = replicas
-        #breakpoint()
-        to_insert['data_or_metadata_identity, s, s_blank, p, subgraph_identity, replica'] = replicas_deobj
-        # yes, we do expect multiple duplicate replica rows because a single bnode may appear
-        # in an arbitrary number of places in the graph it is an explicit bnode and the data
-        # that gets inserted into the replicas table will look
-        if False:
-            from collections import Counter
-            wat = Counter(replicas).most_common()
-            hrm = self.subgraph_identities[wat[0][0][-2]]
-            zz = Counter(replicas_deobj).most_common()
-            qq = self.subgraph_identities[zz[0][0][-2]]
-            breakpoint()
-        yield prefix, suffix, to_insert, to_fix
+        if replicas_deobj:
+            #breakpoint()
+            to_insert['data_or_metadata_identity, s, s_blank, p, subgraph_identity, replica'] = replicas_deobj
+            # yes, we do expect multiple duplicate replica rows because a single bnode may appear
+            # in an arbitrary number of places in the graph it is an explicit bnode and the data
+            # that gets inserted into the replicas table will look
+            if False:
+                from collections import Counter
+                wat = Counter(replicas).most_common()
+                hrm = self.subgraph_identities[wat[0][0][-2]]
+                zz = Counter(replicas_deobj).most_common()
+                qq = self.subgraph_identities[zz[0][0][-2]]
+                breakpoint()
+
+            yield prefix, suffix, to_insert, to_fix
 
         def int_str(e, pref=' ' * 5):
             return pref + f'{e:0>5}' if isinstance(e, int) else e
@@ -1859,7 +1861,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
     @property
     def expected_bound_name(self):
         if self._expected_bound_name is None:
-            if self.reference_name_in_db is None:
+            if self.reference_name_in_db is None:  # explicitly checking if it has not been set NOT checking of it is not True
                 self.reference_name
             #sql = 'SELECT expected_bound_name FROM reference_names WHERE name = :name'
             #r = next(self.execute(sql, dict(name=self.reference_name)))
@@ -2268,6 +2270,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                 value_templates, params = makeParamsValues(values)
                 sql = statement.format(value_templates)
                 self.session_execute(sql, params)
+                self.session_execute(f'savepoint sp{count}')
 
             # TODO FIXME handle error cases and probably figure out how to roll back or something
             # the other possible source of the high memory usage might be the fact that this is all in one transaction?
@@ -2275,7 +2278,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             count = 0
             def _logm():
                 percent = (count / nexecs) * 100
-                msg = f'loading approximately {percent:3.0f}% done for triples for {si.hex()}'
+                msg = f'loading approximately {percent:3.0f}% done (savepoint sp{count}) for triples for {si.hex()}'
                 log.debug(msg)
 
             # FIXME this whole thing is massively blocked on disk on the postgres side?

@@ -128,7 +128,8 @@ class TestLoader(unittest.TestCase):
         # doing that should also make it possible to create restartable ingest at some point
         import uuid
         from pyontutils.namespaces import rdf, rdfs, owl, ilxtr
-        graph = OntGraph()
+        from pyontutils.identity_bnode import IdentityBNode
+        graph = OntGraph(idbn_class=IdentityBNode)
         bnm = rdflib.BNode()
         bn0 = rdflib.BNode()
         bn1 = rdflib.BNode()
@@ -171,7 +172,7 @@ class TestLoader(unittest.TestCase):
             # we will wind up with a dangling bnode because we cut the serialization
             # at the end of the metadata entity no matter what
             # XXX hilariously though the ingestion process already successfully
-            # roundtrips this likely because we use subjectGraph
+            # roundtrips this likely because we use subject_triples
             (sebn0, ilxtr.EVIL, rdflib.Literal('EXTREMELY EVIL')),
 
             (thingid, rdf.type, owl.Class),
@@ -266,7 +267,7 @@ class TestLoader(unittest.TestCase):
             rows = o_rows + t_rows + e_rows + e2_rows
 
         te = TripleExporter()
-        out_graph = OntGraph()
+        out_graph = OntGraph(idbn_class=IdentityBNode)
         # FIXME TODO curies etc.
         _ = [out_graph.add(te.triple(*r)) for r in rows]
         # FIXME TODO really need the single query to reconstruct a specific loaded ontology
@@ -282,8 +283,13 @@ class TestLoader(unittest.TestCase):
             graph.debug()
             out_graph.debug()
             assert len(graph) == len(out_graph), f'graph lengths do not match {len(graph)} != {len(out_graph)}'
-            assert graph.identity() == out_graph.identity()
-            breakpoint()
+            gi, ogi = graph.identity(), out_graph.identity()  # FIXME identity always uses the latest
+            assert gi == ogi
+            IdentityBNode._if_cache = {}
+            i = IdentityBNode(graph, debug=True)
+            IdentityBNode._if_cache = {}
+            oi = IdentityBNode(out_graph, debug=True)
+            #breakpoint()
 
             if False:
                 sql = 'select * from triples where s = :ontid or s = :tid'

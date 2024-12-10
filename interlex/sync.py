@@ -65,6 +65,7 @@ class InterLexLoad:
             do_gc()  # pre/post is sufficient to stay stable, a bit of creep toward the end of a batch but it goes back down
             for i, (sql, params) in enumerate(zip(s, p)):
                 loader.session.execute(sql_text(sql), params)
+                loader.session.execute(sql_text(f'savepoint {load_type}'))
                 msg = f'{((i + 1) / n) * 100:3.0f}% done with batched load of {load_type}'
                 log.debug(msg)
 
