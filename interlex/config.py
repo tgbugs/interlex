@@ -27,6 +27,7 @@ test_host = auth.get('test-host')
 test_port = port_uri
 test_stress_port = port_guni_uri
 test_database = auth.get('test-database')
+test_database_port = auth.get('test-port')  # a bit of naming confusion just for good measure
 
 # db
 user = auth.get('db-user')

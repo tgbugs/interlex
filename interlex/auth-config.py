@@ -23,6 +23,9 @@
      'test-database': {
          'default': '__interlex_testing',
          'environment-variables': 'INTERLEX_TEST_DATABASE',},
+     'test-port': {
+         'default': 5432,
+         'environment-variables': 'INTERLEX_TEST_PORT',},
 
      # alt
      'alt-db-user': {

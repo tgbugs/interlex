@@ -55,27 +55,31 @@ SELECT * FROM user_permissions;
 
  -- test insert plus seed for no dupes later
 
-INSERT INTO triples (s, p, o_lit) VALUES
+INSERT INTO triples (s, p, o_lit, triple_identity) VALUES
        ('http://test.url/1',
         'http://test.url/annotationProperty',
-        'your father was a hampster');
+        'your father was a hampster',
+        tripleIdentity('http://test.url/1', 'http://test.url/annotationProperty', null, 'your father was a hampster', null, null));
 
-INSERT INTO triples (s, p, o) VALUES
+INSERT INTO triples (s, p, o, triple_identity) VALUES
        ('http://test.url/1',
         'http://test.url/annotationProperty',
-        'http://test.url/object');
+        'http://test.url/object',
+        tripleIdentity('http://test.url/1', 'http://test.url/annotationProperty', 'http://test.url/object', null, null, null));
 
-INSERT INTO triples (s, p, o_lit, datatype) VALUES
+INSERT INTO triples (s, p, o_lit, datatype, triple_identity) VALUES
        ('http://test.url/1',
         'http://test.url/annotationProperty',
         'object',
-        'http://test.url/datatype');
+        'http://test.url/datatype',
+        tripleIdentity('http://test.url/1', 'http://test.url/annotationProperty', null, 'object', 'http://test.url/datatype', null));
 
-INSERT INTO triples (s, p, o_lit, language) VALUES
+INSERT INTO triples (s, p, o_lit, language, triple_identity) VALUES
        ('http://test.url/1',
         'http://test.url/annotationProperty',
         'object',
-        'ja');
+        'ja',
+        tripleIdentity('http://test.url/1', 'http://test.url/annotationProperty', null, 'object', null, 'ja'));
 
  -- annotations
  -- FIXME this approach seriously risks data integrity issues :/
@@ -84,8 +88,8 @@ INSERT INTO triples (s, p, o_lit, language) VALUES
  -- it might actually be faster if the annotation identitiers were indexed? _BUT_ then
  -- we can't use null to distingusih annotations from subgraphs
 
-INSERT INTO triples (s, s_blank, p, o_lit) VALUES
-('annotation', 1, 'https://this-is-an-annotation-on-a-triple-maybe.maybe/?', 'YAY COMMENTS USING THE DISTINGUSHING POWER OF NOTHINGNESS!');
+INSERT INTO triples (s, s_blank, p, o_lit, subgraph_identity) VALUES
+('annotation', 1, 'https://this-is-an-annotation-on-a-triple-maybe.maybe/?', 'YAY COMMENTS USING THE DISTINGUSHING POWER OF NOTHINGNESS!', 'fakeid-hrm-these-present-a-problem'::bytea);
 
 --END;
 --$body$ language plpgsql;
