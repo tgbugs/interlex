@@ -13,7 +13,7 @@ from interlex import config
 from interlex import exceptions as exc
 from interlex.core import synonym_types, dbUri, makeParamsValues
 from interlex.dump import Queries, MysqlExport
-from interlex.load import TripleLoaderFactory
+from interlex.load import TripleLoaderFactory, do_gc
 from interlex.utils import log as _log
 from interlex.namespaces import ilxr
 
@@ -62,10 +62,13 @@ class InterLexLoad:
             assert len(s) == len(p)
             n = len(p)
             log.debug(f'starting batch load for {load_type}')
+            do_gc()  # pre/post is sufficient to stay stable, a bit of creep toward the end of a batch but it goes back down
             for i, (sql, params) in enumerate(zip(s, p)):
                 loader.session.execute(sql_text(sql), params)
                 msg = f'{((i + 1) / n) * 100:3.0f}% done with batched load of {load_type}'
                 log.debug(msg)
+
+            do_gc()
 
         # start sitting at around 10 gigs in pypy3 (oof)
         # now stays below 8 gigs in pypy3, and below about 1gig in postgres with 40k batch size, much better, 600mb at 20k

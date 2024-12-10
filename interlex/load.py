@@ -1,3 +1,4 @@
+import gc
 import os
 import time
 import subprocess
@@ -24,6 +25,12 @@ from interlex.dump import Queries
 
 log = log.getChild('load')
 ilxr, *_ = makeNamespaces('ilxr')
+
+
+def do_gc():
+    log.debug('gc-pre')
+    gc.collect()
+    log.debug('gc-post')
 
 
 def async_load(iri=None, data=None, max_wait=10):
@@ -131,6 +138,7 @@ class GraphIdentities:
         self._metadata_connected_subgraph_identities = None
         self._data_connected_subgraph_identities = None
         self._free_subgraph_identities = None
+        self._connected_and_free_subgraph_identities = None
         self._bound_name_identity = None
         self._metadata_identity = None
         self._data_identity = None
@@ -181,13 +189,16 @@ class GraphIdentities:
     def data_named_subject_identities(self):
         if not hasattr(self, '_cache_dnsi'):
             bn = self.bound_name
-            self._cache_dnsi = {v:k for k, v in self._ibn.subject_embedded_identities.items() if isinstance(k, rdflib.URIRef) and k != bn}
+            #bids = set(self._blank_identities.values())
+            named_subjects = [s for s in self.graph.subjects(unique=True) if isinstance(s, rdflib.URIRef) and s != bn]
+            self._cache_dnsi = {IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity: s for s in named_subjects}
+            #self._cache_dnsi = {v:k for k, v in self._ibn.subject_embedded_identities.items() if isinstance(k, rdflib.URIRef) and k != bn}
 
         return self._cache_dnsi
 
     @property
     def subgraph_identities(self):
-        return {**self.connected_subgraph_identities, **self.free_subgraph_identities}
+        return {**self.connected_subgraph_identities, **self.free_subgraph_identities, **self.connected_and_free_subgraph_identities}
 
     @property
     def connected_subgraph_identities(self):
@@ -219,6 +230,13 @@ class GraphIdentities:
             self.process_graph()
 
         return self._free_subgraph_identities
+
+    @property
+    def connected_and_free_subgraph_identities(self):
+        if self._connected_and_free_subgraph_identities is None:
+            self.process_graph()
+
+        return self._connected_and_free_subgraph_identities
 
     # the things themselves
     @property
@@ -437,7 +455,7 @@ class GraphIdentities:
     def metadata_count(self):
         #return self.metadata_named_count + sum(self.metadata_connected_counts.values())
         if self.bound_name:
-            return len(list(self.graph.subjectGraph(self.bound_name)))
+            return len(list(self.graph.subject_triples(self.bound_name)))
         else:
             return 0
 
@@ -452,7 +470,10 @@ class GraphIdentities:
     @property
     def data_named_subject_counts(self):
         # FIXME TODO make sure these match on roundtrip
-        return {k:len(self._ibn.subject_identities[k]) for k in self.data_named_subject_identities}
+        return {k:
+                #len(self._ibn.subject_identities[k])
+                len(self._ibn._alt_debug['subject_identities'][k])
+                for k in self.data_named_subject_identities}
 
     @property
     def data_count(self):
@@ -470,6 +491,10 @@ class GraphIdentities:
         return {i:len(sg) for i, sg in self.free_subgraph_identities.items()}
 
     @property
+    def connected_and_free_counts(self):
+        return {i:len(sg) for i, sg in self.connected_and_free_subgraph_identities.items()}
+
+    @property
     def counts(self):
         # FIXME i think we want the whole graph too yeah?
         counts = {self.curies_identity:self.curies_count,
@@ -477,7 +502,9 @@ class GraphIdentities:
                   self.data_identity:self.data_count,
                   **self.data_named_subject_counts,
                   **self.connected_counts,
-                  **self.free_counts}
+                  **self.free_counts,
+                  **self.connected_and_free_counts,
+                  }
 
         if self.bound_name_count is not None:
             counts[self.bound_name_identity] = self.bound_name_count
@@ -526,9 +553,9 @@ class GraphIdentities:
             o = bnode_last(o)
             return p, o, s
 
-        def normgraph(head_subject, subgraph, sgid, none_subject=None):
+        def normgraph(head_subject, subgraph, sgid, none_subject=None):  # , connected_and_free=False, free_and_connected=False):
             """ replace the bnodes with local integers inside the graph """
-            # make sure we are working only on the subjectGraph
+            # make sure we are working only on the subject_triples
             # since we technically aren't supposed to use IdentityBNode.subgraph_mappings
             # since it is polluted
             _osg = subgraph
@@ -537,7 +564,7 @@ class GraphIdentities:
             except Exception as e:
                 breakpoint()
                 raise e
-            subgraph = list(g.subjectGraph(head_subject))
+            subgraph = list(g.subject_triples(head_subject))
 
             cmax = 0
 
@@ -565,7 +592,7 @@ class GraphIdentities:
                         # and e.g. contains other bits of graph that e.g. have
                         # head_subject in the object position because they are
                         # from the raw subgraph_mappings that are used for debug
-                        # this particular example is avoided above via subjectGraph
+                        # this particular example is avoided above via subject_triples
                         raise TypeError('This should never happen!')
 
                 *ntrip, cmax = normalize(cmax, trip, existing, sgid, replica)
@@ -575,7 +602,9 @@ class GraphIdentities:
         # hey kids watch this
         ibn = IdentityBNode(self.graph, debug=True)  # FIXME TODO should be able to compute data id by removing the metadata id from the final listing
         if list(self.metadata_raw):
-            self._metadata_identity = ibn.subject_embedded_identities[self.bound_name]
+            #self._metadata_identity = ibn.subject_embedded_identities[self.bound_name]
+            metadata_seid = IdentityBNode(self.bound_name, as_type='(s ((p o) ...))', in_graph=self.graph)
+            self._metadata_identity = metadata_seid.identity
         else:
             self._metadata_identity = ibn.null_identity  # FIXME not sure if want?
 
@@ -585,14 +614,23 @@ class GraphIdentities:
         # metadata was for this particular ontology, and while it might be strage for ontology metadata
         # to be the same between different ontologies, consider the case where there is only the ontid
         # TODO see if we need to use the list variant that is equivalent to the old way
-        self._data_identity = ibn.ordered_identity(*[v for v in ibn.all_idents_new if v != self._metadata_identity], separator=False)
+        #self._data_identity = ibn.ordered_identity(*[v for v in ibn.all_idents_new if v != self._metadata_identity], separator=False)
+        ibn_seids = IdentityBNode(self.graph, as_type='(s ((p o) ...)) ...')  # XXX watch out this one isn't normal because .identitiy is a list
+        seids = ibn_seids.identity
+        self._data_identity = ibn.ordered_identity(*sorted([v for v in seids if v != self._metadata_identity]), separator=False)
         # FIXME how to deal with files that have multiple metadata records and thus multiple metadata identities ???
         # this def for _data_identity produces the same result as the traditional way of IdentityBNode(self.data_raw)
         # note that IdentityBNode(self.data) produces different results due to the presence of checksums directly
         # howevever IdentityBNode([back_convert_sigh(*t) for t in self.data]) should produce the same result, except
         # when dealing with the non-injective case where there are duplicate unnamed subgraphs which is a FIXME TODO
         self._subgraph_and_integer = {}
-        self._blank_identities = {**ibn.bnode_identities, **ibn.unnamed_subgraph_identities}
+        #self._blank_identities = {**ibn.bnode_identities, **ibn.unnamed_subgraph_identities}
+        #if ibn.bnode_identities:
+            #breakpoint()
+
+        subgraph_mappings = ibn._alt_debug['transitive_triples']
+        _bnodes = set(e for t in self.graph for e in t if isinstance(e, rdflib.BNode))
+        self._blank_identities = {bn: IdentityBNode(bn, as_type='(s ((p o) ...))', in_graph=self.graph).identity for bn in _bnodes}
         itb = {}  # XXX FIXME unfortunately non-injectivity is a giant pita because of how we pass stuff around when generating rows
         non_injective = set()
         for v, k in self._blank_identities.items():
@@ -606,7 +644,7 @@ class GraphIdentities:
                     non_injective.add(v)
                     non_injective.add(ev)
 
-                log.warning(f'free subgraph duplication! {k.hex()}: {itb[k]}')
+                log.log(9, f'free subgraph duplication! {k.hex()}: {itb[k]}')
 
             else:
                 itb[k] = v
@@ -614,13 +652,45 @@ class GraphIdentities:
         self._itbni = itb
         self._non_injective = non_injective
         self._identity_to_bnode = {v:k for k, v in self._blank_identities.items()}
+        # FIXME figure out how to reduce the recomputation of the graph subsets since
+        # ibn already does this and we don't want to be using debug
         self._connected_subgraph_identities = {
-            ibn.bnode_identities[o]:normgraph(o, ibn.subgraph_mappings[o], ibn.bnode_identities[o])
-            for o in ibn.connected_heads}
+            IdentityBNode(o, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+            #ibn.bnode_identities[o]
+            :
+            normgraph(o, subgraph_mappings[o],
+                      #ibn.bnode_identities[o]
+                      IdentityBNode(o, as_type='(s ((p o) ...))', in_graph=self.graph).identity,
+                      )
+            for o in
+            #ibn.connected_heads
+            ibn._alt_debug['connected_heads']
+            if o not in ibn._alt_debug['free_heads']
+        }
         self._free_subgraph_identities = {
-                identity:normgraph(s, ibn.subgraph_mappings[s], identity)
-                for s, identity in ibn.unnamed_subgraph_identities.items()}
+            #identity
+            IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+            :
+            normgraph(s, subgraph_mappings[s],
+                      #identity
+                      IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+                      )
+            for s in
+            #ibn.unnamed_subgraph_identities.items()
+            ibn._alt_debug['free_heads']
+            if s not in ibn._alt_debug['connected_heads']
+        }
+        self._connected_and_free_subgraph_identities = {
+            IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+            :
+            normgraph(s, subgraph_mappings[s],
+                      IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+                      )
+            for s in
+            (ibn._alt_debug['free_heads'] & ibn._alt_debug['connected_heads'])
+        }
 
+        self._subgraph_mappings = subgraph_mappings  # for debug
         self._ibn = ibn  # for debug
         self._are_you_kidding_me = {v:k for k, v in self._subgraph_and_integer.items()}  # if you want to invert something invert something >_<
         self._transaction_cache_identities.update(self._blank_identities.values())  # XXX likely redundant
@@ -842,7 +912,9 @@ class GraphLoader(GraphIdentities):
                 WAAAAA = IdentityBNode(s + p + o),  # XXX hilariously broken right now
             )
             """
-            subject_embedded_identity = self._ibn.subject_embedded_identities[s]
+            #subject_embedded_identity = self._ibn.subject_embedded_identities[s]
+            #subject_embedded_identity = self._ibn.subject_embedded_identities[s]
+            subject_embedded_identity = IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
             triple_identity = IdentityBNode((s, p, o), pot=True).identity
             columns = 's, p, o, triple_identity'
             record = (str(s),
@@ -851,7 +923,8 @@ class GraphLoader(GraphIdentities):
                       triple_identity)
 
         elif isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.Literal):
-            subject_embedded_identity = self._ibn.subject_embedded_identities[s]
+            #subject_embedded_identity = self._ibn.subject_embedded_identities[s]
+            subject_embedded_identity = IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
             triple_identity = IdentityBNode((s, p, o), pot=True).identity
             columns = 's, p, o_lit, datatype, language, triple_identity'
             o_lit = str(o)
@@ -2056,10 +2129,19 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
         log.debug(f'load identities for {si.hex()}')
         n = len(sql_ident_params)
+        if len(sql_ident_params) > 1:
+            do_gc()
         for i, (sql_ident, params_i) in enumerate(sql_ident_params):
             self.session_execute(sql_ident, params_i)
+            #if i % 10 == 0:
+                #log.debug('gc-pre')  # ugh 4 seconds at this point
+                #gc.collect()
+                #log.debug('gc-post')
             msg = f'{((i + 1) / n) * 100:3.0f}% done with batched load of identities for {si.hex()}'
             log.debug(msg)
+
+        if len(sql_ident_params) > 1:
+            do_gc()
 
         values = None
         sql_ident_params = None
@@ -2093,11 +2175,15 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
         log.debug(f'load identity_relations for {si.hex()}')
         n = len(sql_irel_params)
+        if len(sql_irel_params) > 1:
+            do_gc()
         for i, (sql_rel_ident, params_ir) in enumerate(sql_irel_params):
             self.session_execute(sql_rel_ident, params_ir)
             msg = f'{((i + 1) / n) * 100:3.0f}% done with batched load of identity_relations for {si.hex()}'
             log.debug(msg)
 
+        if len(sql_irel_params) > 1:
+            do_gc()
         values_ident_rel = None
         sql_irel_params = None
         # 'INSERT INTO qualifiers (identity, group_id)'
@@ -2144,10 +2230,11 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         if self.debug:
             # test to see whether the named triples we insert into triples matches identity_named_triples_ingest
             hrm = [v for s, v in zip(statements, value_sets) if 'triple_identity) VALUES' in s and 'identity_named_triples_ingest' not in s]
-            tis = sorted(
-                [row[-1] for h in hrm for vs_chunk in h for row in vs_chunk]
-                if separate else
-                [row[-1] for h in hrm for row in h])
+            # FIXME a bit worrying that somehow separates is needed at a more granular level now ???
+            tis = sorted([row[-1] for sep, h in zip(separates, hrm) for row in
+                          ((row for vs_chunk in h for row in vs_chunk)
+                           if sep else
+                           h)])
             stis = set(tis)
             if len(tis) != len(stis):
                 breakpoint()
@@ -2198,6 +2285,11 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             # only to grind to a halt again ??? except no way ... all the triples should have been done first ???
 
             # memory usage hits up to 27 gigs and then drops to 23, wat
+
+            # with well placed gcs memory usage is down to 15 gigs at this point
+            # but still seeing stalls, possibly on disk? or maybe it is the batchsize for these? the triple rows are larger?
+            # also might be the indexes that are an issue? but no those shouldn't be causing this level of slowdown
+            do_gc()
             for i, (separate, values, statement) in enumerate(zip(separates, value_sets, statements)):
                 if separate:
                     for j, chunk in enumerate(values):
@@ -2208,6 +2300,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
                     count += 1
                     run_statement(values, statement)
                     _logm()
+            do_gc()
 
         else:
             *value_templates, params = makeParamsValues(*value_sets)
