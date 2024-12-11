@@ -1927,7 +1927,10 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
     @name.setter
     def name(self, value):
         # TODO
-        self._name = value  # set this first to preven accidentally not setting it
+        if not isinstance(value, rdflib.URIRef):
+            raise TypeError(f'oops! {value} is a {type(value)}')
+
+        self._name = value  # set this first to prevent accidentally not setting it
         if value not in self._cache_names or self._transaction_cache_names:
             try:
                 sql = 'INSERT INTO names VALUES (:name)'
