@@ -994,7 +994,7 @@ CREATE TABLE subgraph_deduplication (
        subject_replica integer NOT NULL,
        o_blank integer NOT NULL,  -- the subject_subgraph_identity o_blank
        object_subgraph_identity bytea NOT NULL,
-       object_replica integer NOT NULL
+       object_replica integer NOT NULL,
        PRIMARY KEY (  -- FIXME TODO vs unique
                data_or_metadata_identity,
                subject_subgraph_identity,
