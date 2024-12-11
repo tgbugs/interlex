@@ -87,14 +87,17 @@ def base_ffi(group, user, reference_name, reference_host,
     global session
     # sadly cannot embed in a worker :/
     FileFromIRI = FileFromIRIFactory(session)
-    ffi = FileFromIRI(user, group, reference_name, reference_host)
+    ffi = FileFromIRI(user, group, reference_name)
     self.update_state(state='CHECKING')
-    check_failed = ffi.check(name)  # should have already been run
+    check_failed = ffi.check(name)  # should have already been run, therefore we do not fail here, but that is dumb
     self.update_state(state='SETUP')
     setup_failed = ffi(expected_bound_name)
+    if setup_failed:
+        self.update_state(state='FAILED-SETUP')  # FIXME use the real success value
+        return
+
     self.update_state(state='LOAD')
-    if not setup_failed:
-        ffi.load()
+    ffi.load()
     self.update_state(state='SUCCESS')  # FIXME use the real success value
 
 @cel.task(bind=True)
@@ -113,12 +116,17 @@ def long_ffp(self, group, user, reference_host, header, file_meta, serialization
     FileFromPost = FileFromPostFactory(session)
     ffp = FileFromPost(group, user, reference_host)
     self.update_state(state='CHECKING')
-    check_failed = ffp.check(header)  # should have already been run
+    check_failed = ffp.check(header)  # should have already been run, therefore we do not fail here, but that is dumb
     self.update_state(state='SETUP')
     setup_failed = ffp(file_meta, serialization, create)
+    if setup_failed:
+        self.update_state(state='FAILED-SETUP')  # FIXME use the real success value
+        return
+
     self.update_state(state='LOAD')
-    if not setup_failed:
-        ffp.load()
+    # FIXME unfortunately due to the usual lxml memory leak nonsense this
+    # has to run in a subprocess >_<
+    ffp.load()
     self.update_state(state='SUCCESS')  # FIXME use the real success value
 
 
