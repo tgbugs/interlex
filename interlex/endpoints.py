@@ -268,7 +268,6 @@ class Endpoints:
         # FIXME the is a horrible way to define valid uri structure
         scheme, rest = iri.split('://', 1)
         prefix, maybe_ilx = rest.rsplit('/', 1)
-        rx_pref = re.compile()
         if (prefix.startswith(self.reference_host) and
             re.match(self.rx_pref, maybe_ilx)):  # TODO allow configurable prefix here
             _, group, _ = (prefix + '/').split('/', 2)  # at trailing in case group was terminal
@@ -467,6 +466,14 @@ class Endpoints:
         # TODO move this lookup to config?
         return self.ilx(group=group, frag_pref_id=frag_pref_id, db=db)
         #return tripleRender(request, g, group, id, object_to_existing, title)
+
+    @basic
+    def other(self, group, frag_pref_id, db=None):
+        return 'NOT IMPLEMENTED', 400
+
+    @basic
+    def versions(self, group, frag_pref_id, db=None):
+        return 'NOT IMPLEMENTED', 400
 
     @basic
     def lexical(self, group, label, db=None):
