@@ -945,13 +945,14 @@ class Ontologies(Endpoints):
                 if request.json is not None:  # jsonld u r no fun
                     log.debug(request.json)
                     if 'name' in request.json:
-                        name = request.json['name']  # FIXME not quite right?
+                        _name = request.json['name']  # FIXME not quite right?
+                        name = URIRef(_name)
                         if name.startswith('file://'):
                             return 'file:// scheme not allowed', 400
 
                         if 'bound-name' in request.json:
                             _expected_bound_name = request.json['bound-name']
-                            expected_bound_name = rdflib.URIRef(_expected_bound_name)
+                            expected_bound_name = URIRef(_expected_bound_name)
                         else:
                             expected_bound_name = None
 
