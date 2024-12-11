@@ -1210,8 +1210,8 @@ class GraphLoader(GraphIdentities):
         to_insert = defaultdict(list)
         to_fix = defaultdict(list)
         prefix = 'INSERT INTO identity_named_triples_ingest'
-        suffix = ''
-        #suffix = 'ON CONFLICT DO NOTHING'
+        #suffix = ''
+        suffix = 'ON CONFLICT DO NOTHING'  # e.g. ro.owl and bfo.owl both contain dc:contributor rdf:type owl:AnnotationProperty
         to_insert['subject_embedded_identity, triple_identity'] = identity_triples
         #'INSERT INTO identities (reference_name, identity, type, triples_count VALUES'
         #'INSERT INTO identity_relations'
