@@ -32,6 +32,8 @@ test_database_port = auth.get('test-port')  # a bit of naming confusion just for
 # db
 user = auth.get('db-user')
 database = auth.get('db-database')
+database_host = auth.get('db-host')
+database_port = auth.get('db-port')
 
 # mq
 vhost = auth.get('mq-vhost')

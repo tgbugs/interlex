@@ -161,6 +161,19 @@ class TestLoader(unittest.TestCase):
         bnl4 = rdflib.BNode()
         bnl5 = rdflib.BNode()
 
+        ban0 = rdflib.BNode()
+        ban1 = rdflib.BNode()
+        ban2 = rdflib.BNode()
+        ban3 = rdflib.BNode()
+        ban4 = rdflib.BNode()
+        ban5 = rdflib.BNode()
+        ban6 = rdflib.BNode()
+
+        ban3_1 = rdflib.BNode()
+        ban4_1 = rdflib.BNode()
+        ban5_1 = rdflib.BNode()
+        ban6_1 = rdflib.BNode()
+
         trips = (
             (ontid, rdf.type, owl.Ontology),  # FIXME using a /uris/ iri instead of an /ontologies/ uri for owl:Ontology should be an error
             (ontid, ilxtr.load_it_anyway, rdflib.Literal(differ)),
@@ -223,6 +236,32 @@ class TestLoader(unittest.TestCase):
             (evilid, rdf.type, owl.Class),
             (ebn3, ilxtr.pred, ilxtr.obj),
             (ebn4, ilxtr.pred, ilxtr.obj),
+
+            # TODO missing example where an explicit bnode appears inside another subgraph >_<
+
+            # or is it banannos >_<
+            # FIXME somehow ingest is working without actually deduplicating the results here, did i fail to materialize the subgraph
+            # and it still works due to dedupe ??? and the join on the dedupe table ???
+            (ban0, ilxtr.ban_p0, ban5),
+            (ban1, ilxtr.ban_p1, ban5),
+            (ban2, ilxtr.ban_p2, ban5),
+
+            (ban0, ilxtr.ban_p0o, rdflib.Literal('other 0')),
+            (ban1, ilxtr.ban_p1o, rdflib.Literal('other 1')),
+            (ban2, ilxtr.ban_p2o, rdflib.Literal('other 2')),
+
+            # ban5 must come after ban3 so that its replica number
+            # will not match, which breaks our python roundtrip, the db roundtrip
+            # has its own issues with secondary in general not being implemented yet
+            (ban3, ilxtr.ban_p3, ban3_1),
+            (ban4, ilxtr.ban_p3, ban4_1),  # yep, it's evil!
+            (ban5, ilxtr.ban_p3, ban5_1),
+            (ban6, ilxtr.ban_p3, ban6_1),
+
+            (ban3_1, ilxtr.ban_p4, rdflib.Literal("really?")),
+            (ban4_1, ilxtr.ban_p4, rdflib.Literal("really?")),  # yep, it's evil!
+            (ban5_1, ilxtr.ban_p4, rdflib.Literal("really?")),
+            (ban6_1, ilxtr.ban_p4, rdflib.Literal("really?")),
 
         )
         for t in trips:

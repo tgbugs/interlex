@@ -633,7 +633,8 @@ class TripleExporter:
 
         return s + p + o + b'.\n'
 
-    def triple(self, s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity, subgraph_replica=None):
+    def triple(self, s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity,
+               subgraph_replica=None, object_subgraph_identity=None, object_replica=None):
         if subgraph_identity is not None:
             if subgraph_identity not in self.subgraph_identities:
                 self.subgraph_identities[subgraph_identity] = self.subgraph_counter
@@ -643,6 +644,13 @@ class TripleExporter:
                 subgraph_replica = 0
 
             si = 'sg_' + str(self.subgraph_identities[subgraph_identity]) + '_' + str(subgraph_replica)
+            if object_subgraph_identity is not None:
+                if object_subgraph_identity not in self.subgraph_identities:  # can't assume that the object subgraph will always be in first
+                    self.subgraph_identities[object_subgraph_identity] = self.subgraph_counter
+
+                oi = 'sg_' + str(self.subgraph_identities[object_subgraph_identity]) + '_' + str(object_replica)
+            else:
+                oi = si
 
         if s is not None:
             s = rdflib.URIRef(s)
@@ -654,7 +662,10 @@ class TripleExporter:
         elif o_lit is not None:
             o = rdflib.Literal(o_lit, datatype=datatype, lang=language)
         elif o_blank is not None:
-            o = rdflib.BNode(si + '_' + str(o_blank))
+            if object_subgraph_identity is not None:
+                o = rdflib.BNode(oi + '_' + str(0))  # if there is an object subgraph identity the target is always the head node 0
+            else:
+                o = rdflib.BNode(oi + '_' + str(o_blank))
         else:
             raise ValueError(f'What have you done!\n{o}\n{o_lit}\n{o_blank}\n'
                              f'{s} {p} {datatype} {language}')
@@ -858,7 +869,8 @@ with ser_idtys as (
 --select * from subgraph_idtys
 
 select
-t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica
+-- t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica
+   t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica, null::bytea as object_subgraph_identity, null::integer as object_replica
 from identity_named_triples_ingest as inti
 join triples as t on inti.triple_identity = t.triple_identity
 where inti.subject_embedded_identity in (select * from metadata_idtys)
@@ -866,7 +878,8 @@ where inti.subject_embedded_identity in (select * from metadata_idtys)
 UNION
 
 select
-t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica
+-- t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica
+   t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica, null::bytea as object_subgraph_identity, null::integer as object_replica
 from identity_relations as ird
 join identity_named_triples_ingest as inti on ird.o = inti.subject_embedded_identity
 join triples as t on inti.triple_identity = t.triple_identity
@@ -875,9 +888,11 @@ where ird.s in (select * from data_idtys)
 UNION
 
 select
-t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, sr.replica as subgraph_replica
+-- t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, sr.replica as subgraph_replica
+   t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, sr.replica as subgraph_replica, sd.object_subgraph_identity, sd.object_replica
 from triples as t
 join subgraph_replicas as sr on sr.subgraph_identity = t.subgraph_identity and (t.s is null or (sr.p = t.p and (sr.s = t.s or sr.s_blank = t.s_blank)))
+left outer join subgraph_deduplication as sd on sd.subject_subgraph_identity = sr.subgraph_identity and sd.subject_replica = sr.replica and sd.o_blank = t.o_blank
 where
 t.subgraph_identity in (select * from subgraph_idtys)
 and (sr.data_or_metadata_identity in (select * from metadata_idtys) or sr.data_or_metadata_identity in (select * from data_idtys))

@@ -155,6 +155,80 @@ along with those relations.
 | connected subgraphs | csgids          |
 | free subgraphs      | fsgids          |
 |---------------------+-----------------|
+* versions
+There aren't really versions in interlex, there are just identities, reference names, and bound names, and names
+
+- identity i
+  - metadata identity (can't change) m
+  - bound name (can't change) b
+  - version bound name (can't change) v
+  - reference name (usually prevented from changing) r
+  - name (can change) n
+
+pairwise relation arity
+
+| a | b | a-b   | b-a   | b-a warn | notes                                                         |
+|---+---+-------+-------+----------+---------------------------------------------------------------|
+| i | m | n:0-1 | 1:n   | x        | m may be null id or simply absent, probably absent            |
+| i | b | n:0-1 | 1:n   | x        | multiple b in a single i bad                                  |
+| i | v | n:0-1 | 1:n   | x        | multiple v in a single i bad                                  |
+| i | r | n:m   | n:m   | x        | same id could appear under different r, but probably bad      |
+| i | n | n:m   | n:m   |          |                                                               |
+| m | i | x     |       |          |                                                               |
+| m | b | n:0-1 | 1:n   | x        | multiple b in a single m bad                                  |
+| m | v | n:0-1 | 1:n   | x        | multiple v in a single m bad                                  |
+| m | r | n:m   | n:m   | x        | same m appearing under different r bad, but bnode m ???       |
+| m | n | n:m   | n:m   |          |                                                               |
+| b | m | x     |       |          |                                                               |
+| b | i | x     |       |          |                                                               |
+| b | v | 1:n   | n:1   | x        | definitely error if v appears under different b               |
+| b | r | 1:1   | 1:0-1 | x        | enforce 1:1                                                   |
+| b | n | 1:n   | 1:0-1 |          | name might change bound name over time or add bound name      |
+| v | m | x     |       |          |                                                               |
+| v | b | x     |       |          |                                                               |
+| v | i | x     |       |          |                                                               |
+| v | r | n:1   | 1:n   |          |                                                               |
+| v | n | n:m   | n:m   |          |                                                               |
+| r | m | x     |       |          |                                                               |
+| r | b | x     |       |          |                                                               |
+| r | v | x     |       |          |                                                               |
+| r | i | x     |       |          |                                                               |
+| r | n | 1:n   |       |          | this is the hard one, what if name has different bound names? |
+| n | m | x     |       |          |                                                               |
+| n | b | x     |       |          |                                                               |
+| n | v | x     |       |          |                                                               |
+| n | r | x     |       |          |                                                               |
+| n | i | x     |       |          |                                                               |
+
+
+Thus for a given identity the following temporal measures might be used (there may be others)
+| ilx-first-seen-time | bound version name time | bound version time | name version name time | external source time (git) |
+
+ilx-first-seen-time applies to all i, b, v, r, n
+
+a relation between identities could also be inserted
+in addition to timestamps, that is
+id-a was-head-for-bound-name-when-first-saw id-b
+id-a was-current-head-when-first-saw id-b
+probably has to go to the reference name though, and possibly the reference name + perspective
+each perspective history might look different
+
+we probably need a perspective identity relations table ...
+
+| perspective | reference name |
+
+The way we run the NIF-Ontology the boundname stays the same, the actual versioning
+is handled in git, so if we ingest directly from git we are going to have a bunch of
+stuff with the same bound name all coming from different commit hashes etc. and we
+would probably need/want a special way to ingest that information.
+
+The other part of this is that there can be multiple histories
+existing at the same time leading to a single identity and we would
+just record the ones that we had seen.
+
+id-a last-sent-to-user-with-api-key-before-receiving-for-the-same-reference-name id-b
+id-a the-specific-identity-that-the-user-claims-their-version-is-derived-from id-b
+
 * Red links
 One of the most useful features for both expert and non-expert users of NeuroLex was the redlink.
 The redlink was a fantastic bookmarking and compiling tool that allowed users to use lexical entities

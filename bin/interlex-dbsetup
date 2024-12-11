@@ -19,7 +19,7 @@ if [ ! -d "${SQL}" ]; then
 fi
 
 if [ -z $1 ]; then
-    PORT=5432
+    PORT=$(python -c 'from interlex.config import auth; print(auth.get("test-port"))')
 else
     PORT=$1
 fi

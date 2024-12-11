@@ -64,7 +64,7 @@ class uri(types.UserDefinedType):
         return process
 
 
-def dbUri(dbuser=config.user, host='localhost', port=5432, database=config.database):
+def dbUri(dbuser=config.user, host=config.database_host, port=config.database_port, database=config.database):
     if hasattr(sys, 'pypy_version_info'):
         dialect = 'psycopg2cffi'
     else:
@@ -76,8 +76,10 @@ def dbUri(dbuser=config.user, host='localhost', port=5432, database=config.datab
 def mqUri():
     return config.broker_url
 
-def getScopedSession(dburi=dbUri()):
+def getScopedSession(dburi=dbUri(),
+                     echo=False,):
     engine = create_engine(dburi)
+    engine.echo = echo
     session_factory = sessionmaker(bind=engine)
     ScopedSession = scoped_session(session_factory)
     return ScopedSession

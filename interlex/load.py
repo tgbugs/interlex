@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.sql import text as sql_text
 from pyontutils.core import OntGraph, OntId, OntResIri, OntResGit
 from pyontutils.utils_fast import TermColors as tc, chunk_list
-from pyontutils.identity_bnode import IdentityBNode
+from pyontutils.identity_bnode import IdentityBNode, bnNone
 from pyontutils.namespaces import definition
 from pyontutils.namespaces import makeNamespaces, ILX, NIFRID, ilxtr
 from pyontutils.namespaces import rdf, owl
@@ -319,7 +319,9 @@ class GraphIdentities:
 
         for s, p, o in self.metadata_raw:
             if isinstance(s, rdflib.BNode) or isinstance(o, rdflib.BNode):
+                ssgid = None
                 if isinstance(s, rdflib.URIRef):
+                    #s = bnNone  # TODO
                     s = None
                 else:
                     try:
@@ -339,7 +341,20 @@ class GraphIdentities:
                     try:
                         oid = self._blank_identities[o]
                         osgid, orep, oind = self._subgraph_and_integer[o]
-                        _o = oid, orep, oind, osgid
+                        if osgid != ssgid and (o, ssgid) in self._subgraph_object_dupes:  # if only one of these is true it is probably an error
+                            secondary = osgid
+                            secondary_replica = orep
+                            osgid = ssgid
+                            # WONDERFUL NEWS if a bnode appears in a subgraph at multiple
+                            # locations it will have have the same oind, so we are safe!
+                            orep, oind = self._subgraph_object_dupes[o, ssgid]
+
+                        else:
+                            secondary = None
+                            secondary_replica = None
+
+                        assert ssgid is None or ssgid == osgid, 'hah gotcha'
+                        _o = oid, orep, oind, osgid, secondary, secondary_replica
                     except KeyError as e:
                         if p in (rdf.rest, rdf.first):
                             _o = o
@@ -377,6 +392,7 @@ class GraphIdentities:
 
         for s, p, o in self.data_raw:
             if any(isinstance(e, rdflib.BNode) for e in (s, p, o)):  # to ensure symmetry with data_named above
+                ssgid = None
                 if isinstance(s, rdflib.BNode):
                     try:
                         sid = self._blank_identities[s]
@@ -397,7 +413,22 @@ class GraphIdentities:
                     try:
                         oid = self._blank_identities[o]
                         osgid, orep, oind = self._subgraph_and_integer[o]
-                        _o = oid, orep, oind, osgid
+                        # sub and int always returns the free subgraph for an object, of there are
+                        # other parent subgraphs they will have a different oind and osgid
+                        # in order to make inverse lookup injective you need
+                        # the subject subgraph identity and original o together
+                        if osgid != ssgid and (o, ssgid) in self._subgraph_object_dupes:  # if only one of these is true it is probably an error
+                            secondary = osgid
+                            secondary_replica = orep
+                            osgid = ssgid
+                            orep, oind = self._subgraph_object_dupes[o, ssgid]
+
+                        else:
+                            secondary = None
+                            secondary_replica = None
+
+                        assert ssgid is None or ssgid == osgid, 'hah gotcha'
+                        _o = oid, orep, oind, osgid, secondary, secondary_replica
                     except KeyError as e:
                         if p in (rdf.rest, rdf.first):
                             _o = o
@@ -528,6 +559,7 @@ class GraphIdentities:
         return IdentityBNode(value).identity
 
     def process_graph(self):
+        _subgraph_object_dupes = {}
         def normalize(cmax, t, existing, sgid, replica):
             for e in t:
                 if isinstance(e, rdflib.BNode):
@@ -535,8 +567,9 @@ class GraphIdentities:
                         cmax += 1
                         existing[e] = cmax
                         if e in self._subgraph_and_integer:
-                            breakpoint()
-                        self._subgraph_and_integer[e] = sgid, replica, cmax
+                            _subgraph_object_dupes[e, sgid] = replica, cmax
+                        else:
+                            self._subgraph_and_integer[e] = sgid, replica, cmax
 
                     yield existing[e]
                 else:
@@ -553,17 +586,18 @@ class GraphIdentities:
             o = bnode_last(o)
             return p, o, s
 
-        def normgraph(head_subject, subgraph, sgid, none_subject=None):  # , connected_and_free=False, free_and_connected=False):
+        def normgraph(head_subject, subgraph, sgid):
             """ replace the bnodes with local integers inside the graph """
             # make sure we are working only on the subject_triples
             # since we technically aren't supposed to use IdentityBNode.subgraph_mappings
             # since it is polluted
             _osg = subgraph
             try:
-                g = OntGraph().populate_from_triples((((none_subject if s is None else s), p, o) for s, p, o in subgraph))
+                g = OntGraph().populate_from_triples((((bnNone if s is None else s), p, o) for s, p, o in subgraph))
             except Exception as e:
                 breakpoint()
                 raise e
+
             subgraph = list(g.subject_triples(head_subject))
 
             cmax = 0
@@ -576,7 +610,13 @@ class GraphIdentities:
                 replica = 0
 
             if head_subject in self._subgraph_and_integer:
-                breakpoint()
+                # we hit this because there are cases where nodes can
+                # be in connected heads and free heads but also where
+                # they can be a free head AND somewhere down a
+                # connected graph as well
+                e_sgid, e_replica, e_cmax = self._subgraph_and_integer[head_subject]
+                assert e_cmax != 0, 'THERE CAN BE ONLY ONE'
+                _subgraph_object_dupes[head_subject, e_sgid] = e_replica, e_cmax
 
             self._subgraph_and_integer[head_subject] = sgid, replica, cmax
             existing = {head_subject:0}  # FIXME the head of a list is arbitrary :/
@@ -690,6 +730,10 @@ class GraphIdentities:
             (ibn._alt_debug['free_heads'] & ibn._alt_debug['connected_heads'])
         }
 
+
+        self._subgraph_object_dupes = _subgraph_object_dupes
+        self._subgraph_object_dupes_inv = {(sgid, rep, ind): o for (o, sgid), (rep, ind) in self._subgraph_object_dupes.items()}
+
         self._subgraph_mappings = subgraph_mappings  # for debug
         self._ibn = ibn  # for debug
         self._are_you_kidding_me = {v:k for k, v in self._subgraph_and_integer.items()}  # if you want to invert something invert something >_<
@@ -757,6 +801,7 @@ class GraphIdentities:
         self._transaction_cache_identities.update(self._metadata_connected_subgraph_identities)
         """
 
+helper_ibnode = IdentityBNode('')
 
 class GraphLoader(GraphIdentities):
 
@@ -809,7 +854,7 @@ class GraphLoader(GraphIdentities):
             subgraph_identity = s_subgraph_identity
 
         if type(o) == tuple:
-            oid, o_replica, oind, o_subgraph_identity = o
+            oid, o_replica, oind, o_subgraph_identity, o_secondary, o_secondary_replica = o
             #obn = self._are_you_kidding_me[o_subgraph_identity, o_replica, oind]
             o = oind
             subgraph_identity = o_subgraph_identity
@@ -876,6 +921,7 @@ class GraphLoader(GraphIdentities):
         _replica = replica
 
         # assume p is uriref, issues should be caught before here
+        _p = p
         p = str(p)
 
         # FIXME TODO triple identity is not straight forward right now
@@ -894,6 +940,7 @@ class GraphLoader(GraphIdentities):
         triple_identity = None
         subject_embedded_identity = None
         replica_helper = None
+        dedupe_helper = None
         if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.URIRef):
             """
             _helper_ibn = IdentityBNode('')
@@ -914,8 +961,15 @@ class GraphLoader(GraphIdentities):
             """
             #subject_embedded_identity = self._ibn.subject_embedded_identities[s]
             #subject_embedded_identity = self._ibn.subject_embedded_identities[s]
-            subject_embedded_identity = IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
-            triple_identity = IdentityBNode((s, p, o), pot=True).identity
+            #subject_embedded_identity = IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+            subject_embedded_identity = IdentityBNode._if_cache[self.graph, s, '(s ((p o) ...))']
+            # TODO asses the overhead of constructing IdentityBNode as opposed to the direct approach here
+            #_triple_identity = IdentityBNode((s, p, o), pot=True).identity
+            triple_identity = helper_ibnode.ordered_identity(
+                #helper_ibnode.ordered_identity(str(s).encode()),
+                IdentityBNode._if_cache[s, 'bytes'],
+                IdentityBNode._if_cache[(_p, o), 'pair'], separator=False)
+            #assert triple_identity == _triple_identity  # the db will catch this on insert anyway >_<
             columns = 's, p, o, triple_identity'
             record = (str(s),
                       p,
@@ -924,8 +978,15 @@ class GraphLoader(GraphIdentities):
 
         elif isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.Literal):
             #subject_embedded_identity = self._ibn.subject_embedded_identities[s]
-            subject_embedded_identity = IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
-            triple_identity = IdentityBNode((s, p, o), pot=True).identity
+            #subject_embedded_identity = IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+            subject_embedded_identity = IdentityBNode._if_cache[self.graph, s, '(s ((p o) ...))']
+            # TODO asses the overhead of constructing IdentityBNode as opposed to the direct approach here
+            #_triple_identity = IdentityBNode((s, p, o), pot=True).identity
+            triple_identity = helper_ibnode.ordered_identity(
+                #helper_ibnode.ordered_identity(str(s).encode()),
+                IdentityBNode._if_cache[s, 'bytes'],
+                IdentityBNode._if_cache[(_p, o), 'pair'], separator=False)
+            #assert triple_identity == _triple_identity  # the db will catch this on insert anyway >_<
             columns = 's, p, o_lit, datatype, language, triple_identity'
             o_lit = str(o)
             record = (str(s),
@@ -938,6 +999,8 @@ class GraphLoader(GraphIdentities):
 
         elif isinstance(s, rdflib.URIRef) and isinstance(o, int) and subgraph_identity is not None:
             replica_helper = str(s), None, p, subgraph_identity, replica
+            if o_secondary:
+                dedupe_helper = subgraph_identity, replica, o, o_secondary, o_secondary_replica
             columns = 's, p, o_blank, subgraph_identity'
             record = (str(s),
                       p,
@@ -947,6 +1010,8 @@ class GraphLoader(GraphIdentities):
         elif isinstance(s, int) and isinstance(o, int) and subgraph_identity is not None:
             if s == 0:
                 replica_helper = None, s, p, subgraph_identity, replica
+            if o_secondary:
+                dedupe_helper = subgraph_identity, replica, o, o_secondary, o_secondary_replica
             columns = 's_blank, p, o_blank, subgraph_identity'
             record = (s,
                       p,
@@ -982,7 +1047,7 @@ class GraphLoader(GraphIdentities):
 
         #lc, lr = len(columns.split(', ')), len(record)
         #assert lc == lr, f'lengths {lc} != {lr} do not match {columns!r} {record}'
-        return columns, record, fix, _replica, subject_embedded_identity, triple_identity, replica_helper
+        return columns, record, fix, _replica, subject_embedded_identity, triple_identity, replica_helper, dedupe_helper
 
     def check_triple(self, s, p, o):  # XXX TODO
         # see [[file:../docs/explaining.org::*Do we allow no =/base/= triples in the triples table?]]
@@ -1036,8 +1101,12 @@ class GraphLoader(GraphIdentities):
                 assert s_replica == replica, f'sigh {s_replica} {replica}'
 
             if type(o) == tuple:
-                oid, o_replica, oind, osgid = o
-                o = self._are_you_kidding_me[osgid, o_replica, oind]
+                oid, o_replica, oind, osgid, o_secondary, o_secondary_replica = o
+                if o_secondary:
+                    o = self._subgraph_object_dupes_inv[osgid, o_replica, oind]
+                else:
+                    o = self._are_you_kidding_me[osgid, o_replica, oind]
+
                 if o_replica != replica:
                     breakpoint()
                 assert o_replica == replica, f'sigh {o_replica} {replica}'
@@ -1048,7 +1117,8 @@ class GraphLoader(GraphIdentities):
             return tuple(e if isinstance(e, str) else str(e) for e in triple)
 
         identity_triples = []
-        replicas = []
+        dedupes = set()
+        replicas = set()  # LOL WOW don't use a list when you are going to check membership every loop, wowzers that O(1)
         prefix = 'INSERT INTO triples'
         suffix = 'ON CONFLICT DO NOTHING'  # FIXME BAD
         # NOTE we cannot use ON CONFICT (s, p, o) DO SOMETHING because we actually need to match multiple unique constraints
@@ -1060,9 +1130,9 @@ class GraphLoader(GraphIdentities):
             to_fix = defaultdict(list)
             mi = self.metadata_identity
             for s, p, o in sorted(self.metadata, key=sortkey):  # FIXME resolve bnode ordering issue?
-                s = bn if s is None else s
-                self.check_triple(s, p, o)
-                columns, record, fix, replica, seid, tid, rh = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
+                s = bn if s is None or s is bnNone else s
+                #self.check_triple(s, p, o)  # XXX this does NOT work for loader triples, it is a MUCH better idea to run this on the rdflib repr
+                columns, record, fix, replica, seid, tid, rh, dh = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
                 if seid is not None:
                     # FIXME seid here should always be the same as metadata_identity which will simplify insert
                     if seid != mi:
@@ -1072,8 +1142,11 @@ class GraphLoader(GraphIdentities):
 
                 if rh is not None:
                     rrow = mi, *rh
-                    if rrow not in replicas:
-                        replicas.append(rrow)
+                    replicas.add(rrow)
+
+                if dh is not None:
+                    drow = mi, *dh
+                    dedupes.add(drow)
 
                 to_insert[columns].append(record)
                 if fix is not None:
@@ -1098,19 +1171,27 @@ class GraphLoader(GraphIdentities):
             log.debug('data sort start')
             _uh_hrm = sorted(self.data, key=sortkey)  # this takes a bit but not really all that long?
             log.debug('data make rows start')
-            for s, p, o in _uh_hrm:  # FIXME resolve bnode ordering issue? or was it already?
+            _ld = len(_uh_hrm)
+            _doprog = _ld > 20000  # FIXME batchsize ...
+            _mod = _ld // 100
+            for i, (s, p, o) in enumerate(_uh_hrm):  # FIXME resolve bnode ordering issue? or was it already?
                 # FIXME wait, how did this ever work, make_row has always needed identity for bnodes
                 # if there was a subgraph involved also, data includes cases where the subject is a bnode ... wtf
-                self.check_triple(s, p, o)
-                # FIXME TODO profile this to see where the issues are
-                columns, record, fix, replica, seid, tid, rh = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
+                if debug and _doprog and i % _mod == 0:
+                    msg = f'{(i // _mod)}% done making rows for {di.hex()}'
+                    log.debug(msg)
+                #self.check_triple(s, p, o)  # XXX this does NOT work for loader triples, it is a MUCH better idea to run this on the rdflib repr
+                columns, record, fix, replica, seid, tid, rh, dh = self.make_row(s, p, o, self._subgraph_and_integer, self._identity_to_bnode, self)
                 if seid is not None:
                     identity_triples.append((seid, tid))
 
                 if rh is not None:
                     rrow = di, *rh
-                    if rrow not in replicas:
-                        replicas.append(rrow)
+                    replicas.add(rrow)
+
+                if dh is not None:
+                    drow = di, *dh
+                    dedupes.add(drow)
 
                 to_insert[columns].append(record)
                 if fix is not None:
@@ -1120,6 +1201,7 @@ class GraphLoader(GraphIdentities):
                     done_trips.add(back_convert_sigh(s, p, o, replica))
                     #[done_trips.add(t) for t in back_convert_sigh(s, p, o)]
 
+            # TODO do the batching from here so that to_insert doesn't grow absurdly large
             yield prefix, suffix, to_insert, to_fix
 
         log.debug('data make rows done')
@@ -1149,7 +1231,7 @@ class GraphLoader(GraphIdentities):
         #_replicas_deobj = [  # FIXME this is too restrictive because there are cases where a bnode is both free and a connector (multi-and-no-parent)
             #(d, s, b, p, i, r) for d, s, b, p, i, r in replicas
             #if not ((d, i) in rep_object_starts and s is None)]
-        replicas_deobj = replicas
+        replicas_deobj = list(replicas)  # TODO sort
         if replicas_deobj:
             #breakpoint()
             to_insert['data_or_metadata_identity, s, s_blank, p, subgraph_identity, replica'] = replicas_deobj
@@ -1163,6 +1245,18 @@ class GraphLoader(GraphIdentities):
                 zz = Counter(replicas_deobj).most_common()
                 qq = self.subgraph_identities[zz[0][0][-2]]
                 breakpoint()
+
+            yield prefix, suffix, to_insert, to_fix
+
+        # dedupes
+        to_insert = defaultdict(list)
+        to_fix = defaultdict(list)
+        prefix = 'INSERT INTO subgraph_deduplication'
+        suffix = ''
+        if dedupes:
+            to_insert[('data_or_metadata_identity, '
+                       'subject_subgraph_identity, subject_replica, o_blank, '
+                       'object_subgraph_identity, object_replica')] = list(dedupes)  # TODO sort
 
             yield prefix, suffix, to_insert, to_fix
 
@@ -1227,11 +1321,13 @@ class GraphLoader(GraphIdentities):
 
         if debug:
             oops_trips = done_trips - all_trips
+            missing_trips = all_trips - done_trips
             if oops_trips:
+                # when there are secondaries if we don't record the secondary replica
+                # then we will pull back the wrong original bnode (hooray the checks work ..)
                 breakpoint()
                 raise NotImplementedError('NotImplementedCorrectlyError more like ...')
 
-            missing_trips = all_trips - done_trips
             if self._non_injective:
                 # FIXME this is still not right because it removes ALL the subjects
                 # without properly checking for matched sets ...
