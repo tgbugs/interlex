@@ -950,7 +950,8 @@ class Ontologies(Endpoints):
                             return 'file:// scheme not allowed', 400
 
                         if 'bound-name' in request.json:
-                            expected_bound_name = request.json['bound-name']
+                            _expected_bound_name = request.json['bound-name']
+                            expected_bound_name = rdflib.URIRef(_expected_bound_name)
                         else:
                             expected_bound_name = None
 
