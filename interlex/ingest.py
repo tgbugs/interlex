@@ -12,7 +12,7 @@ import base64
 import pathlib
 import tempfile
 import subprocess
-from collections import defaultdict
+from collections import defaultdict, Counter
 from itertools import chain
 from urllib.parse import urlparse
 import idlib
@@ -20,6 +20,7 @@ import rdflib
 from rdflib.exceptions import ParserError as ParseError
 from rdflib.plugins.parsers import ntriples as nt
 from sqlalchemy.sql import text as sql_text
+from ttlser.serializers import natsort
 from pyontutils.core import OntGraph, OntResIri
 from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import owl
@@ -27,15 +28,26 @@ from pyontutils.identity_bnode import IdentityBNode, toposort
 from . import exceptions as exc
 from .core import getScopedSession, makeParamsValues
 from .dump import Queries, TripleExporter
-from .load import FileFromIRIFactory, do_gc
 from .utils import log
 
 from desc.prof import profile_me
 
 log = log.getChild('ingest')
 
-#_batchsize = 10000  # so this caused batch misalignments (still not fixed) AND massively spiked cpu upsage deadlock on idni insert ?!?!?
-_batchsize = 20000
+
+# ocdn is used extensively at the moment because it uses less memory
+# to try to insert and fail than it does to compute collective identities
+# in advance and only insert if the identity is not already present
+# we insert the serialization identity last because that can be used
+# as a way to detect whether something has already been ingested
+# most of the time this approach is safe because the process just needs
+# the record to be present in the database and a conflict is not a
+# problem, HOWEVER if there is a bug in the unique constraints on a
+# table then this will mask the issue, ANOTHER area that is a risk
+# is if the identity function changes, inducing silent conflicts
+ocdn = 'ON CONFLICT DO NOTHING'
+
+_batchsize = 20000  # good enough, could profile more to tune better
 
 
 class BCTX:
@@ -95,7 +107,9 @@ def gent(path):
 
 
 def bnode_last(e):
-    return 'z' * 10 if isinstance(e, rdflib.BNode) else e
+    # https://stackoverflow.com/a/29563948
+    # https://en.wikipedia.org/wiki/Private_Use_Areas
+    return '\uf8ff' if isinstance(e, rdflib.BNode) else e
 
 
 def sortkey(triple):
@@ -470,7 +484,7 @@ def make_subsets(path, logfile):
     run_cmd(argv, cwd, logfile)
 
 
-def process_edges(path_edges):
+def process_edges(path_edges, raw=False):
     with open(path_edges, 'rt') as f:
         edges = [l.split() for l in f.read().split('\n') if l]
 
@@ -488,7 +502,10 @@ def process_edges(path_edges):
 
     eord = toposort(edges, unmarked_key=unmarked_key)
 
-    return [rdflib.BNode(e[2:]) for e in eord]
+    if raw:
+        return eord
+    else:
+        return [rdflib.BNode(e[2:]) for e in eord]
 
 
 def shellout(iri, path, rapper_input_type, logfile, only_local=False):
@@ -497,13 +514,72 @@ def shellout(iri, path, rapper_input_type, logfile, only_local=False):
         path_to_ntriples_and_xz(path, rapper_input_type, logfile)
 
     make_subsets(path, logfile)
+    sort_ntriples_files(path)
+
+
+def sort_ntriples_files(path):
+    # it is WAY faster and more memory efficient to
+    # topo sort the lines at this stage and rewrite
+    # which avoids memory bloading of the waiting_ lists
+
+    _paths = get_paths(path)
+    term, link, conn = _paths[10:13]
+    edges = _paths[-1]
+    sord = process_edges(edges, raw=True)
+    ls = len(sord)
+    lsp1 = ls + 1
+    index = {k:i for i, k in enumerate(sord)}
+
+    def kterm(l):
+        bnode, _ = l.split(' ', 1)
+        if bnode in index:
+            return index[bnode], ''
+        else:
+            return lsp1, natsort(bnode)
+
+    def klink(l):
+        sbnode, _ = l.split(' ', 1)
+        _, obnode, _ = l.rsplit(' ', 2)
+        # putting obnode first nearly doubles the time it takes to
+        # complete likely caused by vastly increasing the number of
+        # appends to and pops from waiting_link
+        return index[sbnode], index[obnode]
+
+    def kconn(l):
+        _, bnode, _ = l.rsplit(' ', 2)
+        if bnode in index:
+            return index[bnode], ''
+        else:
+            return lsp1, natsort(bnode)  # sort by bnode allows coordination with term
+
+
+    for _path, key in ((term, kterm),
+                       (link, klink),
+                       (conn, kconn)):
+        with open(_path, 'rt') as f:
+            lines = f.read().split('\n')[:-1]
+        slines = sorted(lines, key=key)
+        with open(_path, 'wt') as f:
+            f.write('\n'.join(slines))
+
+    #with open(term, 'rt') as f:
+    #    tlines = f.read().split('\n')[:-1]
+    #stlines = sorted(tlines, key=kterm)
+
+    #with open(link, 'rt') as f:
+    #    llines = f.read().split('\n')[:-1]
+    #sllines = sorted(llines, key=klink)
+
+    #with open(conn, 'rt') as f:
+    #    clines = f.read().split('\n')[:-1]
+    #sclines = sorted(clines, key=kconn)
 
 
 _hbn = IdentityBNode('')
 oid = _hbn.ordered_identity
 
 
-def sid(things, separator=True):
+def sid(things, separator=False):
     return oid(*sorted(things), separator=separator)
 
 
@@ -546,8 +622,53 @@ def getstr(path):
 
     return str_value
 
+def process_triple_seq(triple_seq, batchsize=None, force=False, debug=False):
+    # triples_seq should not be a generator because we need to traverse it multiple times ...
+    # imagine you go them from somewhere else
+    dout = {}
+    g_name = [(s, p, o) for s, p, o in triple_seq if not isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode)]
+    named_counts = dict(Counter([s for s, p, o in g_name]))
+    yield from process_named(named_counts, g_name, batchsize=batchsize, dout=dout, debug=debug)
 
-def process_prepared(path, local_conventions, batchsize=None):
+    g_node = [(s, p, o) for s, p, o in triple_seq if     isinstance(s, rdflib.BNode) or      isinstance(o, rdflib.BNode)]
+    g_term = [(s, p, o) for s, p, o in g_node      if     isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode)]
+    g_link = [(s, p, o) for s, p, o in g_node      if     isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)]
+    g_conn = [(s, p, o) for s, p, o in g_node      if not isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)]
+
+    # FIXME TODO we could probably do this all in a single pass over tripleseq
+    bnode_term_subject_counts = dict(Counter([s for s, p, o in g_term]))
+    bnode_link_subject_counts = dict(Counter([s for s, p, o in g_link]))
+    bnode_link_object_counts =  dict(Counter([o for s, p, o in g_link]))
+    bnode_conn_object_counts =  dict(Counter([o for s, p, o in g_conn]))
+    named_conn_subject_counts = dict(Counter([s for s, p, o in g_conn]))
+    dangle = (set(bnode_link_object_counts) | set(bnode_conn_object_counts)) - (set(bnode_link_subject_counts) | set(bnode_term_subject_counts))
+    edges = [(s, o) for s, p, o in g_link]
+    sord = toposort(edges)
+    breakpoint()
+    yield from process_bnode(
+        bnode_term_subject_counts,
+        bnode_link_subject_counts,
+        bnode_link_object_counts,
+        bnode_conn_object_counts,
+        named_conn_subject_counts,
+        sord, dangle, g_term, g_link, g_conn, batchsize=batchsize, dout=dout)
+
+    graph_named_identity = dout['graph_named_identity']
+    graph_bnode_identity = dout['graph_bnode_identity']
+    triple_count = len(triple_seq)
+    yield from process_post(graph_bnode_identity, graph_named_identity, triple_count)
+    yield None, None
+
+
+def already_in(session, serialization_identity, identity_function_version=3):
+    sql = "SELECT o FROM identity_relations WHERE s = :si AND p = 'parsedTo'"
+    rows = list(session.execute(sql_text(sql), params={'si': serialization_identity}))
+    if rows:
+        return rows[0][0]
+
+
+def process_prepared(path, serialization_identity, local_conventions, batchsize=None, force=False, debug=False):
+    # FIXME TODO need the metadata identity and stuff
     if batchsize is None:
         batchsize = _batchsize
 
@@ -562,7 +683,7 @@ def process_prepared(path, local_conventions, batchsize=None):
      nt,
      name,
      term,
-     tard,
+     link,
      conn,
      #dang,
      ncnt,
@@ -573,9 +694,6 @@ def process_prepared(path, local_conventions, batchsize=None):
      conn_nscnt,
      edges,
      ) = get_paths(path)
-
-    sha256hex = getstr(checksum_sha256)
-    serialization_identity = bytes.fromhex(sha256hex)
 
     str_triple_count = getstr(path_triple_count)
     triple_count = int(str_triple_count)
@@ -600,20 +718,19 @@ def process_prepared(path, local_conventions, batchsize=None):
     _tc_nb = triple_count_named + triple_count_bnode
     assert _tc_nb == triple_count, f'{_tc_nb} != {triple_count}'
 
-    local_conventions_identity = IdentityBNode(local_conventions, as_type='pair-seq').identity
-    lcc = len(list(local_conventions))
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 1 */',
-                        (('local_conventions', local_conventions_identity, lcc),))
-    yield prepare_batch('INSERT INTO curies (local_conventions_identity, curie_prefix, iri_prefix) VALUES',
-                        [(p, str(n)) for p, n in local_conventions],
-                        ocdn,
-                        constant_dict={'si': local_conventions_identity})
+    local_conventions_count = len(list(local_conventions))
+    record_count = local_conventions_count + triple_count
+
+    yield from process_serialization(serialization_identity, record_count)
+    yield None, None
 
     dout = {}
 
+    yield from process_local_conventions(local_conventions, local_conventions_count, dout=dout)
+
     named_counts = named_counts_from_path(ncnt)
     g_name = gent(name)
-    yield from process_named(named_counts, g_name, batchsize=batchsize, dout=dout)
+    yield from process_named(named_counts, g_name, batchsize=batchsize, dout=dout, debug=debug)
 
     bnode_term_subject_counts = bnode_counts_from_path(term_bscnt)
     bnode_link_subject_counts = bnode_counts_from_path(link_bscnt)
@@ -623,7 +740,7 @@ def process_prepared(path, local_conventions, batchsize=None):
     dangle = (set(bnode_link_object_counts) | set(bnode_conn_object_counts)) - (set(bnode_link_subject_counts) | set(bnode_term_subject_counts))
     sord = process_edges(edges)
     g_term = gent(term)
-    g_tard = gent(tard)
+    g_link = gent(link)
     g_conn = gent(conn)
     yield from process_bnode(
         bnode_term_subject_counts,
@@ -631,7 +748,7 @@ def process_prepared(path, local_conventions, batchsize=None):
         bnode_link_object_counts,
         bnode_conn_object_counts,
         named_conn_subject_counts,
-        edges, sord, dangle, g_term, g_tard, g_conn, batchsize=batchsize, dout=dout)
+        sord, dangle, g_term, g_link, g_conn, batchsize=batchsize, dout=dout, debug=debug)
 
     assert triple_count_named == dout['named_count'], f'{triple_count_named} != {dout["named_count"]}'
     assert triple_count_bnode == dout['bnode_count'], f'{triple_count_bnode} != {dout["bnode_count"]}'
@@ -645,20 +762,64 @@ def process_prepared(path, local_conventions, batchsize=None):
     # identity either of these if it was indeed empty so that you
     # can't mistake one or the other for the combination with the
     # empty graph of the other
-    graph_combined_identity = oid(graph_named_identity, graph_bnode_identity)
-    graph_combined_local_conventions_identity = oid(local_conventions_identity, graph_combined_identity)  # yes the order is confusing but lc first
-    record_count = lcc + triple_count_internal  # FIXME may need/want to clarify here
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */',
-                        (('graph_combined', graph_combined_identity, triple_count_internal),
-                         ('graph_combined_local_conventions', graph_combined_local_conventions_identity, record_count),
-                         ('serialization', serialization_identity, record_count),))
-    yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES',
-                        ((graph_combined_identity, 'hasNamedGraph', graph_named_identity),
-                         (graph_combined_identity, 'hasBnodeGraph', graph_bnode_identity),
-                         (graph_combined_local_conventions_identity, 'hasGraph', graph_combined_identity),
-                         (graph_combined_local_conventions_identity, 'hasLocalConventions', local_conventions_identity),
-                         (serialization_identity, 'parsedTo', graph_combined_local_conventions_identity),))
+    local_conventions_identity = dout['local_conventions_identity']
+    yield from process_post(graph_bnode_identity, graph_named_identity, triple_count_internal,
+                            local_conventions_identity, serialization_identity, record_count)
     yield None, None
+
+
+def process_serialization(serialization_identity, record_count):
+    idents = (('serialization', serialization_identity, record_count),)
+    # FIXME inserting serialization needs OCDN here because the actual insert workflow
+    # that checks whether parsesTo has been set runs outside this, and we need this to
+    # succeed unconditionally in cases where a previous load might have failed
+    # (also because we can't do any error handling that is specific to a given insert)
+    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 7 */', idents, ocdn)
+
+
+def process_local_conventions(local_conventions, local_conventions_count, dout=None):
+    local_conventions_identity = IdentityBNode(local_conventions, as_type='pair-seq').identity
+    dout['local_conventions_identity'] = local_conventions_identity
+    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 1 */',
+                        (('local_conventions', local_conventions_identity, local_conventions_count),),
+                        ocdn,)
+    yield prepare_batch('INSERT INTO curies (local_conventions_identity, curie_prefix, iri_prefix) VALUES',
+                        [(p, str(n)) for p, n in local_conventions],
+                        ocdn,
+                        constant_dict={'si': local_conventions_identity})
+
+
+def process_post(
+        graph_bnode_identity,
+        graph_named_identity,
+        triple_count,
+        local_conventions_identity=None,
+        serialization_identity=None,
+        record_count=None,):
+
+    graph_combined_identity = oid(graph_named_identity, graph_bnode_identity)
+    idents = (('graph_combined', graph_combined_identity, triple_count),)
+    irels = ((graph_combined_identity, 'hasNamedGraph', graph_named_identity),
+             (graph_combined_identity, 'hasBnodeGraph', graph_bnode_identity),)
+
+    if local_conventions_identity is not None:
+        graph_combined_local_conventions_identity = oid(local_conventions_identity, graph_combined_identity)  # yes the order is confusing but lc first
+        idents += (('graph_combined_local_conventions', graph_combined_local_conventions_identity, record_count),)
+        irels += ((graph_combined_local_conventions_identity, 'hasGraph', graph_combined_identity),
+                  (graph_combined_local_conventions_identity, 'hasLocalConventions', local_conventions_identity),)
+
+    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */', idents, ocdn)
+    yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
+
+    if serialization_identity is not None:
+        # serialization should be inserted last and separately
+        # irels in particular need to be separate to detect if
+        # the identity function changed (by accident)
+        # XXX NOTE this makes the actual indicator that an insertion process has finished
+        # the presence of the parsedTo record in irels, and serialization_identity can go in earlier if we want (TODO)
+        # e.g. to use the database to prevent multiple load attems
+        irels = ((serialization_identity, 'parsedTo', graph_combined_local_conventions_identity),)
+        yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels)
 
 
 def process_bnode(
@@ -667,12 +828,13 @@ def process_bnode(
         link_bnode_object_counts,
         conn_bnode_object_counts,
         conn_named_subject_counts,
-        edges, sord, dangle, g_term, g_link, g_conn, batchsize=None, dout=None):
+        sord, dangle, g_term, g_link, g_conn, batchsize=None, dout=None, debug=False):
 
     if batchsize is None:
         batchsize = _batchsize
 
-    # TODO rename tard -> link elsewhere
+    log.debug('start process_bnode')
+
     # TODO dangling i think
 
     total = sum([v for counts in (term_bnode_subject_counts, link_bnode_subject_counts, conn_named_subject_counts) for v in counts.values()])
@@ -694,13 +856,10 @@ def process_bnode(
     link_seen_o = defaultdict(lambda: 0)
     conn_seen_o = defaultdict(lambda: 0)
     conn_seen_s = defaultdict(lambda: 0)
-    done_term = defaultdict(list)
-    done_link = defaultdict(list)
-    waiting_term = defaultdict(list)
-    waiting_link = defaultdict(list)  # hold subjects from link that are out of order, under the assumption that rapper will produce a nearly topo order
+    # hold out of order subjects, under the assumption that rapper will produce a nearly topo order
+    waiting_term = defaultdict(list)  # FIXME even with sorted ntriples inputs I'm still seeing the spike here at the start !??
+    waiting_link = defaultdict(list)
     waiting_conn = defaultdict(list)
-    #waiting_term = defaultdict(list)  # used to implement peek
-    term_peek = None
     transitive_trips = defaultdict(list)
     pair_idents = {}
     subject_idents = defaultdict(list)
@@ -716,8 +875,6 @@ def process_bnode(
     batch_idents = []
 
     secondaries = {}
-    #subgraph_integer = {}
-    #subgraph_object_dupes = {}
     replica_helper = set()
     dedupe_helper = set()
 
@@ -728,7 +885,7 @@ def process_bnode(
 
     # TODO process dangles up here
 
-    for _s in term_bnode_subject_counts:
+    for _s in sorted(term_bnode_subject_counts, key=natsort):
         # make sure that we run cases where term -> conn directly
         # we put them all at the end given that we don't know where
         # they actually occur in the graph, so we may end up carrying
@@ -744,7 +901,8 @@ def process_bnode(
         if _s not in link_bnode_object_counts and _s not in link_bnode_subject_counts:
             sord.append(_s)
 
-    def do_stuff(s, scid, replica):
+    def make_subgraph_rows(s, scid, replica):
+        nonlocal counter_row
         if s not in transitive_trips:
             breakpoint()
 
@@ -789,25 +947,36 @@ def process_bnode(
                     rows = batch_term_uri_rows
 
             rows.append(row)
+            counter_row += 1
 
-    batch_after_this_subject = False
+    counter_row = 0
     counter_batch = 0 
     lsm1 = len(sord) - 1
+    last_batch = 0
     for i, subject in enumerate(sord):
+        if len(waiting_conn) > 100:
+            breakpoint()
+
+        if len(waiting_link) > 100:
+            breakpoint()
+
+        if len(waiting_term) > 100:
+            breakpoint()
+
+        if False and debug:
+            msg = (f'{i: >6} {counter_batch: >6} {len(accum_embedded): >6} {len(accum_condensed): >6} '
+                   # FIXME somehow these ramp super high and then count down to zero ???
+                   # maybe i should toposort all the files first ...
+                   f'{len(waiting_term): >6} '
+                   f'{len(waiting_link): >6} '
+                   f'{len(waiting_conn): >6} '
+                   f'{len(transitive_trips): >6} '  # FIXME this is the last one that seems to accumulate lots values?
+                   )
+            log.debug(msg)
         min_expected_count = total_subject_count(subject)
         expected_count = min_expected_count + (conn_bnode_object_counts[subject] if subject in conn_bnode_object_counts else 0)
         actual_count = 0
         _debug_actual = []
-        if 0 <= (counter_batch + min_expected_count) % batchsize < min_expected_count or i == lsm1:
-            breakpoint()
-            # XXX there may be an off by 1 here oof off by 2
-            # XXX even better, an off by 2 error it seems !??!
-            batch_after_this_subject = True
-
-        #if subject == rdflib.term.BNode('genid1003'):
-            #breakpoint()
-            #pass
-
         if subject in term_bnode_subject_counts:  # and term_bnode_subject_counts[subject] < term_seen_s[subject]:
             #if term_peek is not None:
                 #gen_term = chain((term_peek,), g_term)
@@ -840,7 +1009,7 @@ def process_bnode(
                         tstoc = total_object_count(ts)
                         if tstoc > 1 or tstoc == 0:
                             accum_embedded.append(tscid)
-                            do_stuff(ts, tscid, treplica)
+                            make_subgraph_rows(ts, tscid, treplica)
 
                         secondaries[tscid] = treplica  # we don't know if we will need this because it depends on the hash
 
@@ -921,7 +1090,7 @@ def process_bnode(
                     stoc = total_object_count(s)
                     if stoc > 1 or stoc == 0:
                         accum_embedded.append(scid)
-                        do_stuff(s, scid, replica)
+                        make_subgraph_rows(s, scid, replica)
 
                     secondaries[scid] = replica  # we don't know if we will need this because it depends on the hash
                     break
@@ -962,9 +1131,10 @@ def process_bnode(
                     creplica = condensed_counts[cscid]
                     cseid = oid(oid(s.encode()), cscid)
                     accum_embedded.append(cseid)  # FIXME may want to differentiate these from bnode only
-                    do_stuff(cs, cscid, creplica)
-                    if conn_seen_o[co] == conn_bnode_object_counts[co]:
-                        break
+                    make_subgraph_rows(cs, cscid, creplica)
+
+                if conn_seen_o[co] == conn_bnode_object_counts[co]:
+                    break
 
             # not needed for conn, because we just need to fill in the subgraph
             #if o in transitive_trips:  # might not be in if dangle
@@ -984,7 +1154,7 @@ def process_bnode(
             breakpoint()
             raise ValueError('implementer messed up')
 
-        if batch_after_this_subject:
+        if counter_row > batchsize or i == lsm1:
             if i == lsm1:
                 assert conn_bnode_object_counts == dict(conn_seen_o)
 
@@ -998,41 +1168,48 @@ def process_bnode(
             if i != lsm1:
                 yield None, None
 
+            last_batch = i
             batch_term_uri_rows = []
             batch_term_lit_rows = []
             batch_link_rows = []
             batch_conn_rows = []
             batch_idents = []
-            batch_after_this_subject = False
+            counter_row = counter_row - batchsize
 
     assert total == counter_batch
     graph_bnode_identity = sid(accum_embedded)
     #irels = [(graph_bnode_identity, e) for e in accum_condensed]  # if we screwed this up the database will catch it because they wont be in idents
     irels = [(e,) for e in accum_condensed]
+    log.debug('done process_bnode triples')
     #replicas = [(graph_bnode_identity, *r) for r in replica_helper]
     #dedupes = [(graph_bnode_identity, *d) for d in dedupe_helper]
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 3 */', ((graph_bnode_identity, total),),
+    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 3 */',
+                        ((graph_bnode_identity, total),), ocdn,
                         constant_dict={'nt': 'bnode_conn_free_seq'})
     # FIXME may need to batch irels, replicas, and dedupes as well
     for chunk in chunk_list(irels, batchsize):
-        yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES', chunk,
+        yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES', chunk, ocdn,
                             constant_dict={'p': 'hasBnodeRecord', 's': graph_bnode_identity})
 
-    for chunk in chunk_list(list(replica_helper), batchsize):
-        yield prepare_batch(('INSERT INTO subgraph_replicas (graph_bnode_identity, '
-                             's, s_blank, p, subgraph_identity, replica) VALUES'),
-                            chunk, constant_dict={'graph_bnode_identity': graph_bnode_identity})
+    if replica_helper:
+        for chunk in chunk_list(list(replica_helper), batchsize):
+            yield prepare_batch(('INSERT INTO subgraph_replicas (graph_bnode_identity, '
+                                's, s_blank, p, subgraph_identity, replica) VALUES'),
+                                chunk, ocdn,
+                                constant_dict={'graph_bnode_identity': graph_bnode_identity})
 
-
-    for chunk in chunk_list(list(dedupe_helper), batchsize):
-        yield prepare_batch(('INSERT INTO subgraph_deduplication (graph_bnode_identity, '
-                             'subject_subgraph_identity, subject_replica, o_blank, '
-                             'object_subgraph_identity, object_replica) VALUES'),
-                            chunk, constant_dict={'graph_bnode_identity': graph_bnode_identity})
+    if dedupe_helper:
+        for chunk in chunk_list(list(dedupe_helper), batchsize):
+            yield prepare_batch(('INSERT INTO subgraph_deduplication (graph_bnode_identity, '
+                                'subject_subgraph_identity, subject_replica, o_blank, '
+                                'object_subgraph_identity, object_replica) VALUES'),
+                                chunk, ocdn,
+                                constant_dict={'graph_bnode_identity': graph_bnode_identity})
 
     dout['bnode_count'] = counter_batch
     dout['graph_bnode_identity'] = graph_bnode_identity
     yield None, None
+    log.debug('done process_bnode')
 
 
 def process_conn(scounts, ocounts, sseen, oseen, gen, transitive_trips, ):
@@ -1060,13 +1237,13 @@ def prepare_batch(sql, values, suffix='', constant_dict=None):
     return sql_text(' '.join((sql, values_template, suffix))), params
 
 
-ocdn = 'ON CONFLICT DO NOTHING'
 def prepare_batch_named(uri_rows, lit_rows, batch_idents, batch_idni):
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 4 */', batch_idents, ocdn, constant_dict={'nt': 'named_embedded'})
     if uri_rows:
         yield prepare_batch('INSERT INTO triples (s, p, o, triple_identity) VALUES', uri_rows, ocdn)
     if lit_rows:
         yield prepare_batch('INSERT INTO triples (s, p, o_lit, datatype, language, triple_identity) VALUES', lit_rows, ocdn)
+
     yield prepare_batch('INSERT INTO identity_named_triples_ingest (named_embedded_identity, triple_identity) VALUES', batch_idni, ocdn)
 
 
@@ -1089,13 +1266,14 @@ def prepare_batch_bnode(batch_term_uri_rows,
         yield prepare_batch('INSERT INTO triples (s, p, o_blank, subgraph_identity) VALUES', batch_conn_rows, ocdn)
 
 
-def process_named(counts, gen, batchsize=None, dout=None):
+def process_named(counts, gen, batchsize=None, dout=None, debug=False):
     if batchsize is None:
         batchsize = _batchsize
 
+    log.debug('start process_named')
+
     s = None
     expected_count = None
-    subject_idents = {}  # not naming subject_identities because this one is also going to have the named subgraph id as well
     accum_embedded = []  # needed to get the fully named identity
     accum_pair = []
     accum_trip = []
@@ -1103,7 +1281,6 @@ def process_named(counts, gen, batchsize=None, dout=None):
     batch_lit_rows = []
     batch_idents = []
     batch_idni = []
-    #batch_irels = []
     batch_after_this_subject = False
     this_subject_count = None
     total = sum(counts.values())
@@ -1139,8 +1316,6 @@ def process_named(counts, gen, batchsize=None, dout=None):
                 subject_condensed_identity = sid(accum_pair)
                 subject_embedded_identity = oid(oid(s.encode()), subject_condensed_identity)
                 accum_embedded.append(subject_embedded_identity)
-                subject_idents[s] = subject_embedded_identity, subject_condensed_identity, accum_pair, accum_trip
-                #batch_irels.append((subject_embedded_identity, tid) for tid in )
                 batch_idents.append((subject_embedded_identity, this_subject_count))
                 batch_idni.extend([(subject_embedded_identity, tid) for tid in accum_trip])
                 if batch_after_this_subject:
@@ -1186,23 +1361,65 @@ def process_named(counts, gen, batchsize=None, dout=None):
     # which is going to be pretty much all of them so no need to try to
     # be efficient about it ...
     graph_named_identity = sid(accum_embedded)
-    irels = [(graph_named_identity, e) for e in accum_embedded]
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 6 */', ((graph_named_identity, total),),
+    irels = [(e,) for e in accum_embedded]
+    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 6 */',
+                        ((graph_named_identity, total),), ocdn,
                         constant_dict={'nt': 'named_embedded_seq'})
-    yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES', irels, constant_dict={'p': 'hasNamedRecord'})
+    yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES',
+                        irels, ocdn,
+                        constant_dict={'p': 'hasNamedRecord', 's': graph_named_identity})
     dout['named_count'] = i + 1
     dout['graph_named_identity'] = graph_named_identity
     yield None, None
+
+
+def do_process_into_session(session, process, *args, commit=False, batchsize=None, debug=False):
+    if batchsize is None:
+        batchsize = _batchsize
+    try:
+        for i, (sql, params) in enumerate(process(*args, batchsize=batchsize, debug=debug)):
+
+            if sql is None and params is None:
+                if commit:
+                    session.commit()
+                elif not debug:
+                    session.execute(sql_text(f'savepoint sp{i}'))
+                    log.debug(f'last savepoint sp{i}')
+
+            else:
+                try:
+                    # one major advantage of yielding all the sql to be executed is that there is a single
+                    # point that controls all sql execution, that alone kind of makes yielding worth it
+                    session.execute(sql, params=params)
+                except Exception as e:
+                    breakpoint()
+                    raise e
+
+                if debug and not commit:
+                    session.execute(sql_text(f'savepoint sp{i}'))
+                    log.debug(f'last savepoint sp{i}')
+
+            session.flush()
+
+    except BaseException as e:
+        session.rollback()
+        raise e
+    finally:
+        session.close()
 
 
 #@profile_me(sort='cumtime')
 def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force=False):
     if batchsize is None:
         batchsize = _batchsize
-    session = getScopedSession(echo=False)
+
+    # XXX query_cache_size is THE major memory hog when doing batch inserts
+    # in an uberon load the default limit of 500 entires will use on the order
+    # of an additional 5 gigs of memory for nothing since all the cached content
+    # is unique and mostly params, the issue is so bad in fact that I'm considering
+    # changing our defaults to avoid memory issues
+    session = getScopedSession(echo=False, query_cache_size=0)
     q = Queries(session)
-    FileFromIRI = FileFromIRIFactory(session)
-    FileFromIRI.immediate_loading_limit_mb = 9999
     iri = rdflib.URIRef(uri_string)
     url = urlparse(iri)
     # FIXME need to populate reference names
@@ -1272,42 +1489,23 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force
             log.debug(f'{name_to_fetch} starting shellout with only_local {only_local}')
             shellout(name_to_fetch, path, rapper_input_type, logfile, only_local=only_local)
 
-        try:
-            #_hist = []
-            gc_every_nth = 30  # 20 uberon breaks 5 gigs at end, 40 will go above 5 gigs, 30 will go above
-            for i, (sql, params) in enumerate(process_prepared(path, metadata_version.graph.namespace_manager, batchsize=batchsize)):
-                if i % gc_every_nth == 0:
-                    do_gc()
+        (_, checksum_sha256, *_) = get_paths(path)
+        sha256hex = getstr(checksum_sha256)
+        serialization_identity = bytes.fromhex(sha256hex)
+        ifv = 3
+        parsedTo = already_in(session, serialization_identity, ifv)
+        if parsedTo:
+            msg = f'{name_to_fetch} -> {sha256hex} parsedTo {parsedTo.hex()} with identity function version {ifv}'
+            log.info(msg)
+            if not force:
+                return
 
-                if sql is None and params is None:  # XXX FIXME HACK see if we really want to do this instead of passing session down :/
-                    if commit:
-                        session.commit()
-                    elif not debug:
-                        session.execute(sql_text(f'savepoint sp{i}'))
-                        log.debug(f'last savepoint sp{i}')
+        # FIXME TODO the name -> serialization identity needs to go in before the load so things don't get confused
+        # and lost, same with the ser -> metadata identity etc.
 
-                else:
-                    #if debug:
-                        #_hist.append((sql.text.split('VALUES')[0], params))
-                    try:
-                        # one major advantage of yielding all the sql to be executed is that there is a single
-                        # point that controls all sql execution, that alone kind of makes yielding worth it
-                        session.execute(sql, params=params)
-                    except Exception as e:
-                        breakpoint()
-                        raise e
-
-                    if debug and not commit:
-                        session.execute(sql_text(f'savepoint sp{i}'))
-                        log.debug(f'last savepoint sp{i}')
-
-                session.flush()
-
-        except BaseException as e:
-            session.rollback()
-            raise e
-        finally:
-            session.close()
+        do_process_into_session(session, process_prepared, path, serialization_identity,
+                                metadata_version.graph.namespace_manager,
+                                commit=commit, batchsize=batchsize, debug=debug)
 
 
     # FIXME at this point we need the serialization identity because even if everything else
