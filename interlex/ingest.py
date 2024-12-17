@@ -515,7 +515,7 @@ def shellout(iri, path, rapper_input_type, logfile, only_local=False):
         path_to_ntriples_and_xz(path, rapper_input_type, logfile)
 
     make_subsets(path, logfile)
-    sort_ntriples_files(path)
+    return sort_ntriples_files(path)
 
 
 def sort_ntriples_files(path):
@@ -526,10 +526,10 @@ def sort_ntriples_files(path):
     _paths = get_paths(path)
     term, link, conn = _paths[10:13]
     edges = _paths[-1]
-    sord = process_edges(edges, raw=True)
+    raw_sord = process_edges(edges, raw=True)
     ls = len(sord)
     lsp1 = ls + 1
-    index = {k:i for i, k in enumerate(sord)}
+    index = {k:i for i, k in enumerate(raw_sord)}
 
     def kterm(l):
         bnode, _ = l.split(' ', 1)
@@ -553,7 +553,6 @@ def sort_ntriples_files(path):
         else:
             return lsp1, natsort(bnode)  # sort by bnode allows coordination with term
 
-
     for _path, key in ((term, kterm),
                        (link, klink),
                        (conn, kconn)):
@@ -562,6 +561,8 @@ def sort_ntriples_files(path):
         slines = sorted(lines, key=key)
         with open(_path, 'wt') as f:
             f.write('\n'.join(slines))
+
+    return raw_sord
 
     #with open(term, 'rt') as f:
     #    tlines = f.read().split('\n')[:-1]
@@ -668,7 +669,7 @@ def already_in(session, serialization_identity, identity_function_version=3):
         return rows[0][0]
 
 
-def process_prepared(path, serialization_identity, local_conventions, batchsize=None, force=False, debug=False):
+def process_prepared(path, serialization_identity, local_conventions, raw_sord=None, batchsize=None, force=False, debug=False):
     # FIXME TODO need the metadata identity and stuff
     if batchsize is None:
         batchsize = _batchsize
@@ -739,7 +740,12 @@ def process_prepared(path, serialization_identity, local_conventions, batchsize=
     bnode_conn_object_counts = bnode_counts_from_path(conn_bocnt)
     named_conn_subject_counts = named_counts_from_path(conn_nscnt)
     dangle = (set(bnode_link_object_counts) | set(bnode_conn_object_counts)) - (set(bnode_link_subject_counts) | set(bnode_term_subject_counts))
-    sord = process_edges(edges)
+    if raw_sord is None:
+        sord = process_edges(edges)
+    else:
+        sord = [rdflib.BNode(e[2:]) for e in raw_sord]
+        raw_sord = None
+
     g_term = gent(term)
     g_link = gent(link)
     g_conn = gent(conn)
@@ -1273,6 +1279,35 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
 
     log.debug('start process_named')
 
+    def condense_and_make_named_rows():
+        nonlocal batch_after_this_subject
+        nonlocal batch_uri_rows
+        nonlocal batch_lit_rows
+        nonlocal batch_idents
+        nonlocal batch_idni
+
+        # XXX having subject count for these would actually help because
+        # then we would know if we should go over batch size
+        subject_condensed_identity = sid(accum_pair)
+        subject_embedded_identity = oid(oid(s.encode()), subject_condensed_identity)
+        accum_embedded.append(subject_embedded_identity)
+        batch_idents.append((subject_embedded_identity, this_subject_count))
+        batch_idni.extend([(subject_embedded_identity, tid) for tid in accum_trip])
+        if batch_after_this_subject:
+            # note that a subject could start the batchsize -1th triple
+            # and then contain more than batchsize triples, if that happens
+            # it could induce a stall, which is another reason to compute
+            # counts for all subjects
+            yield from prepare_batch_named(batch_uri_rows, batch_lit_rows, batch_idents, batch_idni)
+            #if tm1 > i > batchsize:
+                # don't signal to commit on first and last batch (but why not ??? we want to after all triples go in)
+            yield None, None  # signal to comit if commit=True
+            batch_after_this_subject = False
+            batch_uri_rows = []
+            batch_lit_rows = []
+            batch_idents = []
+            batch_idni = []
+
     s = None
     expected_count = None
     accum_embedded = []  # needed to get the fully named identity
@@ -1301,7 +1336,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
             except StopIteration:
                 pass
 
-        if t[0] != s:
+        if t[0] != s:  # FIXME how did this ever work for the final loop?
             if this_subject_count != expected_count:
                 breakpoint()
                 # if you hit this it might be because your input is not sorted correctly
@@ -1316,27 +1351,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
                     breakpoint()
                     raise ValueError('wat')
 
-                # XXX having subject count for these would actually help because
-                # then we would know if we should go over batch size
-                subject_condensed_identity = sid(accum_pair)
-                subject_embedded_identity = oid(oid(s.encode()), subject_condensed_identity)
-                accum_embedded.append(subject_embedded_identity)
-                batch_idents.append((subject_embedded_identity, this_subject_count))
-                batch_idni.extend([(subject_embedded_identity, tid) for tid in accum_trip])
-                if batch_after_this_subject:
-                    # note that a subject could start the batchsize -1th triple
-                    # and then contain more than batchsize triples, if that happens
-                    # it could induce a stall, which is another reason to compute
-                    # counts for all subjects
-                    yield from prepare_batch_named(batch_uri_rows, batch_lit_rows, batch_idents, batch_idni)
-                    if tm1 > i > batchsize:
-                        # don't signal to commit on first and last batch
-                        yield None, None  # commit signal if commit is enabled  FIXME HACK maybe better to pass session down ???
-                    batch_after_this_subject = False
-                    batch_uri_rows = []
-                    batch_lit_rows = []
-                    batch_idents = []
-                    batch_idni = []
+                yield from condense_and_make_named_rows()
 
             this_subject_count = 0
             expected_count = counts[t[0]]
@@ -1360,19 +1375,28 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
             row = str(s), str(p), str(o), triple_identity.identity
             batch_uri_rows.append(row)
 
+    yield from condense_and_make_named_rows()
+
+    if batch_idents:
+        breakpoint()
+
+    assert not batch_idents
     assert total == i + 1
     # XXX the other way we could do this is to store subject_identities
     # across process_name -> process_conn for those that are in process conn
     # which is going to be pretty much all of them so no need to try to
     # be efficient about it ...
-    graph_named_identity = sid(accum_embedded)
+    graph_named_identity = sid(accum_embedded)  # FIXME TODO consider inserting serialization hasPart graph_named_identity as temp for recovery?
     irels = [(e,) for e in accum_embedded]
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 6 */',
                         ((graph_named_identity, total),), ocdn,
                         constant_dict={'nt': 'named_embedded_seq'})
-    yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES',
-                        irels, ocdn,
-                        constant_dict={'p': 'hasNamedRecord', 's': graph_named_identity})
+
+    # FIXME pr hits missing identities here somehow possibly an off by one error at the end of the loop?
+    for chunk in chunk_list(irels, batchsize):
+        yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES', chunk, ocdn,
+                            constant_dict={'p': 'hasNamedRecord', 's': graph_named_identity})
+
     dout['named_count'] = i + 1
     dout['graph_named_identity'] = graph_named_identity
     yield None, None
@@ -1496,7 +1520,8 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force
         if not (working_path / 'edges').exists() or force:
             only_local = (working_path / 'edges').exists() and force
             log.debug(f'{name_to_fetch} starting shellout with only_local {only_local}')
-            shellout(name_to_fetch, path, rapper_input_type, logfile, only_local=only_local)
+            raw_sord = shellout(name_to_fetch, path, rapper_input_type, logfile, only_local=only_local)
+            # FIXME may want to write raw_sord to disk given the time it can take
 
         (_, checksum_sha256, *_) = get_paths(path)
         sha256hex = getstr(checksum_sha256)
@@ -1513,7 +1538,7 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force
         # and lost, same with the ser -> metadata identity etc.
 
         do_process_into_session(session, process_prepared, path, serialization_identity,
-                                metadata_to_fetch.graph.namespace_manager,
+                                metadata_to_fetch.graph.namespace_manager, raw_sord,
                                 commit=commit, batchsize=batchsize, debug=debug)
 
         # TODO need to clean up shellout and stash the xz somewhere,
