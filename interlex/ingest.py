@@ -17,6 +17,7 @@ from itertools import chain
 from urllib.parse import urlparse
 import idlib
 import rdflib
+import requests
 from rdflib.exceptions import ParserError as ParseError
 from rdflib.plugins.parsers import ntriples as nt
 from sqlalchemy.sql import text as sql_text
@@ -1303,7 +1304,11 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
         if t[0] != s:
             if this_subject_count != expected_count:
                 breakpoint()
-                msg = f'actual != expected {this_subject_count} {expected_count}'
+                # if you hit this it might be because your input is not sorted correctly
+                # apparently FMA actually duplicates and conflates these as well despite
+                # having different labels fma0323167 fma323167 the FMAID stripped the leading
+                # zero (extra oof)
+                msg = f'actual != expected {this_subject_count} {expected_count} for {t[0]} != {s}'
                 raise ValueError(msg)
 
             if s is not None:
@@ -1451,17 +1456,21 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force
 
     if bound_version_name is not None:
         metadata_version = metadata.__class__(bound_version_name)
-        metadata_version.graph
-        #version_http_resps = list(idlib.core.resolution_chain_responses(metadata_version.iri))
-        _version_http_resp = metadata_version.progenitor(type='stream-http')
-        version_http_resps = _version_http_resp.history + [_version_http_resp]
-        version_http_headers = [r.headers for r in version_http_resps]
-        version_names = [resp.url for resp in version_http_resps]
-        metadata_to_fetch = metadata_version
+        try:
+            metadata_version.graph
+            #version_http_resps = list(idlib.core.resolution_chain_responses(metadata_version.iri))
+            _version_http_resp = metadata_version.progenitor(type='stream-http')
+            version_http_resps = _version_http_resp.history + [_version_http_resp]
+            version_http_headers = [r.headers for r in version_http_resps]
+            version_names = [resp.url for resp in version_http_resps]
+            metadata_to_fetch = metadata_version
+        except requests.exceptions.HTTPError:
+            metadata_to_fetch = metadata
+
     else:
         metadata_to_fetch = metadata
 
-    name_to_fetch = bound_version_name if bound_version_name else (bound_name if bound_name else name)  # FIXME logic
+    name_to_fetch = metadata_to_fetch.identifier_actionable
     base = pathlib.Path(tempfile.tempdir) / 'interlex-load'
     if not base.exists():
         base.mkdir(exist_ok=True)
@@ -1504,12 +1513,15 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force
         # and lost, same with the ser -> metadata identity etc.
 
         do_process_into_session(session, process_prepared, path, serialization_identity,
-                                metadata_version.graph.namespace_manager,
+                                metadata_to_fetch.graph.namespace_manager,
                                 commit=commit, batchsize=batchsize, debug=debug)
 
-
-    # FIXME at this point we need the serialization identity because even if everything else
-    # checks out we will still need the serialization id in order to proceed
+        # TODO need to clean up shellout and stash the xz somewhere,
+        # especially if we are using a ramdisk, because the in-process
+        # files take up lots of space, starting with the .ntriples files
+        # might be enough, but also, these files xz down to teeny tiny sizes
+        # as in small enough to put as blobs into the database if we wanted
+        # not that that is a good idea, but we could, they are small enough
 
     #reference_name = figure_out_reference_name(  # TODO
         #name=name,
