@@ -3,6 +3,10 @@ from functools import wraps
 
 class IlxException(Exception):
     pass
+
+class SubprocessException(IlxException):
+    """ something went wrong in a subprocess """
+
 class NotGroup(IlxException):
     pass
 
