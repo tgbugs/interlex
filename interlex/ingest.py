@@ -527,14 +527,18 @@ def sort_ntriples_files(path):
     term, link, conn = _paths[10:13]
     edges = _paths[-1]
     raw_sord = process_edges(edges, raw=True)
-    ls = len(sord)
+    ls = len(raw_sord)
     lsp1 = ls + 1
     index = {k:i for i, k in enumerate(raw_sord)}
 
+    # FIXME it seems like this might be too inefficient for somthing like pr
+    # the memory usage is still low but ... actually it might just be computing
+    # sord that is so slow
+    _es = ''
     def kterm(l):
         bnode, _ = l.split(' ', 1)
         if bnode in index:
-            return index[bnode], ''
+            return index[bnode], _es
         else:
             return lsp1, natsort(bnode)
 
@@ -549,7 +553,7 @@ def sort_ntriples_files(path):
     def kconn(l):
         _, bnode, _ = l.rsplit(' ', 2)
         if bnode in index:
-            return index[bnode], ''
+            return index[bnode], _es
         else:
             return lsp1, natsort(bnode)  # sort by bnode allows coordination with term
 
@@ -628,14 +632,41 @@ def process_triple_seq(triple_seq, batchsize=None, force=False, debug=False):
     # triples_seq should not be a generator because we need to traverse it multiple times ...
     # imagine you go them from somewhere else
     dout = {}
-    g_name = [(s, p, o) for s, p, o in triple_seq if not isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode)]
+
+    # our natsort is safe because it doesn't ignore leading zeros and thus identically equal values sort as expected
+    def kname(t):
+        return tuple(natsort(e) for e in t)
+
+    def kterm(t):
+        if t[0] in index:
+            return index[t[0]], _es
+        else:
+            return lsp1, natsort(t[0])
+
+    def klink(t):
+        return index[t[0]], index[t[2]]
+
+    def kconn(t):
+        if t[2] in index:
+            return index[t[2]], _es
+        else:
+            return lsp1, natsort(t[2])
+
+    g_name = sorted([(s, p, o) for s, p, o in triple_seq if not isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode)], key=kname)
     named_counts = dict(Counter([s for s, p, o in g_name]))
     yield from process_named(named_counts, g_name, batchsize=batchsize, dout=dout, debug=debug)
 
     g_node = [(s, p, o) for s, p, o in triple_seq if     isinstance(s, rdflib.BNode) or      isinstance(o, rdflib.BNode)]
-    g_term = [(s, p, o) for s, p, o in g_node      if     isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode)]
-    g_link = [(s, p, o) for s, p, o in g_node      if     isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)]
-    g_conn = [(s, p, o) for s, p, o in g_node      if not isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)]
+    _g_link = [(s, p, o) for s, p, o in g_node      if     isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)]
+    edges = [(s, o) for s, p, o in _g_link]
+    sord = toposort(edges)
+    lsp1 = len(sord) + 1
+    index = {k:i for i, k in enumerate(sord)}
+    _es = ''
+
+    g_term = sorted([(s, p, o) for s, p, o in g_node      if     isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode)], key=kterm)
+    g_link = sorted(_g_link, key=klink)
+    g_conn = sorted([(s, p, o) for s, p, o in g_node      if not isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)], key=kconn)
 
     # FIXME TODO we could probably do this all in a single pass over tripleseq
     bnode_term_subject_counts = dict(Counter([s for s, p, o in g_term]))
@@ -644,8 +675,6 @@ def process_triple_seq(triple_seq, batchsize=None, force=False, debug=False):
     bnode_conn_object_counts =  dict(Counter([o for s, p, o in g_conn]))
     named_conn_subject_counts = dict(Counter([s for s, p, o in g_conn]))
     dangle = (set(bnode_link_object_counts) | set(bnode_conn_object_counts)) - (set(bnode_link_subject_counts) | set(bnode_term_subject_counts))
-    edges = [(s, o) for s, p, o in g_link]
-    sord = toposort(edges)
     breakpoint()
     yield from process_bnode(
         bnode_term_subject_counts,
@@ -1193,10 +1222,11 @@ def process_bnode(
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 3 */',
                         ((graph_bnode_identity, total),), ocdn,
                         constant_dict={'nt': 'bnode_conn_free_seq'})
-    # FIXME may need to batch irels, replicas, and dedupes as well
-    for chunk in chunk_list(irels, batchsize):
-        yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES', chunk, ocdn,
-                            constant_dict={'p': 'hasBnodeRecord', 's': graph_bnode_identity})
+
+    if irels:
+        for chunk in chunk_list(irels, batchsize):
+            yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES', chunk, ocdn,
+                                constant_dict={'p': 'hasBnodeRecord', 's': graph_bnode_identity})
 
     if replica_helper:
         for chunk in chunk_list(list(replica_helper), batchsize):
@@ -1322,21 +1352,8 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
     total = sum(counts.values())
     tm1 = total -1
     for i, t in enumerate(gen):
-        #if i > tm1:
-            #breakpoint()
-            #raise ValueError('wat')
-        if i == tm1:
-            # last batch will almost always be less than batchsize
-            # or first batch for files less than batchsize
-            batch_after_this_subject = True
-            try:
-                oops = next(gen)
-                msg = f'should have been done but {oops}'
-                raise ValueError(msg)
-            except StopIteration:
-                pass
-
-        if t[0] != s:  # FIXME how did this ever work for the final loop?
+        if t[0] != s:
+            # finish processing the previous loop before setting anything for this one
             if this_subject_count != expected_count:
                 breakpoint()
                 # if you hit this it might be because your input is not sorted correctly
@@ -1361,6 +1378,23 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
             if 0 <= (i + expected_count) % batchsize < expected_count:
                 # strictly less than expected count works because if the previous hit exactly on batchsize it will have run
                 batch_after_this_subject = True
+
+        if i == tm1:
+            # last batch will almost always be less than batchsize
+            # or first batch for files less than batchsize
+            batch_after_this_subject = True
+            try:
+                oops = next(gen)
+                msg = f'should have been done but {oops}'
+                raise ValueError(msg)
+            except StopIteration:
+                pass
+            except TypeError as e:
+                # FIXME this is a dumb way to handle this, but it is mostly for debug during devel
+                if isinstance(gen, list) or isinstance(gen, tuple):
+                    assert len(gen) == total
+                else:
+                    raise e
 
         this_subject_count += 1
         s, p, o = t
