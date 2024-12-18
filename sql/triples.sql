@@ -6,6 +6,7 @@ CREATE TABLE fragment_prefix_sequences(
        current_pad integer NOT NULL DEFAULT 7
 );
 
+-- FIXME TODO REMINDER rate limit on creating new terms to avoid abuse by regular users
 CREATE OR REPLACE FUNCTION incrementPrefixSequence(prefix_in char(32), OUT suffix_id integer) RETURNS integer AS $incrementPrefixSequence$
        BEGIN
            UPDATE fragment_prefix_sequences
@@ -61,7 +62,7 @@ CREATE TABLE existing_iris(
        ilx_prefix char(32),
        ilx_id char(32) NOT NULL,
        iri uri UNIQUE NOT NULL CHECK (uri_host(iri) NOT LIKE '%interlex.org'),
-       group_id integer NOT NULL,
+       group_id integer NOT NULL,  -- FIXME should probably be perspective instead
        CONSTRAINT fk__existing_iris__ilx_prefix_ilx_id__interlex_ids
                   FOREIGN key (ilx_prefix, ilx_id)
                   REFERENCES interlex_ids (prefix, id) match simple,
@@ -192,7 +193,7 @@ CREATE TRIGGER user_reference_name AFTER INSERT
 -- note to self: qualified and unqualified imports, all named based imports without identity are unqualified
 -- we distinguish here because names 'point' to more than one type of thing that we want to be able to track the history of
 CREATE TYPE named_type AS ENUM ('serialization',
-                                'local_naming_conventions',  -- aka curies
+                                --'local_naming_conventions',  -- aka curies
                                 -- bound to bound_name incidentally so they are ranked higher
                                 -- FIXME hashing bound names for this is stupid ? or is it if you have very long names
                                 'bound_name',  -- just use the string itself? might be more space efficient to hash? we will want to be able to
@@ -203,12 +204,23 @@ CREATE TYPE named_type AS ENUM ('serialization',
                                          --   triple nope, names as defined in the names table sure do map to reference_names... but they might map to more than one, so quad nope
                                          --   quint nope says bound_name is in 1:1 with reference_name and need to be able to reconstruct the actual name
                                 -- 'source',  -- (name, metadata_identity, data_identity) but could be any subset of those, and we can reconstruct using the load data
-                                'metadata',  -- pairs, includes the type
+                                'metadata',  -- pairs, includes the type XXX also triples if there was a bnode ...
                                 'data',  -- triples s p o type + lang
                                 'subgraph', -- FIXME how is this any different from data? unnamed subgraphs
                                 'qualifier',
                                 'load',
-                                'subject_graph'
+                                'subject_graph',
+
+                                -- new clearer names with better semantics
+                                'graph_combined_local_conventions', -- (oid local_conventions graph_combined) subClassOf ??? TODO naming
+                                'local_conventions', -- (sid ((prefix namespace) ...))
+                                --'graph', -- ill specified
+                                'graph_combined', -- (oid named_embedded_seql bnode_embedded_seql)
+                                'bnode_conn_free_seq', -- this uses the named embedded identity for connected subjects and condensed identity for free subgraphs, this means that bnode_conn_free_seq cannot be calculated directly from just the bnode_condensed identities
+                                'bnode_condensed_seq', -- (sid ((us ((up uo) ...)) ...)) aka (sid (bnode-record ...)) subClassOf bnode_graph
+                                'bnode_condensed', -- (us ((us uo) ...)) subClassOf bnode_record, but does not include any named subject id, be == bc
+                                'named_embedded_seq', -- (sid ((ns ((np no) ...)) ...)) aka (sid (named-record ...)) subClassOf named_graph
+                                'named_embedded' -- (ns ((ns no) ...)) subClassOf named_record
                                 -- singletion identified by hash on triple set  these are not named, that is the whole point, so they don't need to be here
                                 -- 'name-metadata' -- (name, metadata_identity)
                                 -- 'name-data' -- (name, data_identity)
@@ -263,12 +275,14 @@ CREATE TABLE identities(
        -- FIXME we will likely want an integer primary key if we start doing heavy joins over this table
        identity bytea UNIQUE, -- PRIMARY KEY,
        --version integer NOT NULL, -- TODO this needs to be tracked, it doesn't go in the primary key but is important if validating migrations i think? maybe it does go in the primary key? hrm
-       triples_count integer NOT NULL, -- ok to be zero for bound_name
+       record_count integer NOT NULL, -- ok to be zero for bound_name
        reference_name uri,
        type named_type NOT NULL,
-       CHECK (reference_name IS NULL AND type = 'subgraph' OR
+       /* -- uh ... this check was doing nothing ???
+       CHECK (reference_name IS     NULL AND type = 'subgraph' OR
               reference_name IS NOT NULL AND type = 'subgraph' OR
               type <> 'subgraph'),
+       */
        -- FIXME serialization from interlex needs to differ from triples?? name
        -- also n3 format might collide?
        CONSTRAINT fk__identities__reference_name__reference_names
@@ -328,7 +342,17 @@ CREATE TYPE source_process AS ENUM ('FileFromIRI',  -- transitive closure be imp
                                     );
 
 
-CREATE TYPE identity_relation AS ENUM ('hasPart', 'dereferencedTo'); -- , 'named', 'pointedTo', 'resolvedTo');
+CREATE TYPE identity_relation AS ENUM (
+       'hasPart',
+       'dereferencedTo',
+       'parsedTo', -- serialization -> graph_and_local_conventions
+       'hasLocalConventions', -- graph_and_local_conventions - local_conventions
+       'hasGraph', -- graph_and_local_conventions - graph
+       'hasBnodeGraph', -- graph -> bnode_graph
+       'hasBnodeRecord', -- bnode_graph -> bnode_record
+       'hasNamedGraph', -- graph -> named_graph XXX note that this is NOT the RDF named graph
+       'hasNamedRecord' -- named_graph -> named_record
+); -- , 'named', 'pointedTo', 'resolvedTo');
 -- dereferencedTo history can be reconstructed for names -> serialization without a bound name
 
 CREATE TYPE qualifier_relations AS ENUM('includes',
@@ -364,6 +388,17 @@ CREATE TABLE identity_relations(
                   REFERENCES identities (identity) match simple
        -- amusingly when serializing this table back to RDF it will be ident:serialization hasPart: ident:constituent as owl:NamedIndividuals
 );
+
+CREATE UNIQUE INDEX un__identity_relations__n1p_s_p
+       -- FIXME one issue with this is that such inserts may fail silently if OCDN is set
+       -- TODO this should really be (s, p, o, version) so we can migrate identity function versions, for now it detects if i do something stupid
+       ON identity_relations
+       (s, p)
+       -- where not in multi-arity, in all other cases the value of the subject depends
+       -- on the object and thus should always be unique, this is not strictly true for
+       -- serialization parsesTo graph_and_local_conventions, however it indicates that
+       -- the identity function has changed (thus the need for the version field)
+       WHERE p NOT IN ('hasPart', 'dereferencedTo', 'hasBnodeRecord', 'hasNamedRecord');
 
 CREATE INDEX identity_relations_s_index ON identity_relations (s);
 CREATE INDEX identity_relations_o_index ON identity_relations (o);
@@ -505,9 +540,9 @@ CREATE TABLE identity_named_triples_ingest(
        -- we already have the subgraph triple mappings because those are the only identifiable unit for subgraphs
        -- thus we only need the named triples mapping, we don't need the full mapping
        --subject uri not null, -- this does not go here, it goes in another table if we need/want it or we can just get it when loading the trips
-       subject_embedded_identity bytea references identities (identity),
+       named_embedded_identity bytea references identities (identity),
        triple_identity bytea,  -- is unique for the named subset -- see alters below for fk
-       CONSTRAINT pk__id_nti__subject_condensed_identity_triple_identity PRIMARY KEY (subject_embedded_identity, triple_identity)
+       CONSTRAINT pk__id_nti__named_embedded_identity_triple_identity PRIMARY KEY (named_embedded_identity, triple_identity)
 );
 
 CREATE TABLE subgraph_triples( -- FIXME not clear whether we need this at all
@@ -975,28 +1010,28 @@ ALTER TABLE identity_named_triples_ingest ADD CONSTRAINT fk_idnti_trips_identity
 
 CREATE TABLE subgraph_replicas (
        id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, -- FIXME we use this because only either s or s_blank needs to be not null and they are mutually exclusive
-       data_or_metadata_identity bytea NOT NULL references identities (identity), -- this is why we can't do this in the triples table, because the replicas may differ between input graphs
+       graph_bnode_identity bytea NOT NULL references identities (identity), -- this is why we can't do this in the triples table, because the replicas may differ between input graphs
        s uri,
        s_blank integer CHECK ((s_blank IS NULL) OR (s_blank = 0)), -- this will always FIXME ... do we need this ?
        p uri,
        subgraph_identity bytea NOT NULL,
        replica integer NOT NULL,
        CHECK ((s IS NOT NULL) OR (s_blank IS NOT NULL)),
-       UNIQUE (data_or_metadata_identity, s, p, subgraph_identity, replica), -- the same subject can participat in multiple replicas of the same subgraph
-       UNIQUE (data_or_metadata_identity, s_blank, p, subgraph_identity, replica) -- a single free subgraph may appear multiple times
+       UNIQUE (graph_bnode_identity, s, p, subgraph_identity, replica), -- the same subject can participat in multiple replicas of the same subgraph
+       UNIQUE (graph_bnode_identity, s_blank, p, subgraph_identity, replica) -- a single free subgraph may appear multiple times
 );
 
 CREATE TABLE subgraph_deduplication (
        -- FIXME TODO figure out what constraints we can have here
        -- id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-       data_or_metadata_identity bytea NOT NULL references identities (identity),
+       graph_bnode_identity bytea NOT NULL references identities (identity),
        subject_subgraph_identity bytea NOT NULL,
        subject_replica integer NOT NULL,
        o_blank integer NOT NULL,  -- the subject_subgraph_identity o_blank
        object_subgraph_identity bytea NOT NULL,
        object_replica integer NOT NULL,
        PRIMARY KEY (  -- FIXME TODO vs unique
-               data_or_metadata_identity,
+               graph_bnode_identity,
                subject_subgraph_identity,
                subject_replica,
                o_blank,
