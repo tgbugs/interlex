@@ -77,8 +77,10 @@ def mqUri():
     return config.broker_url
 
 def getScopedSession(dburi=dbUri(),
-                     echo=False,):
-    engine = create_engine(dburi)
+                     echo=False,
+                     query_cache_size=500,):
+
+    engine = create_engine(dburi, query_cache_size=query_cache_size)
     engine.echo = echo
     session_factory = sessionmaker(bind=engine)
     ScopedSession = scoped_session(session_factory)
