@@ -107,18 +107,24 @@ class Main(clif.Dispatcher):
         shell('shell')
 
     def sync(self):
+        from interlex.config import auth
         from interlex.uri import run_uri
         from interlex.load import TripleLoaderFactory
         from interlex.sync import InterLexLoad
-        app = run_uri()
-        db = app.extensions['sqlalchemy']
-        with app.app_context():
-            il = InterLexLoad(db, do_cdes=self.options.do_cdes)
-            il.setup()
-            il.load()  # do this one yourself  WARNING high memory usage ~ 17 gigs
-            self = il
-            breakpoint()
-            pass
+        from interlex.core import getScopedSession, dbUri
+
+        kwargs = {k:auth.get(f'db-{k}') for k in ('user', 'host', 'port', 'database')}
+        kwargs['dbuser'] = kwargs.pop('user')
+        _session = getScopedSession(dburi=dbUri(**kwargs), query_cache_size=0)
+        class db:
+            session = _session
+
+        il = InterLexLoad(db, do_cdes=self.options.do_cdes)
+        il.setup()
+        il.load()  # do this one yourself  WARNING high memory usage ~ 17 gigs
+        self = il
+        breakpoint()
+        pass
 
     def dbsetup(self):
         from interlex.uri import run_uri

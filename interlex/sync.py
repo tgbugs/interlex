@@ -16,6 +16,7 @@ from interlex.dump import Queries, MysqlExport
 from interlex.load import TripleLoaderFactory, do_gc
 from interlex.utils import log as _log
 from interlex.namespaces import ilxr
+from interlex.ingest import process_triple_seq, do_process_into_session
 
 log = _log.getChild('sync')
 
@@ -28,6 +29,7 @@ class InterLexLoad:
     def __init__(self, db, do_cdes=False, debug=False, batchsize=20000):
         # batchsize tested at 20k, 40k, and 80k, 20k runs slightly faster than the other two
         # and does it with significantly less memory usage (< 1 gig)
+        self._db = db
         self.batchsize = batchsize
         TripleLoader = TripleLoaderFactory(db.session)
         self.loader = TripleLoader('tgbugs', 'tgbugs', 'http://uri.interlex.org/base/ontologies/interlex')
@@ -121,13 +123,16 @@ class InterLexLoad:
 
     @exc.bigError
     def remote_load(self):
+        # FIXME there STILL should not be 5 gigs of memory in use at this point when we start :/
         self.loader.load()
         log.debug('Yay!')
 
     def load(self):
+        do_process_into_session(self._db.session, process_triple_seq, self.triples,
+                                commit=False, batchsize=self.batchsize, debug=True)
         self.local_load()
-        self.local_load_part2()
-        self.remote_load()
+        #self.local_load_part2()
+        #self.remote_load()
 
     def ids(self):
         with self.engine.connect() as conn:
