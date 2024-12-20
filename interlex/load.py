@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.sql import text as sql_text
 from pyontutils.core import OntGraph, OntId, OntResIri, OntResGit
 from pyontutils.utils_fast import TermColors as tc, chunk_list
-from pyontutils.identity_bnode import IdentityBNode, bnNone
+from pyontutils.identity_bnode import IdentityBNode, bnNone, idf, it as ibn_it
 from pyontutils.namespaces import definition
 from pyontutils.namespaces import makeNamespaces, ILX, NIFRID, ilxtr
 from pyontutils.namespaces import rdf, owl
@@ -191,7 +191,8 @@ class GraphIdentities:
             bn = self.bound_name
             #bids = set(self._blank_identities.values())
             named_subjects = [s for s in self.graph.subjects(unique=True) if isinstance(s, rdflib.URIRef) and s != bn]
-            self._cache_dnsi = {IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity: s for s in named_subjects}
+            self._cache_dnsi = {IdentityBNode(s, id_method=idf['(s ((p o) ...))'],
+                                              in_graph=self.graph).identity: s for s in named_subjects}
             #self._cache_dnsi = {v:k for k, v in self._ibn.subject_embedded_identities.items() if isinstance(k, rdflib.URIRef) and k != bn}
 
         return self._cache_dnsi
@@ -643,7 +644,8 @@ class GraphIdentities:
         ibn = IdentityBNode(self.graph, debug=True)  # FIXME TODO should be able to compute data id by removing the metadata id from the final listing
         if list(self.metadata_raw):
             #self._metadata_identity = ibn.subject_embedded_identities[self.bound_name]
-            metadata_seid = IdentityBNode(self.bound_name, as_type='(s ((p o) ...))', in_graph=self.graph)
+            metadata_seid = IdentityBNode(self.bound_name, id_method=idf['(s ((p o) ...))'],
+                                          in_graph=self.graph)
             self._metadata_identity = metadata_seid.identity
         else:
             self._metadata_identity = ibn.null_identity  # FIXME not sure if want?
@@ -655,7 +657,7 @@ class GraphIdentities:
         # to be the same between different ontologies, consider the case where there is only the ontid
         # TODO see if we need to use the list variant that is equivalent to the old way
         #self._data_identity = ibn.ordered_identity(*[v for v in ibn.all_idents_new if v != self._metadata_identity], separator=False)
-        ibn_seids = IdentityBNode(self.graph, as_type='(s ((p o) ...)) ...')  # XXX watch out this one isn't normal because .identitiy is a list
+        ibn_seids = IdentityBNode(self.graph, id_method=idf['(s ((p o) ...)) ...'])  # XXX watch out this one isn't normal because .identitiy is a list
         seids = ibn_seids.identity
         self._data_identity = ibn.ordered_identity(*sorted([v for v in seids if v != self._metadata_identity]), separator=False)
         # FIXME how to deal with files that have multiple metadata records and thus multiple metadata identities ???
@@ -670,7 +672,7 @@ class GraphIdentities:
 
         subgraph_mappings = ibn._alt_debug['transitive_triples']
         _bnodes = set(e for t in self.graph for e in t if isinstance(e, rdflib.BNode))
-        self._blank_identities = {bn: IdentityBNode(bn, as_type='(s ((p o) ...))', in_graph=self.graph).identity for bn in _bnodes}
+        self._blank_identities = {bn: IdentityBNode(bn, id_method=idf['(s ((p o) ...))'], in_graph=self.graph).identity for bn in _bnodes}
         itb = {}  # XXX FIXME unfortunately non-injectivity is a giant pita because of how we pass stuff around when generating rows
         non_injective = set()
         for v, k in self._blank_identities.items():
@@ -695,12 +697,12 @@ class GraphIdentities:
         # FIXME figure out how to reduce the recomputation of the graph subsets since
         # ibn already does this and we don't want to be using debug
         self._connected_subgraph_identities = {
-            IdentityBNode(o, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+            IdentityBNode(o, id_method=idf['(s ((p o) ...))'], in_graph=self.graph).identity
             #ibn.bnode_identities[o]
             :
             normgraph(o, subgraph_mappings[o],
                       #ibn.bnode_identities[o]
-                      IdentityBNode(o, as_type='(s ((p o) ...))', in_graph=self.graph).identity,
+                      IdentityBNode(o, id_method=idf['(s ((p o) ...))'], in_graph=self.graph).identity,
                       )
             for o in
             #ibn.connected_heads
@@ -709,11 +711,11 @@ class GraphIdentities:
         }
         self._free_subgraph_identities = {
             #identity
-            IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+            IdentityBNode(s, id_method=idf['(s ((p o) ...))'], in_graph=self.graph).identity
             :
             normgraph(s, subgraph_mappings[s],
                       #identity
-                      IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+                      IdentityBNode(s, id_method=idf['(s ((p o) ...))'], in_graph=self.graph).identity
                       )
             for s in
             #ibn.unnamed_subgraph_identities.items()
@@ -721,10 +723,10 @@ class GraphIdentities:
             if s not in ibn._alt_debug['connected_heads']
         }
         self._connected_and_free_subgraph_identities = {
-            IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+            IdentityBNode(s, id_method=idf['(s ((p o) ...))'], in_graph=self.graph).identity
             :
             normgraph(s, subgraph_mappings[s],
-                      IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
+                      IdentityBNode(s, id_method=idf['(s ((p o) ...))'], in_graph=self.graph).identity
                       )
             for s in
             (ibn._alt_debug['free_heads'] & ibn._alt_debug['connected_heads'])
@@ -962,13 +964,13 @@ class GraphLoader(GraphIdentities):
             #subject_embedded_identity = self._ibn.subject_embedded_identities[s]
             #subject_embedded_identity = self._ibn.subject_embedded_identities[s]
             #subject_embedded_identity = IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
-            subject_embedded_identity = IdentityBNode._if_cache[self.graph, s, '(s ((p o) ...))']
+            subject_embedded_identity = IdentityBNode._if_cache[self.graph, s, idf['(s ((p o) ...))']]
             # TODO asses the overhead of constructing IdentityBNode as opposed to the direct approach here
             #_triple_identity = IdentityBNode((s, p, o), pot=True).identity
             triple_identity = helper_ibnode.ordered_identity(
                 #helper_ibnode.ordered_identity(str(s).encode()),
-                IdentityBNode._if_cache[s, 'bytes'],
-                IdentityBNode._if_cache[(_p, o), 'pair'], separator=False)
+                IdentityBNode._if_cache[s, idf['bytes']],
+                IdentityBNode._if_cache[(_p, o), idf['pair']], separator=False)
             #assert triple_identity == _triple_identity  # the db will catch this on insert anyway >_<
             columns = 's, p, o, triple_identity'
             record = (str(s),
@@ -979,13 +981,13 @@ class GraphLoader(GraphIdentities):
         elif isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.Literal):
             #subject_embedded_identity = self._ibn.subject_embedded_identities[s]
             #subject_embedded_identity = IdentityBNode(s, as_type='(s ((p o) ...))', in_graph=self.graph).identity
-            subject_embedded_identity = IdentityBNode._if_cache[self.graph, s, '(s ((p o) ...))']
+            subject_embedded_identity = IdentityBNode._if_cache[self.graph, s, idf['(s ((p o) ...))']]
             # TODO asses the overhead of constructing IdentityBNode as opposed to the direct approach here
             #_triple_identity = IdentityBNode((s, p, o), pot=True).identity
             triple_identity = helper_ibnode.ordered_identity(
                 #helper_ibnode.ordered_identity(str(s).encode()),
-                IdentityBNode._if_cache[s, 'bytes'],
-                IdentityBNode._if_cache[(_p, o), 'pair'], separator=False)
+                IdentityBNode._if_cache[s, idf['bytes']],
+                IdentityBNode._if_cache[(_p, o), idf['pair']], separator=False)
             #assert triple_identity == _triple_identity  # the db will catch this on insert anyway >_<
             columns = 's, p, o_lit, datatype, language, triple_identity'
             o_lit = str(o)
