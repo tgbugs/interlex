@@ -687,7 +687,6 @@ def process_triple_seq(triple_seq, batchsize=None, force=False, debug=False, dou
     bnode_conn_object_counts =  dict(Counter([o for s, p, o in g_conn]))
     named_conn_subject_counts = dict(Counter([s for s, p, o in g_conn]))
     dangle = (set(bnode_link_object_counts) | set(bnode_conn_object_counts)) - (set(bnode_link_subject_counts) | set(bnode_term_subject_counts))
-    breakpoint()
     yield from process_bnode(
         bnode_term_subject_counts,
         bnode_link_subject_counts,
@@ -699,7 +698,7 @@ def process_triple_seq(triple_seq, batchsize=None, force=False, debug=False, dou
     graph_named_identity = dout['graph_named_identity']
     graph_bnode_identity = dout['graph_bnode_identity']
     triple_count = len(triple_seq)
-    yield from process_post(graph_bnode_identity, graph_named_identity, triple_count)
+    yield from process_post(graph_bnode_identity, graph_named_identity, triple_count, dout=dout)
     yield None, None
 
 
@@ -1586,35 +1585,39 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force
             # FIXME somehow we are hitting idle in transaction blowing through 100% cpu usage
             # how am I deadlocking myself so much on this it is nutso ...
 
-            ori = OntResIri(metadata_to_fetch.iri)
-            orid = ori.graph.identity()  # FIXME for small only obviously
-            oridc = IdentityBNode(ori.graph, as_type=ibn_it['graph-combined-and-local-conventions'])
+            if debug and dout['named_count'] + dout['bnode_count'] < 1_000_000:
+                ori = OntResIri(metadata_to_fetch.iri)
+                orid = ori.graph.identity()  # FIXME for small only obviously
+                oridc = IdentityBNode(ori.graph, as_type=ibn_it['graph-combined-and-local-conventions'])
 
-            mr = [(k, oridc._if_cache[k]) for k in oridc._if_cache if idf['multi-record'] in k][-2:]
-            rs = [(k, oridc._if_cache[k]) for k in oridc._if_cache if idf['record-seq'] in k][-2:]
+                mr = [(k, oridc._if_cache[k]) for k in oridc._if_cache if idf['multi-record'] in k][-2:]
+                rs = [(k, oridc._if_cache[k]) for k in oridc._if_cache if idf['record-seq'] in k][-2:]
 
-            if dout:
-                # named ok
-                if rs[0][-1] != dout['graph_named_identity']:
+                if dout:
+                    # named ok
+                    if rs[0][-1] != dout['graph_named_identity']:
+                        breakpoint()
+
+                    assert rs[0][-1] == dout['graph_named_identity'], 'urg'
+
+                    # bnode does not match for some reason tbd
+                    # pretty sure it is because ibn is still using
+                    # condensed to calculate for connected instead of embedding
+                    # the subject ids ...
+                    # XXX NOPE it was a super stupid bug where i had s instead of cs
+                    # thankfully my testcase had term/conn only with no link
+                    if rs[1][-1] != dout['graph_bnode_identity']:
+                        breakpoint()
+
+                    assert rs[1][-1] == dout['graph_bnode_identity'], 'urg'
+
+                # lcid at least matches :/
+                lcid = oridc._if_cache[[k for k in oridc._if_cache if idf['local-conventions'] in k][0]].hex()
+                if oridc.identity != parsedTo.tobytes():
                     breakpoint()
 
-                assert rs[0][-1] == dout['graph_named_identity'], 'urg'
-
-
-                # bnode does not match for some reason tbd
-                # pretty sure it is because ibn is still using
-                # condensed to calculate for connected instead of embedding
-                # the subject ids ...
-                # XXX NOPE it was a super stupid bug where i had s instead of cs
-                # thankfully my testcase had term/conn only with no link
-                if rs[1][-1] != dout['graph_bnode_identity']:
-                    breakpoint()
-
-                assert rs[1][-1] == dout['graph_bnode_identity'], 'urg'
-
-            # lcid at least matches :/
-            lcid = oridc._if_cache[[k for k in oridc._if_cache if idf['local-conventions'] in k][0]].hex()
-            if not rows or oridc.identity != parsedTo.tobytes():
+            if not rows:
+                # TODO need to complete querying out
                 breakpoint()
 
             @profile_me
