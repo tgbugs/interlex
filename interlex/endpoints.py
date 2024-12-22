@@ -591,7 +591,7 @@ class Endpoints:
             values_template, params = makeParamsValues(values,
                                                         constants=('idFromGroupname(:group)',))  # FIXME surely this is slow as balls
             params['group'] = group
-            base = 'INSERT INTO curies (group_id, curie_prefix, iri_prefix) VALUES '
+            base = 'INSERT INTO curies (group_id, curie_prefix, iri_namespace) VALUES '
             sql = base + values_template
             try:
                 resp = self.session_execute(sql, params)

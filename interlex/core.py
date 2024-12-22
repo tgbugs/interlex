@@ -353,7 +353,7 @@ def server_api(db=None, dburi=dbUri()):
                                     for v in proto_params)
         params = {name:value for names, values in proto_params.items()
                   for name, value in zip(names, values)}
-        sql = 'INSERT INTO curies (group_id, curie_prefix, iri_prefix) VALUES ' + values_template
+        sql = 'INSERT INTO curies (group_id, curie_prefix, iri_namespace) VALUES ' + values_template
         #printD(sql)
         #printD(params)
         try:

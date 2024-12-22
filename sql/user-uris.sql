@@ -64,11 +64,13 @@ CREATE TABLE curies(
        local_conventions_identity bytea references identities (identity), -- XXX note that this tables is not fully normalized, we may or may not want to do this because exact curies blocks may be reused across multiple files so a serialization entity to curies section id, or similar in the future, for now this table will do what we need even if we have 100 version of 1000 ontologies probably ... and it is a quick refactor later if needed
        -- XXX further, this should probably technically be serialization_identity_or_curies_metadata_data_identity or something like that
        -- maybe source_identity if it came from something that was never serialized
-       CHECK (group_id IS NOT NULL OR local_conventions_identity IS NOT NULL),
-       curie_prefix varchar(30) NOT NULL CHECK (curie_prefix NOT LIKE '%:%'),  -- is case sensitive, TODO validate against the w3c/ietf spec
-       iri_prefix uri NOT NULL,
+       CHECK ((group_id IS NOT NULL AND local_conventions_identity IS     NULL) OR
+              (group_id IS     NULL AND local_conventions_identity IS NOT NULL)),
+       curie_prefix text NOT NULL CHECK (curie_prefix NOT LIKE '%:%'),  -- is case sensitive, TODO validate against the w3c/ietf spec
+       iri_namespace uri NOT NULL,
        -- TODO what uniqueness constraints are we going to impose here?
-       CONSTRAINT un__curies__g_c_i UNIQUE (group_id, curie_prefix, iri_prefix),
+       UNIQUE (group_id, curie_prefix, iri_namespace),
+       UNIQUE (local_conventions_identity, curie_prefix, iri_namespace),
        CONSTRAINT fk__curies__group_id__group FOREIGN KEY (group_id) REFERENCES groups (id) match simple
 );
 

@@ -25,7 +25,7 @@ from ttlser.serializers import natsort
 from pyontutils.core import OntGraph, OntResIri
 from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import owl
-from pyontutils.identity_bnode import IdentityBNode, toposort, idf, it as ibn_it
+from pyontutils.identity_bnode import IdentityBNode, toposort, idf, it as ibn_it, split_named_bnode
 from . import exceptions as exc
 from .core import getScopedSession, makeParamsValues
 from .dump import Queries, TripleExporter
@@ -146,7 +146,7 @@ def normgraph(head_subject, subgraph, sgid, replica, subject_condensed_idents, s
     """ replace the bnodes with local integers inside the graph """
     _osg = subgraph
     try:
-        g = OntGraph().populate_from_triples((((bnNone if s is None else s), p, o) for s, p, o in subgraph))
+        g = OntGraph(bind_namespaces='none').populate_from_triples((((bnNone if s is None else s), p, o) for s, p, o in subgraph))
     except Exception as e:
         breakpoint()
         raise e
@@ -199,129 +199,6 @@ def normgraph(head_subject, subgraph, sgid, replica, subject_condensed_idents, s
 
 # TODO will need api key verification etc.
 # or we might only allow this to run in the first place if the user has permissions
-
-
-def process_fully_named(session, subject_identities, t):
-    s, p, o = t
-    pi = IdentityBNode((p, o), pot=True).identity
-    subject_identities[s].append(pi)
-
-    ti = IdentityBNode(t, pot=True).identity
-
-    # TODO take this from make_rows
-    if isinstance(o, rdflib.Literal):
-        params = dict(s=s, p=p, o_lit=str(o), ti=ti)
-        session.execute(sql_text('insert into triples (s, p, o_lit, triple_identity) VALUES (:s, :p, :o_lit, :ti)'), params=params)
-    else:
-        params = dict(s=s, p=p, o=o, ti=ti)
-        session.execute(sql_text('insert into triples (s, p, o) VALUES (:s, :p, :o)'), params=params)
-
-
-def _process_bnode(session, subject_identities, t, *,
-                  bnode_identities = None,
-                  free_heads = None,
-                  connected_heads = None,
-                  bsubjects = None,
-                  bobjects = None,
-                  unresolved_bnodes = None,
-                  transitive_triples = None,
-                  ):
-
-    s, p, o = t
-    sn = isinstance(s, rdflib.BNode)
-    on = isinstance(o, rdflib.BNode)
-
-
-def deal_with_bnodes(session, subject_identities, *,
-                     bnode_identities = None,
-                     free_heads = None,
-                     connected_heads = None,
-                     bsubjects = None,
-                     bobjects = None,
-                     unresolved_bnodes = None,
-                     transitive_triples = None,
-                  ):
-    cycles = get_cycles(unresolved_bnodes)
-    cycles_broken = break_cycles(cycles, unresolved_bnodes)
-    input_to_toposort = er_what_goes_here(cycles_broken)
-    ordered_subjects = toposort(input_to_toposort)
-    for s in ordered_subjects:
-        # do all the things
-        if s in free_heads or s in connected_heads or s not in cycles_broken:
-            # subgraph identity
-            # identify replicas
-            subgraph = transitive_objects[s]
-            bis = bnode_identities[s]
-            ident_s = sid(*bis)
-            if s in free_heads:
-                session.execute(sql)
-                if s not in connected_heads:
-                    # we're done here and can free everything related to this subgraph
-                    pass
-
-def better_workflow(session, triple_generator_from_file_or_stream):
-    subject_identities = defaultdict(list)
-    # unfortunately we have to retain all bnode state in memory ... until we hit the end of the graph
-    # this is because in principle there could always be some reference to a bnode lurking further down
-    # the graph ... HOWEVER there is a way around this! which is that we split bnode types so we know
-    # which ones come from the parser and are thus guranteed to appear as an object in only a single triple
-    # vs those which were literal bnodes that were hand written and those we have to retain until the end
-    # not just until we have accounted for each bnode appearing as an object once in a given subgraph
-    # of course this doesn't work for ntriples since they are all literal bnodes :/
-    bnode_state = dict(
-        bnode_identities = defaultdict(list),
-        free_heads = set(),
-        connected_heads = set(),
-        bsubjects = defaultdict((lambda: 0)),
-        bobjects = defaultdict((lambda: 0)),
-        unresolved_bnodes = defaultdict(list),
-        transitive_triples = defaultdict(list),
-    )
-    for t in triple_generator_from_file_or_stream:
-        if is_data_named(t): # this way of writing this out looks better but _identity_function does more to reduce rework
-            process_fully_named(session, subject_identities, t)
-        else:
-            process_bnode(session, t, **bnode_state)
-
-    deal_with_bnodes(session, **bnode_state)
-
-
-def good_workflow(iri, session):
-    ori = OntRestIri(iri)
-    metadata = ori.metadata
-    im = metadata.identity()
-    consmeta = construct_metadata(iri, im, metadata)
-    failure = check_meta(session, consmeta)  # if we have a metadata match then we still need to check the whole identity but likely won't need to import
-    # handle failure cases
-    g = ori.graph
-    #i = g.identity(substructure=True)
-    # what we really want to do here
-    # is the following, which is quite similar to what we do inside the new _identity_function
-    # iterate over all triples
-    #   insert the subset without bnodes directly into the triples table since we are in the transaction
-    #     retain only the pair identities to compute later
-    #   deal with the bnodes
-    #   cycles
-    #   break cycles
-    #   toposort subjects
-    #   process remaining in topo order
-    # from a parsed graph
-    # iterate over triples
-
-    # we can do _even_ better with an incremental parser if we have one
-    # for each triple we see coming out of the parser (which could be a line by line n3 parser)
-    # if is_data_named(t):
-    #    insert_into
-
-
-    # the order for inserts thus becoems
-    # metadata fully named
-    # metadata with any bnodes
-    # data fully named
-    # data with any bnodes
-    IdentityBNode(g, substructure=True, streaming=True, session=session)
-    loader = Loader(consmeta, g, i)
-    result = loader.load(commit=True)
 
 
 def do_loader(loader, n, ebn, commit=False):
@@ -639,7 +516,17 @@ def getstr(path):
 
     return str_value
 
-def process_triple_seq(triple_seq, batchsize=None, force=False, debug=False, dout=None):
+
+def mkgen(seq):
+    # for when the consumer needs the sequence not to restart from
+    # zero every time
+    yield from seq
+
+
+def process_triple_seq(triple_seq, serialization_identity=None,
+                       metadata_to_fetch=None, metadata_not_to_fetch=None,
+                       local_conventions=None,
+                       batchsize=None, force=False, debug=False, dout=None):
     # triples_seq should not be a generator because we need to traverse it multiple times ...
     # imagine you go them from somewhere else
     if dout is None:
@@ -664,21 +551,42 @@ def process_triple_seq(triple_seq, batchsize=None, force=False, debug=False, dou
         else:
             return lsp1, natsort(t[2])
 
+    triple_count = len(triple_seq)
+
+    if isinstance(triple_seq, OntGraph):
+        if local_conventions is None:
+            local_conventions = triple_seq.namespace_manager
+
+    if local_conventions is not None:
+        local_conventions_count = len(list(local_conventions))
+        yield from process_local_conventions(local_conventions, local_conventions_count, dout=dout)
+        local_conventions_identity = dout['local_conventions_identity']
+        record_count = local_conventions_count + triple_count
+    else:
+        local_conventions_identity = None
+        # rc only used if si is not None since lci None skips gclc
+        record_count = triple_count
+
+    if serialization_identity is not None:
+        yield from process_serialization(serialization_identity, record_count)
+        yield from process_name_metadata(serialization_identity, metadata_to_fetch, metadata_not_to_fetch)
+        yield None, None
+
     g_name = sorted([(s, p, o) for s, p, o in triple_seq if not isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode)], key=kname)
     named_counts = dict(Counter([s for s, p, o in g_name]))
     yield from process_named(named_counts, g_name, batchsize=batchsize, dout=dout, debug=debug)
 
-    g_node = [(s, p, o) for s, p, o in triple_seq if     isinstance(s, rdflib.BNode) or      isinstance(o, rdflib.BNode)]
-    _g_link = [(s, p, o) for s, p, o in g_node      if     isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)]
+    g_node =  [(s, p, o) for s, p, o in triple_seq if     isinstance(s, rdflib.BNode) or      isinstance(o, rdflib.BNode)]
+    _g_link = [(s, p, o) for s, p, o in g_node     if     isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)]
     edges = [(s, o) for s, p, o in _g_link]
     sord = toposort(edges)
     lsp1 = len(sord) + 1
     index = {k:i for i, k in enumerate(sord)}
     _es = ''
 
-    g_term = sorted([(s, p, o) for s, p, o in g_node      if     isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode)], key=kterm)
+    g_term = sorted([(s, p, o) for s, p, o in g_node if     isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode)], key=kterm)
     g_link = sorted(_g_link, key=klink)
-    g_conn = sorted([(s, p, o) for s, p, o in g_node      if not isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)], key=kconn)
+    g_conn = sorted([(s, p, o) for s, p, o in g_node if not isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)], key=kconn)
 
     # FIXME TODO we could probably do this all in a single pass over tripleseq
     bnode_term_subject_counts = dict(Counter([s for s, p, o in g_term]))
@@ -693,12 +601,17 @@ def process_triple_seq(triple_seq, batchsize=None, force=False, debug=False, dou
         bnode_link_object_counts,
         bnode_conn_object_counts,
         named_conn_subject_counts,
-        sord, dangle, g_term, g_link, g_conn, batchsize=batchsize, dout=dout)
+        sord, dangle, mkgen(g_term), mkgen(g_link), mkgen(g_conn), batchsize=batchsize, dout=dout)
 
     graph_named_identity = dout['graph_named_identity']
     graph_bnode_identity = dout['graph_bnode_identity']
-    triple_count = len(triple_seq)
-    yield from process_post(graph_bnode_identity, graph_named_identity, triple_count, dout=dout)
+
+    yield from process_post(
+        graph_bnode_identity, graph_named_identity, triple_count,
+        local_conventions_identity,
+        serialization_identity,
+        record_count,
+        dout=dout)
     yield None, None
 
 
@@ -709,7 +622,9 @@ def already_in(session, serialization_identity, identity_function_version=3):
         return rows[0][0]
 
 
-def process_prepared(path, serialization_identity, local_conventions, raw_sord=None, batchsize=None, force=False, debug=False, dout=None):
+def process_prepared(path, serialization_identity, metadata_to_fetch, metadata_not_to_fetch,
+                     local_conventions, raw_sord=None,
+                     batchsize=None, force=False, debug=False, dout=None):
     # FIXME TODO need the metadata identity and stuff
     if batchsize is None:
         batchsize = _batchsize
@@ -765,6 +680,7 @@ def process_prepared(path, serialization_identity, local_conventions, raw_sord=N
     record_count = local_conventions_count + triple_count
 
     yield from process_serialization(serialization_identity, record_count)
+    yield from process_name_metadata(serialization_identity, metadata_to_fetch, metadata_not_to_fetch)
     yield None, None
 
     if dout is None:
@@ -827,13 +743,164 @@ def process_serialization(serialization_identity, record_count):
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 7 */', idents, ocdn)
 
 
+def process_name_metadata(serialization_identity, metadata_to_fetch, metadata_not_to_fetch):
+    log.debug('start names and metadata')
+    # name + resolution chain
+    # bound name
+    # reference name if provided (TODO)
+    # idents
+    # metadata embedded identity
+    # metadata condensed identity
+    # irels
+    # ser -> me
+
+    # FIXME we want more than just name -> identity
+    # we need the date, we can flattenthe dereference chain for now
+    # we can store the distance from the identity in the resolution chain
+
+    # bound name can dereference vs can't dereference
+    idents = []
+    irels = []
+    name_rows = []
+    name_to_idents = []
+    for metadata in (metadata_not_to_fetch, metadata_to_fetch):
+        if metadata is None:
+            continue
+
+        name = metadata.identifier
+        _http_resp = metadata.progenitor(type='stream-http')
+        http_resps = _http_resp.history + [_http_resp]
+        http_headers = [r.headers for r in http_resps]
+
+        names = [resp.url for resp in http_resps]
+        # FIXME TODO consider whether we want to differentiate the type for
+        # the name that was the input name
+        name_rows.extend(names)
+        name_to_idents.extend([(name, serialization_identity, 'pointer') for name in names])
+
+        bound_name = metadata.identifier_bound
+        if bound_name:
+            name_rows.append(bound_name)
+            name_to_idents.append((bound_name, serialization_identity, 'bound'))
+
+        bound_version_name = metadata.identifier_version
+        if bound_version_name:
+            name_rows.append(bound_version_name)
+            name_to_idents.append((bound_version_name, serialization_identity, 'bound_version'))
+
+        if name != bound_name and name != bound_version_name:
+            if bound_name in names:
+                print('todo bn in names')
+                pass
+
+            if bound_version_name in names:
+                print('todo bvn in names')
+                pass
+
+            #breakpoint()
+            # TODO try to resolve the bound name and see where it goes, if it resolves
+            pass
+
+        # trunc first because non-trunc is impossible at this point if dangling
+        mg = metadata.graph
+        # we are not using graph_combined for this
+        # also, metadata_graph is needed in cases where we have non-truncated multi-parent
+        # but that can usually only be calculated from the full graph, so a separate phase
+        _if_cache = IdentityBNode._if_cache
+        metadata_graph = IdentityBNode(mg, as_type=ibn_it['triple-seq'], id_method=idf['record-seq'])
+        metadata_embedded = _if_cache[mg, bound_name, idf['embedded']]
+        metadata_condensed = _if_cache[mg, bound_name, idf['condensed']]
+        metadata_combined = IdentityBNode(mg, as_type=ibn_it['triple-seq'], id_method=idf['graph-combined'])
+        # if there are no bnodes then metadata_named = oid(metadata_embedded)
+        metadata_named = _if_cache[(mg, 'named'), idf['record-seq']]  # thi is invar to trunc
+        metadata_bnode = _if_cache[(mg, 'bnode'), idf['record-seq']]
+        metadata_named_embedded = _if_cache[(mg, 'named'), bound_name, idf['embedded']]
+        metadata_named_condensed = _if_cache[(mg, 'named'), bound_name, idf['condensed']]
+        # mbc is what is used as the subgraph identifier, but mbe is used in metadata_bnode
+        # mbc should also show up in identity relations during the later load if non-trunc
+        mbc_key = (mg, 'bnode'), bound_name, idf['condensed']
+        metadata_bnode_condensed = (_if_cache[mbc_key]
+                                    if mbc_key in _if_cache else
+                                    _hbn.null_identity)
+        record_count = len(mg)
+        named, bnode = split_named_bnode(mg)  # sigh, but metadata is small so ok
+        named_record_count = len(named)
+        bnode_record_count = len(bnode)
+
+        truncated = _dangling(mg)
+        if truncated:  # metadata_embedded is None:
+            _type = 'truncated_metadata'
+            #embedded = metadata_truncated_embedded
+            #condensed = metadata_truncated_condensed
+        else:
+            _type = 'metadata'
+
+        graph = metadata_graph.identity
+        embedded = metadata_embedded
+        condensed = metadata_condensed
+
+        combined = metadata_combined.identity
+        named = metadata_named
+        bnode = metadata_bnode
+        named_embedded = metadata_named_embedded
+        # FIXME we need conn free seq in here too, but I'm not sure
+        # what that is called in the identity function right now?
+        # record-seq i think? all the others are still useful for
+        # other use cases but we need conn free seq for consistency?
+        named_condensed = metadata_named_condensed
+        bnode_condensed = metadata_bnode_condensed
+
+        idents.extend((
+            (f'{_type}_graph', graph, record_count),
+            (f'{_type}_graph_combined', combined, record_count),
+            # FIXME this isn't quite right ... conn free seq needs to be in here
+
+            ('embedded', embedded, record_count),
+            ('condensed', condensed, record_count),
+
+            ('named_embedded_seq', named, named_record_count),
+            ('named_embedded', named_embedded, named_record_count),
+            ('named_condensed', named_condensed, named_record_count),
+
+            ('bnode_conn_free_seq', bnode, bnode_record_count),
+            ('bnode_condensed', bnode_condensed, bnode_record_count),
+        ))
+
+        irels.extend(
+            ((serialization_identity, 'hasMetadataGraph', graph),
+             (serialization_identity, 'hasMetadataGraph', combined),
+             (graph, 'hasEquivalent', combined),
+
+             (graph, 'hasMetadataRecord', embedded),
+             (embedded, 'hasCondensed', condensed),
+
+             (combined, 'hasNamedGraph', named),
+             (combined, 'hasBnodeGraph', bnode),
+             (named, 'hasNamedRecord', named_embedded),
+             (named_embedded, 'hasCondensed', named_condensed),
+             (bnode, 'hasBnodeRecord', bnode_condensed),  # XXX might miss free but dedupe should cover it?
+             # FIXME if this is not truncated then bnode_condensed
+             # will be a subgraph identity, if it is truncated then
+             # we have map metadata_graph_combined to truncated_metadata_graph_combined
+             # i think going via bound name will work
+
+             ))
+
+    yield prepare_batch('INSERT INTO names (name) VALUES', [(n,) for n in name_rows], ocdn)
+    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 8 */',
+                        idents,
+                        ocdn,)
+    yield prepare_batch('INSERT INTO name_to_identity (name, identity, type) VALUES', name_to_idents, ocdn)
+    yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
+
+
 def process_local_conventions(local_conventions, local_conventions_count, dout=None):
     local_conventions_identity = IdentityBNode(local_conventions, as_type=ibn_it['pair-seq']).identity
     dout['local_conventions_identity'] = local_conventions_identity
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 1 */',
                         (('local_conventions', local_conventions_identity, local_conventions_count),),
                         ocdn,)
-    yield prepare_batch('INSERT INTO curies (local_conventions_identity, curie_prefix, iri_prefix) VALUES',
+    yield prepare_batch('INSERT INTO curies (local_conventions_identity, curie_prefix, iri_namespace) VALUES',
                         [(p, str(n)) for p, n in local_conventions],
                         ocdn,
                         constant_dict={'si': local_conventions_identity})
@@ -1461,10 +1528,12 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
     yield None, None
 
 
-def do_process_into_session(session, process, *args, commit=False, batchsize=None, debug=False, dout=None):
+def do_process_into_session(session, process, *args, commit=False, batchsize=None, debug=False,
+                            force=False, dout=None):
     if batchsize is None:
         batchsize = _batchsize
     try:
+        stashed_error = []
         for i, (sql, params) in enumerate(process(*args, batchsize=batchsize, debug=debug, dout=dout)):
 
             if sql is None and params is None:
@@ -1475,13 +1544,23 @@ def do_process_into_session(session, process, *args, commit=False, batchsize=Non
                     log.debug(f'last savepoint sp{i}')
 
             else:
+                if stashed_error:
+                    breakpoint()
+                    # FIXME I'm sure this will pass some things that should fail
+                    msg = f'failure only allowed on final {i} > {stashed_error[0][0]}'
+                    raise ValueError(msg) from stashed_error[0][1]
+
                 try:
                     # one major advantage of yielding all the sql to be executed is that there is a single
                     # point that controls all sql execution, that alone kind of makes yielding worth it
                     session.execute(sql, params=params)
                 except Exception as e:
-                    breakpoint()
-                    raise e
+                    if force:
+                        log.exception(e)
+                        stashed_error.append((i, e))
+                        continue
+                    else:
+                        raise e
 
                 if debug and not commit:
                     session.execute(sql_text(f'savepoint sp{i}'))
@@ -1497,7 +1576,8 @@ def do_process_into_session(session, process, *args, commit=False, batchsize=Non
 
 
 #@profile_me(sort='cumtime')
-def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force=False):
+def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, force=False):
+    # FIXME TODO something with user yeah?
     if batchsize is None:
         batchsize = _batchsize
 
@@ -1519,39 +1599,22 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force
     metadata = ori.metadata()
 
     # XXX XXX XXX preamble
-    mg = metadata.graph
-    name = metadata.identifier
-    #http_resps = list(idlib.core.resolution_chain_responses(metadata.iri))
-    #http_headers = [r.headers for r in http_resps]
-    # turns out requests keeps this itself ... who knows what else I've missed
-    _http_resp = metadata.progenitor(type='stream-http')
-    http_resps = _http_resp.history + [_http_resp]
-    http_headers = [r.headers for r in http_resps]
-    names = [resp.url for resp in http_resps]
-    bound_name = metadata.identifier_bound
+    metadata.graph
     bound_version_name = metadata.identifier_version
-    metadata_graph = mg.identity()
-    # trunc first because non-trunc is impossible at this point if dangling
-    metadata_truncated_embedded = _metadata_truncated_embedded(mg)
-    metadata_truncated_condensed = _metadata_truncated_condensed(mg)
-    metadata_embedded = _metadata_embedded(mg)
-    metadata_condensed = _metadata_condensed(mg)
 
     if bound_version_name is not None:
         metadata_version = metadata.__class__(bound_version_name)
         try:
             metadata_version.graph
-            #version_http_resps = list(idlib.core.resolution_chain_responses(metadata_version.iri))
-            _version_http_resp = metadata_version.progenitor(type='stream-http')
-            version_http_resps = _version_http_resp.history + [_version_http_resp]
-            version_http_headers = [r.headers for r in version_http_resps]
-            version_names = [resp.url for resp in version_http_resps]
             metadata_to_fetch = metadata_version
+            metadata_not_to_fetch = metadata
         except requests.exceptions.HTTPError:
             metadata_to_fetch = metadata
+            metadata_not_to_fetch = None
 
     else:
         metadata_to_fetch = metadata
+        metadata_not_to_fetch = None
 
     name_to_fetch = metadata_to_fetch.identifier_actionable
     base = pathlib.Path(tempfile.tempdir) / 'interlex-load'
@@ -1566,81 +1629,20 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force
     #working_path = pathlib.Path(tempfile.mkdtemp(dir=base))  # unfriendly because of repeated fetches
     if not working_path.exists():
         working_path.mkdir(parents=True, exist_ok=True)
+
     path = working_path / pathlib.PurePath(url.path).name
     logfile = working_path / 'sysout.log'
     rapper_input_type = metadata_to_fetch.rapper_input_type()
     if rapper_input_type is None:
-        breakpoint()
-        # this will have to fail over the the regular workflow
-        raise NotImplementedError('TODO')
+        orif = OntResIri(metadata_to_fetch.iri)
+        orif.graph_next(compute_identity=True)
+        serialization_identity = orif._identity
+        sha256hex = serialization_identity.hex()
+        process_fun = process_triple_seq
+        process_args = (orif.graph, serialization_identity,
+                        metadata_to_fetch, metadata_not_to_fetch)
+
     else:
-        dout = {}
-        def post_check():
-            dout
-            te = TripleExporter()
-            out_graph = OntGraph()
-            out_graph.namespace_manager.populate_from(metadata_to_fetch.graph)
-            # potential memory issues with having two copies of the same graph around
-            rows = q.getGraphByBoundName(iri)  # FIXME this deadlocks too, wtf is going on here
-            # FIXME somehow we are hitting idle in transaction blowing through 100% cpu usage
-            # how am I deadlocking myself so much on this it is nutso ...
-
-            if debug and dout['named_count'] + dout['bnode_count'] < 1_000_000:
-                ori = OntResIri(metadata_to_fetch.iri)
-                orid = ori.graph.identity()  # FIXME for small only obviously
-                oridc = IdentityBNode(ori.graph, as_type=ibn_it['graph-combined-and-local-conventions'])
-
-                mr = [(k, oridc._if_cache[k]) for k in oridc._if_cache if idf['multi-record'] in k][-2:]
-                rs = [(k, oridc._if_cache[k]) for k in oridc._if_cache if idf['record-seq'] in k][-2:]
-
-                if dout:
-                    # named ok
-                    if rs[0][-1] != dout['graph_named_identity']:
-                        breakpoint()
-
-                    assert rs[0][-1] == dout['graph_named_identity'], 'urg'
-
-                    # bnode does not match for some reason tbd
-                    # pretty sure it is because ibn is still using
-                    # condensed to calculate for connected instead of embedding
-                    # the subject ids ...
-                    # XXX NOPE it was a super stupid bug where i had s instead of cs
-                    # thankfully my testcase had term/conn only with no link
-                    if rs[1][-1] != dout['graph_bnode_identity']:
-                        breakpoint()
-
-                    assert rs[1][-1] == dout['graph_bnode_identity'], 'urg'
-
-                # lcid at least matches :/
-                lcid = oridc._if_cache[[k for k in oridc._if_cache if idf['local-conventions'] in k][0]].hex()
-                if oridc.identity != parsedTo.tobytes():
-                    breakpoint()
-
-            if not rows:
-                # TODO need to complete querying out
-                breakpoint()
-
-            @profile_me
-            def herpderp():
-                _ = [out_graph.add(te.triple(*r)) for r in rows]  # FIXME this is insanely slow ??? why ???
-            log.debug('begin populate outgraph')
-            herpderp()
-            log.debug('end populate outgraph')
-            redout = {}
-            regen = list(process_triple_seq(out_graph, dout=redout))
-            breakpoint()
-            #loader.graph.write(Path('/tmp') / (Path(url.path).name + '.ttl'))
-            #out_graph.write(Path('/tmp') / (Path(url.path).name + '-out.ttl'))
-            log.debug('start graph ident')
-            gi = loader.graph.identity()
-            log.debug('end graph ident start out_graph ident')
-            ogi = out_graph.identity()
-            log.debug('end out_graph ident')
-            if gi != ogi:
-                breakpoint()
-
-            assert gi == ogi
-
         msg = f'ingesting {name_to_fetch} to {path} as {rapper_input_type}'
         log.debug(msg)
         (_, checksum_sha256, *_, raw_sord_path) = get_paths(path)
@@ -1657,20 +1659,100 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force
 
         sha256hex = getstr(checksum_sha256)
         serialization_identity = bytes.fromhex(sha256hex)
-        ifv = 3
-        parsedTo = already_in(session, serialization_identity, ifv)
-        if parsedTo:
-            msg = f'{name_to_fetch} -> {sha256hex} parsedTo {parsedTo.hex()} with identity function version {ifv}'
-            log.info(msg)
-            if not force:
-                return
+        process_fun = process_prepared
+        process_args = (path, serialization_identity,
+                        metadata_to_fetch, metadata_not_to_fetch,
+                        metadata_to_fetch.graph.namespace_manager, raw_sord)
 
-        # FIXME TODO the name -> serialization identity needs to go in before the load so things don't get confused
-        # and lost, same with the ser -> metadata identity etc.
+    dout = {}
+    def post_check():
+        dout
+        IdentityBNode._if_cache = {}
+        if debug and dout['named_count'] + dout['bnode_count'] < 1_000_000:
+            ori = OntResIri(metadata_to_fetch.iri)
+            orid = ori.graph.identity()  # FIXME for small only obviously
+            oridc = IdentityBNode(ori.graph, as_type=ibn_it['graph-combined-and-local-conventions'])
 
-        do_process_into_session(session, process_prepared, path, serialization_identity,
-                                metadata_to_fetch.graph.namespace_manager, raw_sord,
-                                commit=commit, batchsize=batchsize, debug=debug, dout=dout)
+            mr = [(k, oridc._if_cache[k]) for k in oridc._if_cache if idf['multi-record'] in k][-2:]
+            rs = [(k, oridc._if_cache[k]) for k in oridc._if_cache if idf['record-seq'] in k][-2:]
+
+            if dout:
+                # named ok
+                if rs[0][-1] != dout['graph_named_identity']:
+                    breakpoint()
+
+                assert rs[0][-1] == dout['graph_named_identity'], 'urg'
+
+                # bnode does not match for some reason tbd
+                # pretty sure it is because ibn is still using
+                # condensed to calculate for connected instead of embedding
+                # the subject ids ...
+                # XXX NOPE it was a super stupid bug where i had s instead of cs
+                # thankfully my testcase had term/conn only with no link
+                if rs[1][-1] != dout['graph_bnode_identity']:
+                    breakpoint()
+
+                assert rs[1][-1] == dout['graph_bnode_identity'], 'urg'
+
+            # lcid at least matches :/
+            lcid = oridc._if_cache[[k for k in oridc._if_cache if idf['local-conventions'] in k][0]].hex()
+            if parsedTo is not None and oridc.identity != parsedTo.tobytes():
+                breakpoint()
+
+
+        IdentityBNode._if_cache = {}
+
+        te = TripleExporter()
+        out_graph = OntGraph(bind_namespaces='none')
+        # potential memory issues with having two copies of the same graph around
+        local_convention_rows = q.getCuriesByBoundName(iri)
+        # FIXME these two queries need to be run together
+        # because it could happen that the latest identity
+        # could change between the two calls causing reconstruction
+        # to fail, another solution is to get the latest identity
+        # and then use it to retrieve both parts
+        graph_rows = q.getGraphByBoundName(iri)  # FIXME this deadlocks too, wtf is going on here
+        # FIXME somehow we are hitting idle in transaction blowing through 100% cpu usage
+        # how am I deadlocking myself so much on this it is nutso ...
+        if not graph_rows:
+            breakpoint()
+
+        curies = {p: n for p, n in local_convention_rows}
+        out_graph.namespace_manager.populate_from(curies)
+        @profile_me
+        def herpderp():
+            _ = [out_graph.add(te.triple(*r)) for r in graph_rows]  # FIXME this is insanely slow ??? why ???
+        log.debug('begin populate outgraph')
+        out_graph.namespace_manager.populate_from()
+        herpderp()
+        log.debug('end populate outgraph')
+        redout = {}
+        regen = list(process_triple_seq(out_graph, dout=redout))
+
+        if dout['graph_combined_identity'] != redout['graph_combined_identity']:
+            breakpoint()
+
+        assert dout['graph_combined_identity'] == redout['graph_combined_identity']
+
+        if (dout['graph_combined_local_conventions_identity'] !=
+            redout['graph_combined_local_conventions_identity']):
+            breakpoint()
+
+        assert (dout['graph_combined_local_conventions_identity'] ==
+                redout['graph_combined_local_conventions_identity'])
+
+    ### end post_check
+
+    ifv = _hbn.version
+    parsedTo = already_in(session, serialization_identity, ifv)
+    if parsedTo:
+        msg = f'{name_to_fetch} -> {sha256hex} parsedTo {parsedTo.hex()} with identity function version {ifv}'
+        log.info(msg)
+        if not force:
+            return
+
+    do_process_into_session(session, process_fun, *process_args,
+                            commit=commit, batchsize=batchsize, debug=debug, force=force, dout=dout)
 
         # TODO need to clean up shellout and stash the xz somewhere,
         # especially if we are using a ramdisk, because the in-process
@@ -1685,33 +1767,22 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=True, force
         #bound_version_name=bound_version_name,
         #user_provided_reference_name=None,)
 
+    # TODO figure out when and how we use reference names because for
+    # general ingest we don't need them, external source are identified
+    # and their various components tracked implicitly there are one or
+    # more perspectives that they might belong to but that kind of
+    # doesn't matter right now?
     reference_name = rdflib.URIRef(f'http://uri.interlex.org/base/ontologies/dns/{url.netloc}{url.path}')
-    # TODO merge in the new workflows
     post_check()
-    return
-
-    loader = FileFromIRI(user, user, reference_name)
-    try:
-        out = do_loader(loader, iri, iri, commit=commit)
-        log.debug('load done start dump')
-        # FIXME somehow a MAJOR hang while running a query here, doesn't make sense
-
-        if commit:
-            session.commit()
-        else:
-            session.rollback()
-
-    except BaseException as e:
-        session.rollback()
-        raise e
-    finally:
-        session.close()
 
 
 def main():
     user = sys.argv[1]
     uri = sys.argv[2]
-    ingest_uri(uri, user, commit=False, force=False)
+    commit = '--commit' in sys.argv
+    force = '--force' in sys.argv
+    debug = '--debug' in sys.argv
+    ingest_uri(uri, user, commit=commit, force=force, debug=debug)
 
 
 if __name__ == '__main__':

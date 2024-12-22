@@ -119,15 +119,16 @@ CREATE TABLE existing_iris(
 
 */
 CREATE TABLE names(
-       -- any uri that has ever pointed to a bound name, the set of these is quite large
+       -- any uri that has ever pointed to an identity +bound name+, the set of these is quite large
        -- even those that no longer resolve but are bound names
        -- NOTE that security/validity/trust is not managed at this level
        -- it is managed at the level of qualifiers, anyone can claim to be uberon
        -- the validity of the claim is orthogonal to the claim itself, these tables deal with the claims
        -- the best way to identify invalid claims is the enumerate them an mark them as such
        -- NOTE this table can be extended to track the current state of the resolution of a name
-       name uri PRIMARY KEY
-       -- should not be a reference name?
+       name uri PRIMARY KEY CHECK (uri_host(name) != reference_host()),
+       -- should not be a reference name? yes, TODO make sure that {group}/ontologies/ etc. do not wind up in here
+       first_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 /*  -- going to do this as a table initially
@@ -192,11 +193,12 @@ CREATE TRIGGER user_reference_name AFTER INSERT
 
 -- note to self: qualified and unqualified imports, all named based imports without identity are unqualified
 -- we distinguish here because names 'point' to more than one type of thing that we want to be able to track the history of
-CREATE TYPE named_type AS ENUM ('serialization',
+CREATE TYPE named_type AS ENUM ('empty',
+                                'serialization',
                                 --'local_naming_conventions',  -- aka curies
                                 -- bound to bound_name incidentally so they are ranked higher
                                 -- FIXME hashing bound names for this is stupid ? or is it if you have very long names
-                                'bound_name',  -- just use the string itself? might be more space efficient to hash? we will want to be able to
+                                --'bound_name',  -- just use the string itself? might be more space efficient to hash? we will want to be able to
                                          --   create name equivalences e.g. for mapping user iris to interlex iris?
                                          --   but probably not using the qualifier system... probably...
                                          --   nope, needed to track external renamings ?? we will find a use
@@ -204,7 +206,7 @@ CREATE TYPE named_type AS ENUM ('serialization',
                                          --   triple nope, names as defined in the names table sure do map to reference_names... but they might map to more than one, so quad nope
                                          --   quint nope says bound_name is in 1:1 with reference_name and need to be able to reconstruct the actual name
                                 -- 'source',  -- (name, metadata_identity, data_identity) but could be any subset of those, and we can reconstruct using the load data
-                                'metadata',  -- pairs, includes the type XXX also triples if there was a bnode ...
+
                                 'data',  -- triples s p o type + lang
                                 'subgraph', -- FIXME how is this any different from data? unnamed subgraphs
                                 'qualifier',
@@ -215,12 +217,29 @@ CREATE TYPE named_type AS ENUM ('serialization',
                                 'graph_combined_local_conventions', -- (oid local_conventions graph_combined) subClassOf ??? TODO naming
                                 'local_conventions', -- (sid ((prefix namespace) ...))
                                 --'graph', -- ill specified
-                                'graph_combined', -- (oid named_embedded_seql bnode_embedded_seql)
+                                'graph_combined', -- (oid named_embedded_seq bnode_embedded_seq)
                                 'bnode_conn_free_seq', -- this uses the named embedded identity for connected subjects and condensed identity for free subgraphs, this means that bnode_conn_free_seq cannot be calculated directly from just the bnode_condensed identities
                                 'bnode_condensed_seq', -- (sid ((us ((up uo) ...)) ...)) aka (sid (bnode-record ...)) subClassOf bnode_graph
                                 'bnode_condensed', -- (us ((us uo) ...)) subClassOf bnode_record, but does not include any named subject id, be == bc
                                 'named_embedded_seq', -- (sid ((ns ((np no) ...)) ...)) aka (sid (named-record ...)) subClassOf named_graph
-                                'named_embedded' -- (ns ((ns no) ...)) subClassOf named_record
+                                'named_embedded', -- (ns ((np no) ...)) subClassOf named_record
+                                'named_condensed', -- ((np no) ...) for consistency
+
+                                -- these are for cases where the graph is not split into named/bnode
+                                -- but where the named record and bnode record are paired and then
+                                -- identified, we don't use it for a full graph right now but we
+                                -- do use it for metadata
+                                'graph',
+                                'condensed_seq',
+                                'condensed',
+                                'embedded_seq',
+                                'embedded',
+
+                                'metadata_graph',
+                                'metadata_graph_combined',
+                                'truncated_metadata_graph', -- multi-parent shared subgraph case
+                                'truncated_metadata_graph_combined'
+
                                 -- singletion identified by hash on triple set  these are not named, that is the whole point, so they don't need to be here
                                 -- 'name-metadata' -- (name, metadata_identity)
                                 -- 'name-data' -- (name, data_identity)
@@ -275,9 +294,13 @@ CREATE TABLE identities(
        -- FIXME we will likely want an integer primary key if we start doing heavy joins over this table
        identity bytea UNIQUE, -- PRIMARY KEY,
        --version integer NOT NULL, -- TODO this needs to be tracked, it doesn't go in the primary key but is important if validating migrations i think? maybe it does go in the primary key? hrm
+       -- XXX NOTE record_count is not record as in (s ((p o) ...)) it is record as in
+       -- whatever we are counting for this type of thing, usually triples or triples + local conventions
+       -- counting (s ((p o) ...)) records is significantly more difficult and is not needed for sanity checks
        record_count integer NOT NULL, -- ok to be zero for bound_name
        reference_name uri,
        type named_type NOT NULL,
+       first_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, -- XXX I think this is the best way to ensure that we can always have some basis for versioning even if everything else fails, we can have another table with extra info for versioning, but this should also vastly simplify versioning for records as well when we go to join/merge into a particular perspective
        /* -- uh ... this check was doing nothing ???
        CHECK (reference_name IS     NULL AND type = 'subgraph' OR
               reference_name IS NOT NULL AND type = 'subgraph' OR
@@ -297,12 +320,21 @@ CREATE TABLE identities(
 );
 
 CREATE INDEX identities_identity_index ON identities (identity);
+CREATE INDEX identities_first_seen_index ON identities (first_seen);
 
+/*
+name_to_identity is a many to many table, it is not a prov table
+its purpose is to make it possible to get from any name that we
+have seen to the set of identities that it has been observed to
+resolve to, or is bound to
+*/
+CREATE TYPE name_type AS ENUM ('bound', 'bound_version', 'pointer');
 CREATE TABLE name_to_identity(
        -- as opposed to hashing names
        name uri,
        identity bytea,  -- usually should point to a serialization
-       CONSTRAINT pk__name_to_identity PRIMARY KEY (name, identity),
+       type name_type, -- FIXME will need a way to verify that bound and bound_version are true
+       CONSTRAINT pk__name_to_identity PRIMARY KEY (name, identity, type),
        CONSTRAINT fk__name_to_identity__name__names
                   FOREIGN key (name)
                   REFERENCES names (name) match simple,
@@ -346,8 +378,17 @@ CREATE TYPE identity_relation AS ENUM (
        'hasPart',
        'dereferencedTo',
        'parsedTo', -- serialization -> graph_and_local_conventions
-       'hasLocalConventions', -- graph_and_local_conventions - local_conventions
-       'hasGraph', -- graph_and_local_conventions - graph
+
+       'hasEquivalent', -- use to assert that two different ids produced via different methods identify the same underlying source
+
+       'hasMetadataGraph', -- ser -> meta (aka 'hasMetadata', but better to match conventions)
+       'hasMetadataRecord', -- metadata_graph -> metadata_record
+
+       'hasCondensed', -- embedded -> condensed (currently used for metadata to e.g. id unchanged metadata)
+
+       'hasLocalConventions', -- graph_and_local_conventions -> local_conventions
+       'hasGraph', -- graph_and_local_conventions -> graph
+       'hasRecord', -- graph -> record (untyped)
        'hasBnodeGraph', -- graph -> bnode_graph
        'hasBnodeRecord', -- bnode_graph -> bnode_record
        'hasNamedGraph', -- graph -> named_graph XXX note that this is NOT the RDF named graph
@@ -615,17 +656,25 @@ CREATE TABLE load_events(
        -- gives the reference_names for the parts of a serialization, usually we go the other way
        -- SELECT * FROM reference_names AS ref JOIN identity_relations AS rel JOIN load_events AS e ON ref.identity = rel.o AND rel.s = e.serialization_identity WHERE rel.p = 'hasPart' AND datetime < some_time;
        id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-       serialization_identity bytea NOT NULL,
+       serialization_identity bytea,  -- FIXME not all load events have serializations
+       non_ser_load_iri uri,
        -- identity bytea NOT NULL,  -- TODO trigger check on data and metadata
-       group_id integer NOT NULL, -- from /<user>/path-to-reference-name
-       user_id integer NOT NULL, -- from the api key mapping
-       datetime timestamp DEFAULT CURRENT_TIMESTAMP,
-       CONSTRAINT un__load_events__ident_group_id UNIQUE (serialization_identity, group_id), -- possibly redundent?
+       group_id integer NOT NULL, -- from /<user>/path-to-reference-name AND from api key mapping, they must match, merge records will have them separate but NOT load records
+       --user_id integer NOT NULL, -- from the api key mapping
+       datetime timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+       CHECK ((serialization_identity IS NOT NULL AND non_ser_load_iri IS     NULL) OR
+              (serialization_identity IS     NULL AND non_ser_load_iri IS NOT NULL)),
+       CONSTRAINT un__load_events__ident_group_id UNIQUE (serialization_identity, group_id), -- possibly redundent? FIXME also allows multiple groups to upload the same serialization which is bad maybe?
        CONSTRAINT fk__load_events__ident__identities
                   FOREIGN KEY (serialization_identity)
                   REFERENCES identities (identity)
 );
 
+/* -- pretty sure this is broken and we don't need/want this anymore
+-- the issue is that qualifiers were rolling for the whole group
+-- but i don't think this even did that correctly, and if all we
+-- care about is temporal relations then we don't need those
+-- qualifiers anyway
 CREATE FUNCTION load_event_to_qualifier() RETURNS trigger AS $$
        BEGIN
            INSERT INTO qualifiers (identity, group_id, previous_qualifier_id)
@@ -642,6 +691,7 @@ $$ language plpgsql;
 
 CREATE TRIGGER load_event_to_qualifier BEFORE INSERT ON load_events
        FOR EACH ROW EXECUTE PROCEDURE load_event_to_qualifier();
+*/
 
 /*
 CREATE TABLE load_processes(

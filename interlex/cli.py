@@ -11,7 +11,7 @@ Usage:
     interlex post ontology [options] <ontology-filename> ...
     interlex post triples  [options] (<reference-name> <triples-filename>) ...
     interlex post curies   [options] [<curies-filename>]
-    interlex post curies   [options] (<curie-prefix> <iri-prefix>) ...
+    interlex post curies   [options] (<curie-prefix> <iri-namespace>) ...
     interlex post resource [options] <rdf-iri>
     interlex post class    [options] <rdfs:subClassOf> <rdfs:label> [<definition:>] [<synonym:> ...]
     interlex post entity   [options] <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>] [<synonym:> ...]
@@ -336,7 +336,7 @@ class Post(clif.Dispatcher):
         elif self.options.curie_prefix:
             # FIXME curie syntax validation? in the db?
             data = {cp:ip for cp, ip in zip(self.options.curie_prefix,
-                                            self.options.iri_prefix)}
+                                            self.options.iri_namespace)}
             resp = requests.post(url, json=data, headers=headers)
 
         else:

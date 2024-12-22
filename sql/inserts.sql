@@ -182,6 +182,9 @@ UPDATE users SET orcid_validated = TRUE WHERE id = idFromGroupname('tgbugs'); --
 
 INSERT INTO user_permissions VALUES (0, idFromGroupname('tgbugs'), 'admin');
 
+-- need the null identity in to avoid conficts
+INSERT INTO identities (identity, type, record_count) VALUES (digest('', 'sha256'), 'empty', 0);
+
 -- sources
 -- INSERT INTO source_triples VALUES (E'\\x00', 0, 0);
 -- INSERT INTO source_serialization VALUES (E'\\x00', E'\\x00');

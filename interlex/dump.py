@@ -709,10 +709,10 @@ class Queries:
         params = dict(group=group)
         if epoch_verstr is not None:
             # TODO
-            sql = ('SELECT curie_prefix, iri_prefix FROM curies as c '
+            sql = ('SELECT curie_prefix, iri_namespace FROM curies as c '
                     'WHERE c.group_id = idFromGroupname(:group)')
         else:
-            sql = ('SELECT curie_prefix, iri_prefix FROM curies as c '
+            sql = ('SELECT curie_prefix, iri_namespace FROM curies as c '
                     'WHERE c.group_id = idFromGroupname(:group)')  # FIXME idFromGroupname??
         resp = self.session_execute(sql, params)
         PREFIXES = {cp:ip for cp, ip in resp}
@@ -828,8 +828,36 @@ class Queries:
         # XXX this should probably not be used, there should be a join variant that will properly attach the replicas for the given identity and produce ALL the duplicated triples in a single pass
         args = dict(identity=identity)
         sql = '''
-        select * from subgraph_replicas where data_or_metadata_identity = :identity
+        select * from subgraph_replicas where graph_bnode_identity = :identity
         '''
+        resp = list(self.session_execute(sql, args))
+        return resp
+
+    def getCuriesByBoundName(self, bound_name):
+        args = dict(bound_name=bound_name)
+        sql = '''
+with ser_idtys as (
+  select ids.identity
+  from identities as ids
+  join name_to_identity as nti on nti.identity = ids.identity
+  where ids.type = 'serialization' and nti.type = 'bound' and nti.name::text = :bound_name
+  order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
+), gclc_idtys as (
+  select irs.o
+  from identity_relations as irs
+  join identities as ids on irs.o = ids.identity
+  where irs.p = 'parsedTo' and(ids.type = 'graph_combined_local_conventions') and irs.s in (select * from ser_idtys)
+), lc_idtys as (
+  select irs.o
+  from identity_relations as irs
+  join identities as ids on irs.o = ids.identity
+  where irs.p = 'hasLocalConventions' and(ids.type = 'local_conventions') and irs.s in (select * from gclc_idtys)
+)
+select c.curie_prefix, c.iri_namespace
+from curies as c
+where c.local_conventions_identity in (select * from lc_idtys)
+
+'''
         resp = list(self.session_execute(sql, args))
         return resp
 
@@ -839,65 +867,62 @@ class Queries:
         # if we ran this once there were multiple identities pulled in we would serialize all versions into a single file
 
         args = dict(bound_name=bound_name)
-        # TODO currently a first pass, we will need a separate query to subgraph_replicas to deal with the non-injective issues but it it is 
-        # FIXME TODO actually there might be a not completely horrible way to achieve this by using some join variant so that all the subgraph
-        # rows duplicate themselves per replica ... actually we should definitely be able to do that ...
         sql = '''
 with ser_idtys as (
-  select identity
+  select ids.identity
   from identities as ids
-  join reference_names as rns on rns.name = ids.reference_name
-  where ids.type = 'serialization' and rns.expected_bound_name = :bound_name
-), metadata_idtys as (
+  join name_to_identity as nti on nti.identity = ids.identity
+  where ids.type = 'serialization' and nti.type = 'bound' and nti.name::text = :bound_name
+  order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
+), gclc_idtys as (
   select irs.o
   from identity_relations as irs
   join identities as ids on irs.o = ids.identity
-  where (ids.type = 'metadata') and irs.s in (select * from ser_idtys)
-), data_idtys as (
+  where irs.p = 'parsedTo' and(ids.type = 'graph_combined_local_conventions') and irs.s in (select * from ser_idtys)
+), gc_idtys as (
   select irs.o
   from identity_relations as irs
   join identities as ids on irs.o = ids.identity
-  where (ids.type = 'data') and irs.s in (select * from ser_idtys)
+  where irs.p = 'hasGraph' and(ids.type = 'graph_combined') and irs.s in (select * from gclc_idtys)
+), named_idtys as (
+  select irs.o
+  from identity_relations as irs
+  join identities as ids on irs.o = ids.identity
+  where irs.p = 'hasNamedGraph' and(ids.type = 'named_embedded_seq') and irs.s in (select * from gc_idtys)
+), bnode_idtys as (
+  select irs.o
+  from identity_relations as irs
+  join identities as ids on irs.o = ids.identity
+  where irs.p = 'hasBnodeGraph' and (ids.type = 'bnode_conn_free_seq') and irs.s in (select * from gc_idtys)
 ), subgraph_idtys as (
   select irs.o
   from identity_relations as irs
   join identities as ids on irs.o = ids.identity
   where
-  ids.type = 'subgraph' and
-  irs.s in (select * from ser_idtys)
+  irs.p = 'hasBnodeRecord' and
+  ids.type = 'bnode_condensed' and
+  irs.s in (select * from bnode_idtys)
 )
---select * from subgraph_idtys
 
 select
--- t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica
-   t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica, null::bytea as object_subgraph_identity, null::integer as object_replica
-from identity_named_triples_ingest as inti
-join triples as t on inti.triple_identity = t.triple_identity
-where inti.subject_embedded_identity in (select * from metadata_idtys)
-
-UNION
-
-select
--- t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica
-   t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica, null::bytea as object_subgraph_identity, null::integer as object_replica
+t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica, null::bytea as object_subgraph_identity, null::integer as object_replica
 from identity_relations as ird
-join identity_named_triples_ingest as inti on ird.o = inti.subject_embedded_identity
+join identity_named_triples_ingest as inti on ird.o = inti.named_embedded_identity
 join triples as t on inti.triple_identity = t.triple_identity
-where ird.s in (select * from data_idtys)
+where ird.p = 'hasNamedRecord' and ird.s in (select * from named_idtys)
 
 UNION
 
 select
--- t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, sr.replica as subgraph_replica
-   t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, sr.replica as subgraph_replica, sd.object_subgraph_identity, sd.object_replica
+t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, sr.replica as subgraph_replica, sd.object_subgraph_identity, sd.object_replica
 from triples as t
 join subgraph_replicas as sr on sr.subgraph_identity = t.subgraph_identity and (t.s is null or (sr.p = t.p and (sr.s = t.s or sr.s_blank = t.s_blank)))
 left outer join subgraph_deduplication as sd on sd.subject_subgraph_identity = sr.subgraph_identity and sd.subject_replica = sr.replica and sd.o_blank = t.o_blank
 where
 t.subgraph_identity in (select * from subgraph_idtys)
-and (sr.data_or_metadata_identity in (select * from metadata_idtys) or sr.data_or_metadata_identity in (select * from data_idtys))
+and (sr.graph_bnode_identity in (select * from bnode_idtys))
 
-        '''
+'''
         resp = list(self.session_execute(sql, args))
         return resp
 

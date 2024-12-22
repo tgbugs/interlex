@@ -250,8 +250,8 @@ class GraphIdentities:
         if self._curies is None:
             self._curies = tuple(sorted(
                 #(locally_unique_prefix, globally_unique_prefix)
-                (curie_prefix, iri_prefix)
-                for curie_prefix, iri_prefix in self.graph.namespaces()
+                (curie_prefix, iri_namespace)
+                for curie_prefix, iri_namespace in self.graph.namespaces()
             ))  # FIXME uniqueness :/
 
         return self._curies
@@ -1083,10 +1083,10 @@ class GraphLoader(GraphIdentities):
             c = []
             # FIXME serialization_identity is not always present if triples never passed through
             # a definite serialized form, fortunately
-            to_insert = {'serialization_identity, curie_prefix, iri_prefix':c}
+            to_insert = {'serialization_identity, curie_prefix, iri_namespace':c}
             to_fix = {}
-            for curie_prefix, iri_prefix in sorted(self.curies):  # FIXME ordering issue
-                c.append((serialization_identity, curie_prefix, iri_prefix))
+            for curie_prefix, iri_namespace in sorted(self.curies):  # FIXME ordering issue
+                c.append((serialization_identity, curie_prefix, iri_namespace))
 
             yield 'INSERT INTO curies', '', to_insert, to_fix
 

@@ -30,7 +30,7 @@ else
     DATABASE=$2
 fi
 
-echo running dbsetup for ${DATABASE}
+echo running dbsetup for ${DATABASE} on ${PORT}
 
 # postgres setup (these need to fail loudly)
 psql -U postgres -h localhost -p ${PORT} -d postgres  -f "${SQL}/postgres.sql" -v ON_ERROR_STOP=on -v database=$DATABASE
