@@ -21,7 +21,7 @@ import requests
 from rdflib.exceptions import ParserError as ParseError
 from rdflib.plugins.parsers import ntriples as nt
 from sqlalchemy.sql import text as sql_text
-from ttlser.serializers import natsort
+from ttlser.serializers import natsort, CustomTurtleSerializer
 from pyontutils.core import OntGraph, OntResIri
 from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import owl
@@ -53,6 +53,41 @@ log = log.getChild('ingest')
 ocdn = 'ON CONFLICT DO NOTHING'
 
 _batchsize = 20000  # good enough, could profile more to tune better
+
+
+# various rdflib behavior fixes to avoid normalization
+
+# we set normlit false here and not in core because we only need the
+# assurances during parsing and loading into interlex
+rdflib.NORMALIZE_LITERALS = False
+
+
+class AllPredicates:
+    def __contains__(self, other):
+        return True
+
+
+CustomTurtleSerializer.no_reorder_list = AllPredicates()  # FIXME put this somewhere else
+CustomTurtleSerializer.symmetric_predicates = []
+
+
+class no_lower(str):
+    def lower(self):
+        # for when you really need to make sure no one can downcase
+        return self
+
+
+def _nonorm__new__(cls, *args, normalize=False, **kwargs):
+    # FIXME TODO check perf overhead of doing it this way
+    inst = rdflib.Literal._norm__new__(cls, *args, normalize=normalize, **kwargs)
+    if inst._language is not None:
+        inst._language = no_lower(inst._language)
+
+    return inst
+
+
+rdflib.Literal._norm__new__ = rdflib.Literal.__new__
+rdflib.Literal.__new__ = _nonorm__new__
 
 
 class BCTX:
@@ -142,7 +177,7 @@ def normalize(cmax, t, existing, sgid, replica):#, subgraph_and_integer, subgrap
     yield cmax
 
 
-def normgraph(head_subject, subgraph, sgid, replica, subject_condensed_idents, secondaries):#, subgraph_integer, subgraph_object_dupes):
+def normgraph(head_subject, subgraph, sgid, replica, subject_condensed_idents, bnode_replicas):
     """ replace the bnodes with local integers inside the graph """
     _osg = subgraph
     try:
@@ -153,7 +188,6 @@ def normgraph(head_subject, subgraph, sgid, replica, subject_condensed_idents, s
 
     subgraph = list(g.subject_triples(head_subject))  # FIXME isn't this redundant ????
 
-    cmax = 0
 
     #if head_subject in subgraph_and_integer:
     #    # we hit this because there are cases where nodes can
@@ -165,15 +199,18 @@ def normgraph(head_subject, subgraph, sgid, replica, subject_condensed_idents, s
     #    subgraph_object_dupes[head_subject, e_sgid] = e_replica, e_cmax
 
     #subgraph_and_integer[head_subject] = sgid, replica, cmax
-    existing = {head_subject:0}  # FIXME the head of a list is arbitrary :/
+    if isinstance(head_subject, rdflib.BNode):
+        cmax = 0
+        existing = {head_subject: cmax}
+    else:
+        cmax = -1
+        existing = {}
+
     normalized = []
     for trip in sorted(subgraph, key=sortkey):
         s, p, o = trip
         if o == head_subject:
-            if not isinstance(o, rdflib.BNode):
-                #printD(tc.red('Yep working'), trip, o)
-                continue  # this has already been entered as part of data_unnamed
-            else:
+            if isinstance(o, rdflib.BNode):
                 # this branch happens e.g. if the subgraph is malformed
                 # and e.g. contains other bits of graph that e.g. have
                 # head_subject in the object position because they are
@@ -181,16 +218,20 @@ def normgraph(head_subject, subgraph, sgid, replica, subject_condensed_idents, s
                 # this particular example is avoided above via subject_triples
                 breakpoint()
                 raise TypeError('This should never happen!')
+            else:
+                # already entered as part of data_unnamed
+                continue
 
-        *ntrip, cmax = normalize(cmax, trip, existing, sgid, replica)#, subgraph_and_integer)
+        *ntrip, cmax = normalize(cmax, trip, existing, sgid, replica)
 
         o_scid, o_replica = None, None
         if isinstance(o, rdflib.BNode):
-            o_scid = subject_condensed_idents[o]  # o has to be in already due to toposort
-            if o_scid in secondaries:
-                o_replica = secondaries[o_scid]
+            # o guranteed to be in already due to toposort
+            o_scid = subject_condensed_idents[o]
+            if o in bnode_replicas:
+                o_replica = bnode_replicas[o]
 
-        normalized.append((*ntrip, o_scid, o_replica))  # XXX o_ind sould always be zero in these cases
+        normalized.append((*ntrip, o_scid, o_replica))
 
     return tuple(normalized)
 
@@ -984,11 +1025,10 @@ def process_bnode(
     waiting_link = defaultdict(list)
     waiting_conn = defaultdict(list)
     transitive_trips = defaultdict(list)
-    pair_idents = {}
     subject_idents = defaultdict(list)
     subject_condensed_idents = {}
     condensed_counts = defaultdict(lambda: -1)
-    accum_embedded = []  # this is for the graph bnode identity
+    accum_embedded = []  # this is for the graph bnode identity, list because free subgraphs can be duplicated
     accum_condensed = set() # this is for the irels table, slightly different from accum condensed
 
     batch_term_uri_rows = []
@@ -997,7 +1037,7 @@ def process_bnode(
     batch_conn_rows = []
     batch_idents = []
 
-    secondaries = {}
+    bnode_replicas = {}
     replica_helper = set()
     dedupe_helper = set()
 
@@ -1032,26 +1072,27 @@ def process_bnode(
         subgraph = transitive_trips.pop(s)
         batch_idents.append((scid, len(subgraph)))
         accum_condensed.add(scid)
-        ng = normgraph(s, subgraph, scid, replica, subject_condensed_idents, secondaries)
-        for n_s, _n_p, n_o, o_scid, o_replica in ng:#, subgraph_integer, subgraph_object_dupes):
+        ng = normgraph(s, subgraph, scid, replica, subject_condensed_idents, bnode_replicas)
+        for n_s, _n_p, n_o, o_scid, o_replica in ng:
             n_p = str(_n_p)
             rows = None
             if isinstance(n_s, rdflib.URIRef):
                 n_s = str(n_s)
                 rows = batch_conn_rows
 
-            if n_s == 0:
-                if rows is None:
-                    rhr = (None, n_s, n_p, scid, replica)
+            if n_s == 0 or rows is not None and n_o == 0:
+                # we track the replicas at the conn/free head
+                if rows is None:  # s_blank case
+                    rhr = (None, None, scid, replica)
                 else:
-                    rhr = (n_s, None, n_p, scid, replica)
+                    rhr = (n_s, n_p, scid, replica)
 
-                # replica_helper must be a set because if a value is present as a subject in multiple
-                # triples then the rh will be generated multiple times
+                # replica_helper must be a set because if a value is
+                # present as a subject in multiple triples then the rh
+                # will be generated multiple times
                 replica_helper.add(rhr)
 
-            if o_scid:
-                # same for dedupe helper, the value will be generated multiple times
+            if o_scid and o_scid != scid:
                 dedupe_helper.add((scid, replica, n_o, o_scid, o_replica))
 
             if isinstance(n_o, int):
@@ -1132,9 +1173,12 @@ def process_bnode(
                         tstoc = total_object_count(ts)
                         if tstoc > 1 or tstoc == 0:
                             accum_embedded.append(tscid)
-                            make_subgraph_rows(ts, tscid, treplica)
 
-                        secondaries[tscid] = treplica  # we don't know if we will need this because it depends on the hash
+                        make_subgraph_rows(ts, tscid, treplica)
+                        if tscid not in bnode_replicas:
+                            # we don't know if we will need this
+                            # because it depends on the hash
+                            bnode_replicas[ts] = treplica
 
                     break
 
@@ -1213,9 +1257,9 @@ def process_bnode(
                     stoc = total_object_count(s)
                     if stoc > 1 or stoc == 0:
                         accum_embedded.append(scid)
-                        make_subgraph_rows(s, scid, replica)
 
-                    secondaries[scid] = replica  # we don't know if we will need this because it depends on the hash
+                    make_subgraph_rows(s, scid, replica)
+                    bnode_replicas[s] = replica
                     break
 
         if subject in conn_bnode_object_counts:
@@ -1247,27 +1291,17 @@ def process_bnode(
                 pair_identity = oid(oid(cp.encode()), subject_condensed_idents[co])
                 subject_idents[cs].append(pair_identity)
 
+                cosci = subject_condensed_idents[co]
+                creplica = bnode_replicas[co]
+                make_subgraph_rows(cs, cosci, creplica)
                 if conn_seen_s[cs] == conn_named_subject_counts[cs]:
-                    # subject_embedded_idents[cs]
                     cscid = subject_condensed_idents[cs] = sid(subject_idents.pop(cs))
-                    condensed_counts[cscid] += 1
-                    creplica = condensed_counts[cscid]
                     cseid = oid(oid(cs.encode()), cscid)
-                    accum_embedded.append(cseid)  # FIXME may want to differentiate these from bnode only
-                    make_subgraph_rows(cs, cscid, creplica)
+                    accum_embedded.append(cseid)
 
                 if conn_seen_o[co] == conn_bnode_object_counts[co]:
                     break
 
-            # not needed for conn, because we just need to fill in the subgraph
-            #if o in transitive_trips:  # might not be in if dangle
-            #    # FIXME TODO 
-            #    if ocounts[o] > 1:
-            #        ott = transitive_trips[o]
-            #    else:
-            #        ott = transitive_trips.pop(o)
-
-            #    transitive_trips[s].extend(ott)
         if actual_count < min_expected_count:
             # derp
             breakpoint()
@@ -1316,9 +1350,14 @@ def process_bnode(
                                 constant_dict={'p': 'hasBnodeRecord', 's': graph_bnode_identity})
 
     if replica_helper:
+        # ;_: we can't get rid of single replica cases becuase we use
+        # replicas to close the set of conn triples that are in the
+        # graph this means we need replicas for every free/conn head
+        # the alternative is doubling the number of bnode records in
+        # the identities table to include embedded as well
         for chunk in chunk_list(list(replica_helper), batchsize):
             yield prepare_batch(('INSERT INTO subgraph_replicas (graph_bnode_identity, '
-                                's, s_blank, p, subgraph_identity, replica) VALUES'),
+                                's, p, subgraph_identity, replica) VALUES'),
                                 chunk, ocdn,
                                 constant_dict={'graph_bnode_identity': graph_bnode_identity})
 
@@ -1334,14 +1373,6 @@ def process_bnode(
     dout['graph_bnode_identity'] = graph_bnode_identity
     yield None, None
     log.debug('done process_bnode')
-
-
-def process_conn(scounts, ocounts, sseen, oseen, gen, transitive_trips, ):
-    pass
-
-
-def do_batch_insert_identity_relations(identity_relations):
-    breakpoint()
 
 
 def str_None(thing):
@@ -1600,6 +1631,7 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
 
     # XXX XXX XXX preamble
     metadata.graph
+    bound_name = metadata.identifier_bound
     bound_version_name = metadata.identifier_version
 
     if bound_version_name is not None:
@@ -1667,36 +1699,40 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
     dout = {}
     def post_check():
         dout
+        bound_name
+        bound_version_name
+        name_to_fetch
         IdentityBNode._if_cache = {}
-        if debug and dout['named_count'] + dout['bnode_count'] < 1_000_000:
+        triple_count = dout['named_count'] + dout['bnode_count']
+        if debug and triple_count < 1_000_000:
             ori = OntResIri(metadata_to_fetch.iri)
             orid = ori.graph.identity()  # FIXME for small only obviously
             oridc = IdentityBNode(ori.graph, as_type=ibn_it['graph-combined-and-local-conventions'])
+            ori.graph.write('/tmp/debug-1.ttl')
 
-            mr = [(k, oridc._if_cache[k]) for k in oridc._if_cache if idf['multi-record'] in k][-2:]
-            rs = [(k, oridc._if_cache[k]) for k in oridc._if_cache if idf['record-seq'] in k][-2:]
+            rs_named = oridc._if_cache[(ori.graph, 'named'), idf['record-seq']]
+            rs_bnode = oridc._if_cache[(ori.graph, 'bnode'), idf['record-seq']]
+            rs_gc = oridc._if_cache[ori.graph, idf['graph-combined']]
+            rs_lc = oridc._if_cache[ori.graph.namespace_manager, idf['local-conventions']]
+            rs_gclc = oridc._if_cache[ori.graph, idf['graph-combined-and-local-conventions']]
 
-            if dout:
-                # named ok
-                if rs[0][-1] != dout['graph_named_identity']:
+            if dout and False:
+                if rs_named != dout['graph_named_identity']:
                     breakpoint()
 
-                assert rs[0][-1] == dout['graph_named_identity'], 'urg'
+                assert rs_named == dout['graph_named_identity'], 'urg'
 
-                # bnode does not match for some reason tbd
-                # pretty sure it is because ibn is still using
-                # condensed to calculate for connected instead of embedding
-                # the subject ids ...
-                # XXX NOPE it was a super stupid bug where i had s instead of cs
-                # thankfully my testcase had term/conn only with no link
-                if rs[1][-1] != dout['graph_bnode_identity']:
+                if rs_bnode != dout['graph_bnode_identity']:
                     breakpoint()
 
-                assert rs[1][-1] == dout['graph_bnode_identity'], 'urg'
+                assert rs_bnode == dout['graph_bnode_identity'], 'urg'
 
-            # lcid at least matches :/
-            lcid = oridc._if_cache[[k for k in oridc._if_cache if idf['local-conventions'] in k][0]].hex()
+                assert rs_gc == dout['graph_combined_identity'], 'urg'
+                assert rs_lc == dout['local_conventions_identity'], 'urg'
+                assert rs_gclc == dout['graph_combined_local_conventions_identity'], 'urg'
+
             if parsedTo is not None and oridc.identity != parsedTo.tobytes():
+                ptb = parsedTo.tobytes()
                 breakpoint()
 
 
@@ -1705,15 +1741,21 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
         te = TripleExporter()
         out_graph = OntGraph(bind_namespaces='none')
         # potential memory issues with having two copies of the same graph around
-        local_convention_rows = q.getCuriesByBoundName(iri)
+
+        if iri != bound_name:
+            name_to_check = iri
+            type_to_check = 'pointer'
+        else:
+            name_to_check = bound_name
+            type_to_check = 'bound'
+
+        local_convention_rows = q.getCuriesByName(name=name_to_check, type=type_to_check)
         # FIXME these two queries need to be run together
         # because it could happen that the latest identity
         # could change between the two calls causing reconstruction
         # to fail, another solution is to get the latest identity
         # and then use it to retrieve both parts
-        graph_rows = q.getGraphByBoundName(iri)  # FIXME this deadlocks too, wtf is going on here
-        # FIXME somehow we are hitting idle in transaction blowing through 100% cpu usage
-        # how am I deadlocking myself so much on this it is nutso ...
+        graph_rows = q.getGraphByName(name=name_to_check, type=type_to_check)
         if not graph_rows:
             breakpoint()
 
@@ -1726,6 +1768,12 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
         out_graph.namespace_manager.populate_from()
         herpderp()
         log.debug('end populate outgraph')
+
+        if len(graph_rows) != triple_count:
+            breakpoint()
+
+        assert len(graph_rows) == triple_count
+
         redout = {}
         regen = list(process_triple_seq(out_graph, dout=redout))
 

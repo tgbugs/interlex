@@ -602,11 +602,15 @@ class TripleExporter:
     def star_triple(self, id, s, s_blank, p, o, o_lit, o_blank, datatype, language, subgraph_identity):
         return self.triple(s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity)
 
-    def nt(self, id, s, s_blank, p, o, o_lit, o_blank, datatype, language, subgraph_identity):
+    def nt(self, id, s, s_blank, p, o, o_lit, o_blank, datatype, language, subgraph_identity,
+           subgraph_replica=None, object_subgraph_identity=None, object_replica=None):
         """ For dump. """
         if subgraph_identity is not None:
             if subgraph_identity not in self.subgraph_identities:
-                self.subgraph_identities[subgraph_identity] = self.subgraph_counter
+                if self.use_hex:
+                    self.subgraph_identities[subgraph_identity] = subgraph_identity.hex()
+                else:
+                    self.subgraph_identities[subgraph_identity] = self.subgraph_counter
 
             si = 'sg_' + str(self.subgraph_identities[subgraph_identity])
 
@@ -633,20 +637,34 @@ class TripleExporter:
 
         return s + p + o + b'.\n'
 
+    use_hex = False
     def triple(self, s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity,
                subgraph_replica=None, object_subgraph_identity=None, object_replica=None):
         if subgraph_identity is not None:
             if subgraph_identity not in self.subgraph_identities:
-                self.subgraph_identities[subgraph_identity] = self.subgraph_counter
+                if self.use_hex:
+                    self.subgraph_identities[subgraph_identity] = subgraph_identity.hex()
+                else:
+                    self.subgraph_identities[subgraph_identity] = self.subgraph_counter
 
             if subgraph_replica is None:
                 # FIXME TODO temp for backward compat, but most queries need to switch over
-                subgraph_replica = 0
+                # use n instead of zero to make it easier to detect cases where
+                # non-replicated are pulled in, we don't have to worry about doubly
+                # replicated cases because those can currently be differentiated by
+                # the graph bnode
+
+                # THERE CAN BE ONLY NONE
+                subgraph_replica = 'n'
 
             si = 'sg_' + str(self.subgraph_identities[subgraph_identity]) + '_' + str(subgraph_replica)
             if object_subgraph_identity is not None:
-                if object_subgraph_identity not in self.subgraph_identities:  # can't assume that the object subgraph will always be in first
-                    self.subgraph_identities[object_subgraph_identity] = self.subgraph_counter
+                if object_subgraph_identity not in self.subgraph_identities:
+                    # can't assume that the object subgraph will always be in first
+                    if self.use_hex:
+                        self.subgraph_identities[object_subgraph_identity] = object_subgraph_identity.hex()
+                    else:
+                        self.subgraph_identities[object_subgraph_identity] = self.subgraph_counter
 
                 oi = 'sg_' + str(self.subgraph_identities[object_subgraph_identity]) + '_' + str(object_replica)
             else:
@@ -833,14 +851,14 @@ class Queries:
         resp = list(self.session_execute(sql, args))
         return resp
 
-    def getCuriesByBoundName(self, bound_name):
-        args = dict(bound_name=bound_name)
+    def getCuriesByName(self, name, type='bound'):
+        args = dict(name=name, type=type)
         sql = '''
 with ser_idtys as (
   select ids.identity
   from identities as ids
   join name_to_identity as nti on nti.identity = ids.identity
-  where ids.type = 'serialization' and nti.type = 'bound' and nti.name::text = :bound_name
+  where ids.type = 'serialization' and nti.type = :type and nti.name::text = :name
   order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
 ), gclc_idtys as (
   select irs.o
@@ -861,18 +879,18 @@ where c.local_conventions_identity in (select * from lc_idtys)
         resp = list(self.session_execute(sql, args))
         return resp
 
-    def getGraphByBoundName(self, bound_name):
+    def getGraphByName(self, name, type='bound'):
         # defaults to latest probably
         # FIXME need to do a query to get the latest first and then call getGraphByIdentity instead of the direct way we do it here, but this is ok for now
         # if we ran this once there were multiple identities pulled in we would serialize all versions into a single file
 
-        args = dict(bound_name=bound_name)
+        args = dict(name=name, type=type)
         sql = '''
 with ser_idtys as (
   select ids.identity
   from identities as ids
   join name_to_identity as nti on nti.identity = ids.identity
-  where ids.type = 'serialization' and nti.type = 'bound' and nti.name::text = :bound_name
+  where ids.type = 'serialization' and nti.type = :type and nti.name::text = :name
   order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
 ), gclc_idtys as (
   select irs.o
@@ -902,6 +920,12 @@ with ser_idtys as (
   irs.p = 'hasBnodeRecord' and
   ids.type = 'bnode_condensed' and
   irs.s in (select * from bnode_idtys)
+), reps as (
+  select * from subgraph_replicas as sr1
+  where sr1.graph_bnode_identity in (select * from bnode_idtys)
+), deds as (
+  select * from subgraph_deduplication as sd1
+  where sd1.graph_bnode_identity in (select * from bnode_idtys)
 )
 
 select
@@ -914,13 +938,12 @@ where ird.p = 'hasNamedRecord' and ird.s in (select * from named_idtys)
 UNION
 
 select
-t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, sr.replica as subgraph_replica, sd.object_subgraph_identity, sd.object_replica
-from triples as t
-join subgraph_replicas as sr on sr.subgraph_identity = t.subgraph_identity and (t.s is null or (sr.p = t.p and (sr.s = t.s or sr.s_blank = t.s_blank)))
-left outer join subgraph_deduplication as sd on sd.subject_subgraph_identity = sr.subgraph_identity and sd.subject_replica = sr.replica and sd.o_blank = t.o_blank
-where
-t.subgraph_identity in (select * from subgraph_idtys)
-and (sr.graph_bnode_identity in (select * from bnode_idtys))
+t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, sr.replica as subgraph_replica , sd.object_subgraph_identity, sd.object_replica
+from subgraph_idtys as si
+join triples as t on si.o = t.subgraph_identity
+-- NOTE join reps -> all replicas, left join reps -> none with risk of extra conn trips
+join reps as sr on sr.subgraph_identity = t.subgraph_identity and ((t.s is null and sr.s is null) or (sr.s = t.s and sr.p = t.p))
+left join deds as sd on sd.subject_subgraph_identity = sr.subgraph_identity and sd.subject_replica = sr.replica and sd.o_blank = t.o_blank
 
 '''
         resp = list(self.session_execute(sql, args))
