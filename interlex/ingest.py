@@ -3,7 +3,7 @@ load directly to db from a uri
 run as a shell script in a subprocess to avoid lxml memory leak issues >_<
 """
 
-import gc
+import re
 import os
 import sys
 import signal
@@ -564,6 +564,10 @@ def mkgen(seq):
     yield from seq
 
 
+def natsortlz(s, pat=re.compile(r'([1-9][0-9]*)')):
+    return tuple(int(t) if t.isdigit() else t.lower() for t in pat.split(s))
+
+
 def process_triple_seq(triple_seq, serialization_identity=None,
                        metadata_to_fetch=None, metadata_not_to_fetch=None,
                        local_conventions=None,
@@ -573,15 +577,17 @@ def process_triple_seq(triple_seq, serialization_identity=None,
     if dout is None:
         dout = {}
 
-    # our natsort is safe because it doesn't ignore leading zeros and thus identically equal values sort as expected
+    # regular natsort is NOT SAFE WHEN THERE ARE MULTIPLE FIELDS EVEN WHEN DOUBLE SORTING
+    # this means that we use a variant which preserves leading and lone zeros so that
+    # subjects remain contiguous even if predicate/object rankings would reorder them
     def kname(t):
-        return tuple(natsort(e) for e in t)
+        return tuple(natsortlz(e) for e in t)
 
     def kterm(t):
         if t[0] in index:
             return index[t[0]], _es
         else:
-            return lsp1, natsort(t[0])
+            return lsp1, natsortlz(t[0])
 
     def klink(t):
         return index[t[0]], index[t[2]]
@@ -590,7 +596,7 @@ def process_triple_seq(triple_seq, serialization_identity=None,
         if t[2] in index:
             return index[t[2]], _es
         else:
-            return lsp1, natsort(t[2])
+            return lsp1, natsortlz(t[2])
 
     triple_count = len(triple_seq)
 
@@ -642,7 +648,7 @@ def process_triple_seq(triple_seq, serialization_identity=None,
         bnode_link_object_counts,
         bnode_conn_object_counts,
         named_conn_subject_counts,
-        sord, dangle, mkgen(g_term), mkgen(g_link), mkgen(g_conn), batchsize=batchsize, dout=dout)
+        sord, dangle, mkgen(g_term), mkgen(g_link), mkgen(g_conn), batchsize=batchsize, dout=dout, skey=natsortlz)
 
     graph_named_identity = dout['graph_named_identity']
     graph_bnode_identity = dout['graph_bnode_identity']
@@ -992,7 +998,7 @@ def process_bnode(
         link_bnode_object_counts,
         conn_bnode_object_counts,
         conn_named_subject_counts,
-        sord, dangle, g_term, g_link, g_conn, batchsize=None, dout=None, debug=False):
+        sord, dangle, g_term, g_link, g_conn, batchsize=None, dout=None, debug=False, skey=natsort):
 
     if batchsize is None:
         batchsize = _batchsize
@@ -1048,7 +1054,7 @@ def process_bnode(
 
     # TODO process dangles up here
 
-    for _s in sorted(term_bnode_subject_counts, key=natsort):
+    for _s in sorted(term_bnode_subject_counts, key=skey):
         # make sure that we run cases where term -> conn directly
         # we put them all at the end given that we don't know where
         # they actually occur in the graph, so we may end up carrying
