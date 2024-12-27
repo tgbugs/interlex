@@ -142,7 +142,7 @@ class GenNTParser(nt.W3CNTriplesParser):
 
 def gent(path):
     gnt = GenNTParser()
-    with open(path, 'rt') as f:
+    with open(path, 'rt') as f:  # default buffer size is 8192 so not the problem here
         yield from gnt.gen(f)
 
 
@@ -179,15 +179,17 @@ def normalize(cmax, t, existing, sgid, replica):#, subgraph_and_integer, subgrap
 
 def normgraph(head_subject, subgraph, sgid, replica, subject_condensed_idents, bnode_replicas):
     """ replace the bnodes with local integers inside the graph """
-    _osg = subgraph
-    try:
-        g = OntGraph(bind_namespaces='none').populate_from_triples((((bnNone if s is None else s), p, o) for s, p, o in subgraph))
-    except Exception as e:
-        breakpoint()
-        raise e
+    #_osg = subgraph
+    #try:
+    #    g = OntGraph(bind_namespaces='none').populate_from_triples((((bnNone if s is None else s), p, o) for s, p, o in subgraph))
+    #except Exception as e:
+    #    breakpoint()
+    #    raise e
 
-    subgraph = list(g.subject_triples(head_subject))  # FIXME isn't this redundant ????
-
+    #subgraph = list(g.subject_triples(head_subject))  # FIXME isn't this redundant ????
+    #subgraph = [((bnNone if s is None else s), p, o) for s, p, o in subgraph]
+    # no subgraph switching is actually needed now that we don't do crazy
+    # none replacement in metadata graphs
 
     #if head_subject in subgraph_and_integer:
     #    # we hit this because there are cases where nodes can
@@ -359,6 +361,8 @@ def get_paths(path):
         f'{stem}-conn-nscnt',
         'edges',
         'raw-sord',
+        'embedded-named',
+        'embedded-bnode',
     )
     parent = path.parent
     return tuple(parent / n for n in pnames)
@@ -448,8 +452,8 @@ def sort_ntriples_files(path):
 
     _paths = get_paths(path)
     term, link, conn = _paths[10:13]
-    edges = _paths[-2]
-    raw_sord_path = _paths[-1]
+    edges = _paths[-4]
+    raw_sord_path = _paths[-3]
     raw_sord = process_edges(edges, raw=True)
     ls = len(raw_sord)
     lsp1 = ls + 1
@@ -672,7 +676,9 @@ def already_in(session, serialization_identity, identity_function_version=3):
 def process_prepared(path, serialization_identity, metadata_to_fetch, metadata_not_to_fetch,
                      local_conventions, raw_sord=None,
                      batchsize=None, force=False, debug=False, dout=None):
-    # FIXME TODO need the metadata identity and stuff
+    # FIXME TODO, since named and bnode are fully split we can almost certainly
+    # run them in parallel, dump graph_bnode_identity and graph_named_identity
+    # into files and insert the rest of the info at the end
     if batchsize is None:
         batchsize = _batchsize
 
@@ -698,6 +704,8 @@ def process_prepared(path, serialization_identity, metadata_to_fetch, metadata_n
      conn_nscnt,
      edges,
      raw_sord_path,
+     path_embedded_named,
+     path_embedded_bnode,
      ) = get_paths(path)
 
     str_triple_count = getstr(path_triple_count)
@@ -737,7 +745,10 @@ def process_prepared(path, serialization_identity, metadata_to_fetch, metadata_n
 
     named_counts = named_counts_from_path(ncnt)
     g_name = gent(name)
-    yield from process_named(named_counts, g_name, batchsize=batchsize, dout=dout, debug=debug)
+    yield from process_named(named_counts, g_name, batchsize=batchsize, dout=dout, debug=debug,
+                             #path_embedded=path_embedded_named,
+                             # overall memory usage is tiny, was never the problem
+                             path_embedded=None,)
 
     bnode_term_subject_counts = bnode_counts_from_path(term_bscnt)
     bnode_link_subject_counts = bnode_counts_from_path(link_bscnt)
@@ -1172,7 +1183,7 @@ def process_bnode(
                 t_pair_identity = IdentityBNode((tp, to), as_type=ibn_it['(p o)']).identity
                 subject_idents[ts].append(t_pair_identity)
                 if term_seen_s[ts] == term_bnode_subject_counts[ts]:
-                    if term_seen_s[ts] == total_subject_count(ts):
+                    if term_seen_s[ts] == min_expected_count:
                         tscid = subject_condensed_idents[ts] = sid(subject_idents.pop(ts))
                         condensed_counts[tscid] += 1
                         treplica = condensed_counts[tscid]
@@ -1185,6 +1196,9 @@ def process_bnode(
                             # we don't know if we will need this
                             # because it depends on the hash
                             bnode_replicas[ts] = treplica
+
+                        term_seen_s.pop(ts)
+                        term_bnode_subject_counts.pop(ts)
 
                     break
 
@@ -1260,12 +1274,15 @@ def process_bnode(
                     scid = subject_condensed_idents[s] = sid(subject_idents.pop(s))
                     condensed_counts[scid] += 1
                     replica = condensed_counts[scid]
-                    stoc = total_object_count(s)
+                    stoc = min_expected_count
                     if stoc > 1 or stoc == 0:
                         accum_embedded.append(scid)
 
                     make_subgraph_rows(s, scid, replica)
                     bnode_replicas[s] = replica
+
+                    link_seen_s.pop(s)
+                    link_bnode_subject_counts.pop(s)
                     break
 
         if subject in conn_bnode_object_counts:
@@ -1304,8 +1321,12 @@ def process_bnode(
                     cscid = subject_condensed_idents[cs] = sid(subject_idents.pop(cs))
                     cseid = oid(oid(cs.encode()), cscid)
                     accum_embedded.append(cseid)
+                    conn_seen_s.pop(cs)
+                    conn_named_subject_counts.pop(cs)
 
                 if conn_seen_o[co] == conn_bnode_object_counts[co]:
+                    conn_seen_o.pop(co)
+                    conn_bnode_object_counts.pop(co)
                     break
 
         if actual_count < min_expected_count:
@@ -1338,6 +1359,10 @@ def process_bnode(
             batch_conn_rows = []
             batch_idents = []
             counter_row = counter_row - batchsize
+            # avoid continued cache growth eating loads of memory
+            IdentityBNode._if_cache = {}
+            IdentityBNode._oi_cache_top = {}
+            _hbn._oi_cache = {}
 
     assert total == counter_batch
     graph_bnode_identity = sid(accum_embedded)
@@ -1427,11 +1452,55 @@ def prepare_batch_bnode(batch_term_uri_rows,
         yield prepare_batch('INSERT INTO triples (s, p, o_blank, subgraph_identity) VALUES', batch_conn_rows, ocdn)
 
 
-def process_named(counts, gen, batchsize=None, dout=None, debug=False):
+def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embedded=None):
     if batchsize is None:
         batchsize = _batchsize
 
     log.debug('start process_named')
+
+    if path_embedded is None:
+        _accum_embedded = []
+        append_embedded = _accum_embedded.append
+        write_final_embedded = (lambda : None)
+        read_embedded = lambda : _accum_embedded
+    else:
+        # fixed record size simplifies this a bit
+        _aefd = open(path_embedded, 'wb')
+        _aefd_buff = b''  # this is probably dumb
+        _aefd_ct = 0
+        def append_embedded(seid):
+            nonlocal _aefd_ct
+            nonlocal _aefd_buff
+            if _aefd_ct == 1023:
+                _aefd.write(_aefd_buff)
+                _aefd.flush()
+                _aefd_ct = 0
+                _aefd_buff = b''
+
+            _aefd_ct += 1
+            _aefd_buff += seid
+
+        def write_final_embedded():
+            nonlocal _aefd_ct
+            nonlocal _aefd_buff
+            if _aefd_ct > 0:
+                _aefd.write(_aefd_buff)
+                _aefd_ct = 0
+                _aefd_buff = b''
+
+            _aefd.close()
+
+        def read_embedded():
+            _ae = []
+            with open(path_embedded, 'rb') as f:
+                while True:
+                    seid = f.read(32)
+                    if not seid:
+                        break
+
+                    _ae.append(seid)
+
+            return _ae
 
     def condense_and_make_named_rows():
         nonlocal batch_after_this_subject
@@ -1444,7 +1513,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
         # then we would know if we should go over batch size
         subject_condensed_identity = sid(accum_pair)
         subject_embedded_identity = oid(oid(s.encode()), subject_condensed_identity)
-        accum_embedded.append(subject_embedded_identity)
+        append_embedded(subject_embedded_identity)
         batch_idents.append((subject_embedded_identity, this_subject_count))
         batch_idni.extend([(subject_embedded_identity, tid) for tid in accum_trip])
         if batch_after_this_subject:
@@ -1464,7 +1533,6 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
 
     s = None
     expected_count = None
-    accum_embedded = []  # needed to get the fully named identity
     accum_pair = []
     accum_trip = []
     batch_uri_rows = []
@@ -1493,6 +1561,11 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
                     raise ValueError('wat')
 
                 yield from condense_and_make_named_rows()
+                # TODO consider using a lru cache as an alternative or only
+                # evicting after a couple of subject changes
+                IdentityBNode._if_cache = {}
+                IdentityBNode._oi_cache_top = {}
+                _hbn._oi_cache = {}
 
             this_subject_count = 0
             expected_count = counts[t[0]]
@@ -1522,19 +1595,24 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
 
         this_subject_count += 1
         s, p, o = t
-        pair_identity = IdentityBNode((p, o), as_type=ibn_it['(p o)'])
-        triple_identity = IdentityBNode(t, as_type=ibn_it['(s p o)'], id_method=idf['(s (p o))'])
-        accum_trip.append(triple_identity.identity)
-        accum_pair.append(pair_identity.identity)
+        # uh ... wow ... the overhead of constructing new IdentityBNode objects is apparently insane
+        pair_identity = _hbn._identity_function((p, o), ibn_it['(p o)'])
+        triple_identity = _hbn._identity_function(t, ibn_it['(s p o)'], id_method=idf['(s (p o))'])
+        accum_trip.append(triple_identity)
+        accum_pair.append(pair_identity)
         if isinstance(o, rdflib.Literal):
-            row = str(s), str(p), str(o), str_None(o.datatype), str_None(o.language), triple_identity.identity  # FIXME TODO fixes
+            row = str(s), str(p), str(o), str_None(o.datatype), str_None(o.language), triple_identity  # FIXME TODO fixes
             batch_lit_rows.append(row)
         else:
-            row = str(s), str(p), str(o), triple_identity.identity
+            row = str(s), str(p), str(o), triple_identity
             batch_uri_rows.append(row)
 
     if s is not None:  # named can be empty
         yield from condense_and_make_named_rows()
+
+    write_final_embedded()
+
+    log.debug('end named loop')
 
     if batch_idents:
         breakpoint()
@@ -1545,6 +1623,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
     # across process_name -> process_conn for those that are in process conn
     # which is going to be pretty much all of them so no need to try to
     # be efficient about it ...
+    accum_embedded = read_embedded()
     graph_named_identity = sid(accum_embedded)  # FIXME TODO consider inserting serialization hasPart graph_named_identity as temp for recovery?
     irels = [(e,) for e in accum_embedded]
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 6 */',
@@ -1563,6 +1642,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False):
 
     dout['graph_named_identity'] = graph_named_identity
     yield None, None
+    log.debug('end named')
 
 
 def do_process_into_session(session, process, *args, commit=False, batchsize=None, debug=False,
@@ -1572,6 +1652,7 @@ def do_process_into_session(session, process, *args, commit=False, batchsize=Non
     try:
         stashed_error = []
         for i, (sql, params) in enumerate(process(*args, batchsize=batchsize, debug=debug, dout=dout)):
+            #continue  # noop for memory debug
 
             if sql is None and params is None:
                 if commit:
@@ -1683,7 +1764,7 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
     else:
         msg = f'ingesting {name_to_fetch} to {path} as {rapper_input_type}'
         log.debug(msg)
-        (_, checksum_sha256, *_, raw_sord_path) = get_paths(path)
+        (_, checksum_sha256, *_, raw_sord_path, _pen, _peb) = get_paths(path)
         if not (working_path / 'edges').exists() or force:
             only_local = (working_path / 'edges').exists() and force
             log.debug(f'{name_to_fetch} starting shellout with only_local {only_local}')
@@ -1708,7 +1789,8 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
         bound_name
         bound_version_name
         name_to_fetch
-        IdentityBNode._if_cache = {}
+        if IdentityBNode._if_cache:
+            IdentityBNode._if_cache = {}
         triple_count = dout['named_count'] + dout['bnode_count']
         if debug and triple_count < 1_000_000:
             ori = OntResIri(metadata_to_fetch.iri)
@@ -1742,7 +1824,8 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
                 breakpoint()
 
 
-        IdentityBNode._if_cache = {}
+        if IdentityBNode._if_cache:
+            IdentityBNode._if_cache = {}
 
         te = TripleExporter()
         out_graph = OntGraph(bind_namespaces='none')
