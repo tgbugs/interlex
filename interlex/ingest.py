@@ -1274,7 +1274,7 @@ def process_bnode(
                     scid = subject_condensed_idents[s] = sid(subject_idents.pop(s))
                     condensed_counts[scid] += 1
                     replica = condensed_counts[scid]
-                    stoc = min_expected_count
+                    stoc = total_object_count(s)  # NOT min_expected_count which is for occurances as a subject
                     if stoc > 1 or stoc == 0:
                         accum_embedded.append(scid)
 
