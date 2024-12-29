@@ -569,7 +569,7 @@ def mkgen(seq):
 
 
 def natsortlz(s, pat=re.compile(r'([1-9][0-9]*)')):
-    return tuple(int(t) if t.isdigit() else t.lower() for t in pat.split(s))
+    return tuple(int(t) if t.isdigit() and int(t) != 0 else t.lower() for t in pat.split(s))
 
 
 def process_triple_seq(triple_seq, serialization_identity=None,
@@ -584,6 +584,7 @@ def process_triple_seq(triple_seq, serialization_identity=None,
     # regular natsort is NOT SAFE WHEN THERE ARE MULTIPLE FIELDS EVEN WHEN DOUBLE SORTING
     # this means that we use a variant which preserves leading and lone zeros so that
     # subjects remain contiguous even if predicate/object rankings would reorder them
+    # XXX ALSO LIKELY UNSTABLE WRT CASE >_<
     def kname(t):
         return tuple(natsortlz(e) for e in t)
 
@@ -645,14 +646,17 @@ def process_triple_seq(triple_seq, serialization_identity=None,
     bnode_link_object_counts =  dict(Counter([o for s, p, o in g_link]))
     bnode_conn_object_counts =  dict(Counter([o for s, p, o in g_conn]))
     named_conn_subject_counts = dict(Counter([s for s, p, o in g_conn]))
-    dangle = (set(bnode_link_object_counts) | set(bnode_conn_object_counts)) - (set(bnode_link_subject_counts) | set(bnode_term_subject_counts))
+    dangle = ((set(bnode_link_object_counts) | set(bnode_conn_object_counts)) -
+              (set(bnode_link_subject_counts) | set(bnode_term_subject_counts)))
+
     yield from process_bnode(
         bnode_term_subject_counts,
         bnode_link_subject_counts,
         bnode_link_object_counts,
         bnode_conn_object_counts,
         named_conn_subject_counts,
-        sord, dangle, mkgen(g_term), mkgen(g_link), mkgen(g_conn), batchsize=batchsize, dout=dout, skey=natsortlz)
+        sord, dangle, mkgen(g_term), mkgen(g_link), mkgen(g_conn),
+        batchsize=batchsize, debug=debug, dout=dout, skey=natsortlz)
 
     graph_named_identity = dout['graph_named_identity']
     graph_bnode_identity = dout['graph_bnode_identity']
@@ -1189,6 +1193,9 @@ def process_bnode(
                         treplica = condensed_counts[tscid]
                         tstoc = total_object_count(ts)
                         if tstoc > 1 or tstoc == 0:
+                            # this is safe because this only happens if we have
+                            # already seen this bnode as a subject the expected
+                            # number of times
                             accum_embedded.append(tscid)
 
                         make_subgraph_rows(ts, tscid, treplica)
@@ -1365,6 +1372,8 @@ def process_bnode(
             _hbn._oi_cache = {}
 
     assert total == counter_batch
+    if debug:
+        dout['bnode_embedded'] = accum_embedded
     graph_bnode_identity = sid(accum_embedded)
     #irels = [(graph_bnode_identity, e) for e in accum_condensed]  # if we screwed this up the database will catch it because they wont be in idents
     irels = [(e,) for e in accum_condensed]
@@ -1624,6 +1633,8 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embe
     # which is going to be pretty much all of them so no need to try to
     # be efficient about it ...
     accum_embedded = read_embedded()
+    if debug:
+        dout['named_embedded'] = accum_embedded
     graph_named_identity = sid(accum_embedded)  # FIXME TODO consider inserting serialization hasPart graph_named_identity as temp for recovery?
     irels = [(e,) for e in accum_embedded]
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 6 */',
@@ -1691,6 +1702,58 @@ def do_process_into_session(session, process, *args, commit=False, batchsize=Non
         raise e
     finally:
         session.close()
+
+
+def recons_uri(uri_string, debug=True):
+    session = getScopedSession(echo=False, query_cache_size=0)
+    q = Queries(session)
+    te = TripleExporter()
+    out_graph = OntGraph(bind_namespaces='none')
+    local_convention_rows = q.getCuriesByName(name=uri_string)
+    graph_rows = q.getGraphByName(uri_string)
+    curies = {p: n for p, n in local_convention_rows}
+    out_graph.namespace_manager.populate_from(curies)
+    trip_seq = [te.triple(*r) for r in graph_rows]
+    # TODO write trip_seq to disk as nt to reduce memory overhead for big files
+    do_ibnode = len(trip_seq) < 1_000_000
+    if do_ibnode:
+        out_graph.populate_from(trip_seq)
+        out_graph.write('/tmp/debug-2.ttl')
+        wat2 = IdentityBNode(out_graph, as_type=ibn_it['graph-combined-and-local-conventions'])
+
+        iri = rdflib.URIRef(uri_string)
+        ori = OntResIri(iri)
+        ori.graph.write('/tmp/debug-1.ttl')
+        # well ... the graphs are identical but somehow the identities don't match???
+        wat1 = IdentityBNode(ori.graph, as_type=ibn_it['graph-combined-and-local-conventions'])
+
+        mr_named = wat1._if_cache[(ori.graph, 'named'), idf['multi-record']]
+        mr_bnode = wat1._if_cache[(ori.graph, 'bnode'), idf['multi-record']]
+        rs_named = wat1._if_cache[(ori.graph, 'named'), idf['record-seq']]
+        rs_bnode = wat1._if_cache[(ori.graph, 'bnode'), idf['record-seq']]
+
+    redout = {}
+    regen = list(process_triple_seq(trip_seq, local_conventions=out_graph.namespace_manager,
+                                    debug=debug, dout=redout))
+    _rd = {k:(v.hex() if isinstance(v, bytes) else v) for k, v in redout.items()}
+    if do_ibnode:
+        problems = (
+            sorted(redout['named_embedded']) == sorted(mr_named),
+            redout['graph_named_identity'] == rs_named,
+            sorted(redout['bnode_embedded']) == sorted(mr_bnode),  # here's our problem
+            redout['graph_bnode_identity'] == rs_bnode,
+        )
+        srbe, smrb = set(sorted(redout['bnode_embedded'])), set(sorted(mr_bnode))
+        in_re_not_mr = srbe - smrb
+        in_mr_not_re = smrb - srbe
+        wat = [(b, c) for b, c in Counter(redout['bnode_embedded']).most_common() if c > 1]
+
+    resp = q.getLatestIdentityByName(name=uri_string)
+
+    if resp != redout['graph_combined_local_conventions_identity']:
+        breakpoint()
+
+    assert resp == redout['graph_combined_local_conventions_identity'], 'oops'
 
 
 #@profile_me(sort='cumtime')
@@ -1798,13 +1861,15 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
             oridc = IdentityBNode(ori.graph, as_type=ibn_it['graph-combined-and-local-conventions'])
             ori.graph.write('/tmp/debug-1.ttl')
 
+            mr_named = oridc._if_cache[(ori.graph, 'named'), idf['multi-record']]
+            mr_bnode = oridc._if_cache[(ori.graph, 'bnode'), idf['multi-record']]
             rs_named = oridc._if_cache[(ori.graph, 'named'), idf['record-seq']]
             rs_bnode = oridc._if_cache[(ori.graph, 'bnode'), idf['record-seq']]
             rs_gc = oridc._if_cache[ori.graph, idf['graph-combined']]
             rs_lc = oridc._if_cache[ori.graph.namespace_manager, idf['local-conventions']]
             rs_gclc = oridc._if_cache[ori.graph, idf['graph-combined-and-local-conventions']]
 
-            if dout and False:
+            if dout:
                 if rs_named != dout['graph_named_identity']:
                     breakpoint()
 
@@ -1822,7 +1887,6 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
             if parsedTo is not None and oridc.identity != parsedTo.tobytes():
                 ptb = parsedTo.tobytes()
                 breakpoint()
-
 
         if IdentityBNode._if_cache:
             IdentityBNode._if_cache = {}
@@ -1845,26 +1909,30 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
         # to fail, another solution is to get the latest identity
         # and then use it to retrieve both parts
         graph_rows = q.getGraphByName(name=name_to_check, type=type_to_check)
-        if not graph_rows:
-            breakpoint()
-
         curies = {p: n for p, n in local_convention_rows}
         out_graph.namespace_manager.populate_from(curies)
         @profile_me
         def herpderp():
-            _ = [out_graph.add(te.triple(*r)) for r in graph_rows]  # FIXME this is insanely slow ??? why ???
+            return [te.triple(*r) for r in graph_rows]
+
+        trip_seq = herpderp()
+        if not trip_seq:  # graph_rows is now a generator
+            breakpoint()
+
+        _ = [out_graph.add(t) for t in trip_seq]
         log.debug('begin populate outgraph')
         out_graph.namespace_manager.populate_from()
         herpderp()
         log.debug('end populate outgraph')
 
-        if len(graph_rows) != triple_count:
+        if len(trip_seq) != triple_count:
             breakpoint()
 
-        assert len(graph_rows) == triple_count
+        assert len(trip_seq) == triple_count
 
         redout = {}
         regen = list(process_triple_seq(out_graph, dout=redout))
+        #regen = list(process_triple_seq(trip_seq, local_conventions=out_graph.namespace_manager, dout=redout))
 
         if dout['graph_combined_identity'] != redout['graph_combined_identity']:
             breakpoint()
@@ -1919,7 +1987,11 @@ def main():
     commit = '--commit' in sys.argv
     force = '--force' in sys.argv
     debug = '--debug' in sys.argv
-    ingest_uri(uri, user, commit=commit, force=force, debug=debug)
+    check = '--check' in sys.argv
+    if check:
+        recons_uri(uri, debug=True)
+    else:
+        ingest_uri(uri, user, commit=commit, force=force, debug=debug)
 
 
 if __name__ == '__main__':

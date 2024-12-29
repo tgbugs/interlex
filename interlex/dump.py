@@ -1,6 +1,7 @@
 import rdflib
 import ontquery as oq
 from itertools import chain
+from collections import defaultdict
 from sqlalchemy.sql import text as sql_text
 from pyontutils import sneechenator as snch
 from pyontutils.core import OntId
@@ -638,7 +639,7 @@ class TripleExporter:
         return s + p + o + b'.\n'
 
     use_hex = False
-    def triple(self, s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity,
+    def triple(self, s, s_blank, p, o, o_lit, datatype, language, o_blank=None, subgraph_identity=None,
                subgraph_replica=None, object_subgraph_identity=None, object_replica=None):
         if subgraph_identity is not None:
             if subgraph_identity not in self.subgraph_identities:
@@ -851,6 +852,27 @@ class Queries:
         resp = list(self.session_execute(sql, args))
         return resp
 
+    def getLatestIdentityByName(self, name, type='bound'):
+        args = dict(name=name, type=type)
+        sql = '''
+with ser_idtys as (
+  select ids.identity
+  from identities as ids
+  join name_to_identity as nti on nti.identity = ids.identity
+  where ids.type = 'serialization' and nti.type = :type and nti.name::text = :name
+  order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
+), gclc_idtys as (
+  select irs.o
+  from identity_relations as irs
+  join identities as ids on irs.o = ids.identity
+  where irs.p = 'parsedTo' and(ids.type = 'graph_combined_local_conventions') and irs.s in (select * from ser_idtys)
+)
+select * from gclc_idtys
+'''
+        resp = list(self.session_execute(sql, args))
+        if resp:
+            return resp[0][0].tobytes()
+
     def getCuriesByName(self, name, type='bound'):
         args = dict(name=name, type=type)
         sql = '''
@@ -885,7 +907,7 @@ where c.local_conventions_identity in (select * from lc_idtys)
         # if we ran this once there were multiple identities pulled in we would serialize all versions into a single file
 
         args = dict(name=name, type=type)
-        sql = '''
+        _sql_common = '''
 with ser_idtys as (
   select ids.identity
   from identities as ids
@@ -927,7 +949,8 @@ with ser_idtys as (
   select * from subgraph_deduplication as sd1
   where sd1.graph_bnode_identity in (select * from bnode_idtys)
 )
-
+'''
+        _old_sql = f'''{_sql_common}
 select
 t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica, null::bytea as object_subgraph_identity, null::integer as object_replica
 from identity_relations as ird
@@ -946,8 +969,63 @@ join reps as sr on sr.subgraph_identity = t.subgraph_identity and ((t.s is null 
 left join deds as sd on sd.subject_subgraph_identity = sr.subgraph_identity and sd.subject_replica = sr.replica and sd.o_blank = t.o_blank
 
 '''
-        resp = list(self.session_execute(sql, args))
-        return resp
+        _sql_new_part_1 = f'''{_sql_common}
+select
+t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language
+from identity_relations as ird
+join identity_named_triples_ingest as inti on ird.o = inti.named_embedded_identity
+join triples as t on inti.triple_identity = t.triple_identity
+where t.s is not null and t.triple_identity is not null and ird.p = 'hasNamedRecord' and ird.s in (select * from named_idtys)
+'''
+        _sql_new_part_1_1 = f'''{_sql_common}
+select
+t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, sr.replica as subgraph_replica, sd.object_subgraph_identity as object_subgraph_identity, sd.object_replica as object_replica
+from triples as t
+join reps as sr on t.s = sr.s and t.p = sr.p and t.subgraph_identity = sr.subgraph_identity
+left join deds as sd on sd.subject_subgraph_identity = sr.subgraph_identity and sd.subject_replica = sr.replica and sd.o_blank = t.o_blank
+where t.s is not null and sr.s is not null and t.subgraph_identity is not null
+'''
+        _sql_new_part_2 = f'''{_sql_common}
+select
+t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity
+from triples as t
+where t.s is null and t.subgraph_identity is not null and t.subgraph_identity in (select * from subgraph_idtys)
+'''
+        _sql_new_part_3 = f'''{_sql_common}
+select
+sr.s, sr.p, sd.o_blank, sr.subgraph_identity, sr.replica, sd.object_subgraph_identity, sd.object_replica
+from reps as sr
+left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and sr.replica = sd.subject_replica
+'''
+        # TODO the other option is to batch out the subgraphs i think?
+        yield from self.session_execute(_sql_new_part_1, args)
+        #resp1 = list(self.session_execute(_sql_new_part_1, args))
+        #resp1 = [(*r, None, None, None) for r in _resp1]  # kwargs handle the nones
+        yield from self.session_execute(_sql_new_part_1_1, args)
+        #resp1_1 = list(self.session_execute(_sql_new_part_1_1, args))
+
+        resp3 = self.session_execute(_sql_new_part_3, args)
+        #resp3 = list(self.session_execute(_sql_new_part_3, args))
+        lu = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+        for r in resp3:
+            if r.object_replica is None:
+                lu[r.subgraph_identity][r.replica]
+            else:
+                lu[r.subgraph_identity][r.replica][r.o_blank] = (r.object_subgraph_identity, r.object_replica)
+
+        resp2 = self.session_execute(_sql_new_part_2, args)
+        #resp2 = list(self.session_execute(_sql_new_part_2, args))
+        #derp = []
+        for r in resp2:
+            for replica, o_blanks in lu[r.subgraph_identity].items():
+                if r.o_blank in o_blanks:
+                    object_subgraph_identity, object_replica = o_blanks[r.o_blank]
+                    nr = (None, *r, replica, object_subgraph_identity, object_replica)
+                else:
+                    nr = (None, *r, replica, None, None)
+
+                yield nr
+                #derp.append(nr)
 
     def getGraphByIdentity(self, identity):
         args = dict(identity=identity)
