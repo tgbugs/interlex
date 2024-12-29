@@ -412,6 +412,20 @@ def make_subsets(path, logfile):
     run_cmd(argv, cwd, logfile)
 
 
+def subst_toposort(edges, unmarked_key=None):
+    genind = iter(range(len(edges * 2)))
+    flip = {e: next(genind) for so in edges for e in so}
+    flop = {v: k for k, v in flip.items()}
+    fedges = [tuple(flip[e] for e in edge) for edge in edges]
+    if unmarked_key is not None:
+        def unmarked_key(k, _unmarked_key=unmarked_key):
+            return _unmarked_key(flop[k])
+
+    fsord = toposort(fedges, unmarked_key=unmarked_key)
+    sord = [flop[s] for s in fsord]
+    return sord
+
+
 def process_edges(path_edges, raw=False):
     with open(path_edges, 'rt') as f:
         edges = [l.split() for l in f.read().split('\n') if l]
@@ -428,7 +442,7 @@ def process_edges(path_edges, raw=False):
     def unmarked_key(v):
         return fs[v]
 
-    eord = toposort(edges, unmarked_key=unmarked_key)
+    eord = subst_toposort(edges, unmarked_key=unmarked_key)
 
     if raw:
         return eord
@@ -631,7 +645,7 @@ def process_triple_seq(triple_seq, serialization_identity=None,
     g_node =  [(s, p, o) for s, p, o in triple_seq if     isinstance(s, rdflib.BNode) or      isinstance(o, rdflib.BNode)]
     _g_link = [(s, p, o) for s, p, o in g_node     if     isinstance(s, rdflib.BNode) and     isinstance(o, rdflib.BNode)]
     edges = [(s, o) for s, p, o in _g_link]
-    sord = toposort(edges)
+    sord = subst_toposort(edges)
     lsp1 = len(sord) + 1
     index = {k:i for i, k in enumerate(sord)}
     _es = ''
@@ -1733,8 +1747,10 @@ def recons_uri(uri_string, debug=True):
         rs_bnode = wat1._if_cache[(ori.graph, 'bnode'), idf['record-seq']]
 
     redout = {}
-    regen = list(process_triple_seq(trip_seq, local_conventions=out_graph.namespace_manager,
-                                    debug=debug, dout=redout))
+    for sql, params in process_triple_seq(
+            trip_seq, local_conventions=out_graph.namespace_manager, debug=debug, dout=redout):
+        pass  # no alloc
+
     _rd = {k:(v.hex() if isinstance(v, bytes) else v) for k, v in redout.items()}
     if do_ibnode:
         problems = (
