@@ -583,7 +583,7 @@ def mkgen(seq):
 
 
 def natsortlz(s, pat=re.compile(r'([1-9][0-9]*)')):
-    return (*[int(t) if t.isdigit() and int(t) != 0 else t.lower() for t in pat.split(s)], s)
+    return (tuple(int(t) if t.isdigit() and int(t) != 0 else t.lower() for t in pat.split(s)), str(s))
 
 
 def process_triple_seq(triple_seq, serialization_identity=None,
