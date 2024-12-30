@@ -1993,8 +1993,9 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
     # and their various components tracked implicitly there are one or
     # more perspectives that they might belong to but that kind of
     # doesn't matter right now?
-    reference_name = rdflib.URIRef(f'http://uri.interlex.org/base/ontologies/dns/{url.netloc}{url.path}')
-    post_check()
+    #reference_name = rdflib.URIRef(f'http://uri.interlex.org/base/ontologies/dns/{url.netloc}{url.path}')
+    if debug:
+        post_check()
 
 
 def main():
