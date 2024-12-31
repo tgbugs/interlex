@@ -112,7 +112,7 @@ def uriStructure():
         'version':             ['<epoch_verstr_ont>'],
         '<epoch_verstr_ont>':  ['<filename_terminal>', '<filename_terminal>.<extension>'],
         '<filename_terminal>': [None,] + spec_ext,
-        'curies':              [None, '<prefix_iri_curie>'],  # external onts can be referenced from here...
+        'curies':              [None, '<prefix_iri_curie>', '<prefix_iri_curie>.<extension>'],  # external onts can be referenced from here...
         'uris':                ['<path:uri_path>'],  # TODO no ilx_ check here as well as in database
         'own':                 ['<other_group>'],
         'diff':                ['<other_group_diff>'],
@@ -213,6 +213,7 @@ _known_default = (
     '<label>',
     '<path:uri_path>',
     '<prefix_iri_curie>',  # FIXME maybe allow patch to change individual curie and post to create?
+    '<prefix_iri_curie>.<extension>',
     '*ont_ilx_get',
     '<filename_terminal>',
     '<filename_terminal>.<extension>',

@@ -109,7 +109,7 @@ class Main(clif.Dispatcher):
     def sync(self):
         from interlex.config import auth
         from interlex.uri import run_uri
-        from interlex.load import TripleLoaderFactory
+        #from interlex.load import TripleLoaderFactory
         from interlex.sync import InterLexLoad
         from interlex.core import getScopedSession, dbUri
 

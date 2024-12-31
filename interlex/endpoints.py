@@ -608,7 +608,7 @@ class Endpoints:
 
     # TODO POST PATCH PUT
     @basic
-    def curies(self, group, prefix_iri_curie, db=None):
+    def curies(self, group, prefix_iri_curie, extension=None, db=None):
         # FIXME confusion between group (aka group) and logged in group :/
         #log.debug(prefix_iri_curie)
         PREFIXES, graph = self.getGroupCuries(group)
@@ -689,7 +689,7 @@ class Endpoints:
 
                         id = 'None-FIXMETODO'
                         frag_pref = 'nil'
-                        title = 'InterLex local' + curie
+                        title = 'InterLex local ' + curie
                         return tripleRender(request, graph, group, frag_pref, id,
                                             object_to_existing, title, labels=labels)
                         abort(404)

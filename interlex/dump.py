@@ -1183,11 +1183,14 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
         # TODO aggregate/failover to defs from alternate sources where the ilx_id has an existing id
         # requires a different yielding strat
         #value_templates, params = makeParamsValues(iris)
-        yield from self.getObjectsForPredicates(iris, definition, skos.definition)
+        yield from self.getObjectsForPredicates(
+            iris, definition, skos.definition,
+            # fma.definition
+            rdflib.URIRef('http://purl.org/sig/ont/fma/definition'),)
 
     def getByLabel(self, label, user):
         # TODO user mapping of lexical
-        args = dict(p=rdfs.label.toPython(), label=label)
+        args = dict(p=rdfs.label, label=label.lower())
         #sql = f'SELECT s FROM triples WHERE p = :p AND o_lit ~~* :label'  # ~~* is LIKE case insensitive
         sql = 'SELECT s FROM triples WHERE s IS NOT NULL AND p = :p AND LOWER(o_lit) LIKE :label'
         # we can sort out the case sensitivity later if it is an issue
@@ -1198,8 +1201,9 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
         elif len(results) == 1:
             return True, results[0]  # redirect
         else:
-            defs = self.getDefinitions(user, *results)
-            return False, list(defs)  # disambiguate
+            _defs = {s: d for s, d in self.getDefinitions(user, *results)}
+            defs = [(s, _defs[s]) if s in _defs else (s, '') for s in results]
+            return False, defs  # disambiguate
 
     def getTriplesById(self, *triples_ids):
         # when using IN directly we don't have to convert to a list first
