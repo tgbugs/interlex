@@ -649,11 +649,12 @@ class Endpoints:
 
             if 'local' in request.args and request.args['local'].lower() == 'true':
                 if id is None:
-                    sql = ('SELECT ilx_id FROM existing_iris AS e WHERE e.iri = :iri '
-                            'AND (e.group_id = :group_id OR e.group_id = 0)')  # base vs curated
+                    sql = ('SELECT ilx_prefix, ilx_id FROM existing_iris AS e WHERE e.iri = :iri '
+                           'AND (e.group_id = :group_id OR e.group_id = 0)')  # base vs curated
                     args = dict(iri=iri, group_id=db.group_id)
                     try:
                         resp = next(self.session_execute(sql, args))
+                        frag_pref = resp.ilx_prefix
                         id = resp.ilx_id
                     except AttributeError as e:
                         breakpoint()
