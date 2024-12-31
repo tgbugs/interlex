@@ -12,8 +12,8 @@ CREATE TABLE uris(
        -- TODO may need a holding area for unmapped uris for certain workflows
        -- OR we may need to return the file with suggested mappings
        group_id integer NOT NULL,
-       ilx_prefix char(32) NOT NULL,
-       ilx_id char(32) NOT NULL,  -- TODO how to enforce the 'no changing the ilx_id' block delete?
+       ilx_prefix text NOT NULL,
+       ilx_id text NOT NULL,  -- TODO how to enforce the 'no changing the ilx_id' block delete?
        uri_path text NOT NULL,
 
        -- uri_full uri not null,  -- yes or no?

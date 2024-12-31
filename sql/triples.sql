@@ -1,13 +1,13 @@
 -- CONNECT TO interlex_test USER "interlex-admin";
 
 CREATE TABLE fragment_prefix_sequences(
-       prefix char(32) PRIMARY KEY NOT NULL,
+       prefix text PRIMARY KEY NOT NULL,
        suffix_max integer NOT NULL,
        current_pad integer NOT NULL DEFAULT 7
 );
 
 -- FIXME TODO REMINDER rate limit on creating new terms to avoid abuse by regular users
-CREATE OR REPLACE FUNCTION incrementPrefixSequence(prefix_in char(32), OUT suffix_id integer) RETURNS integer AS $incrementPrefixSequence$
+CREATE OR REPLACE FUNCTION incrementPrefixSequence(prefix_in text, OUT suffix_id integer) RETURNS integer AS $incrementPrefixSequence$
        BEGIN
            UPDATE fragment_prefix_sequences
            SET suffix_max = 1 + (SELECT suffix_max
@@ -23,8 +23,8 @@ $incrementPrefixSequence$ language plpgsql;
 CREATE TABLE interlex_ids(
        -- these when used in http://uri.interlex.org/base/ilx_{id} are the reference ids for terms
        -- they can however be mapped to more than one since they cannot (usually) be bound
-       prefix char(32) NOT NULL, -- the fragment prefix
-       id char(32) NOT NULL, -- the fragment suffix must be padded BEFORE being inserted into this table
+       prefix text NOT NULL, -- the fragment prefix
+       id text NOT NULL, -- the fragment suffix must be padded BEFORE being inserted into this table
        original_label text NOT NULL, -- require at least the original label in this table for accounting in case the later part of an exchange fails for some reason we can partially recover XXX ideally this is what we would require to be unique, but labels can change?
        -- consider instead triple label id maybe, but then we would have to allow it to be null
        CONSTRAINT pk__interlex_ids PRIMARY KEY (prefix, id),
@@ -37,7 +37,7 @@ CREATE TABLE interlex_ids(
 );
 
 -- TODO FIXME ideally minimal inserts need to happen in here to ensure metadata is preserved
-CREATE OR REPLACE FUNCTION newIdForPrefix(prefix_in char(32), original_label_in varchar) RETURNS integer AS $newIdForPrefix$
+CREATE OR REPLACE FUNCTION newIdForPrefix(prefix_in text, original_label_in text) RETURNS integer AS $newIdForPrefix$
        BEGIN
             INSERT INTO interlex_ids (prefix, id, original_label)
             VALUES (prefix_in, incrementPrefixSequence(prefix_in), original_label_in);
@@ -59,8 +59,8 @@ CREATE TABLE existing_iris(
        -- the default/curated user will be the fail over
        -- do we need exclude rules? latest + original user will always be inserted
        -- but do we really even need latest to be explicit here?
-       ilx_prefix char(32),
-       ilx_id char(32) NOT NULL,
+       ilx_prefix text NOT NULL,
+       ilx_id text NOT NULL,
        iri uri UNIQUE NOT NULL CHECK (uri_host(iri) NOT LIKE '%interlex.org'),
        group_id integer NOT NULL,  -- FIXME should probably be perspective instead
        CONSTRAINT fk__existing_iris__ilx_prefix_ilx_id__interlex_ids
@@ -889,7 +889,7 @@ CREATE TABLE triples(
        o_lit text,
        o_blank integer, -- this is internal for (s_blank p o_blank) and triples.id for (s, p, o_blank)
        datatype uri,
-       language varchar(10), -- FIXME can we put these in the datatype column as just strings?
+       language text, -- FIXME can we put these in the datatype column as just strings?
        subgraph_identity bytea,
        -- FIXME SIGH as much as I want to enforce leading/trailing there are some edge cases
        -- such as when importing, or when referring to the contents of a whitespace string
