@@ -483,7 +483,8 @@ class Endpoints:
         if do_redirect:
             if self.reference_host not in identifier_or_defs:
                 # FIXME temporary workaround for finding a uri that goes elsewhere
-                curie = self.curies(prefix_iri_curie=identifier_or_defs, group=request.view_args['group'])
+                curie, _code = self.curies(
+                    prefix_iri_curie=identifier_or_defs, group=request.view_args['group'])
                 to_curie = url_for('Endpoints.curies /<group>/curies/<prefix_iri_curie>',
                                    group=group, prefix_iri_curie=curie)
                 to_curie +=  '?local=true'
@@ -695,8 +696,14 @@ class Endpoints:
                         abort(404)
                         pass
 
-                return redirect(url_for(f'Endpoints.ilx /<group>/{ilx_pattern}',
-                                        group=group, frag_pref_id=frag_pref + '_' + id), code=302)
+                if extension is not None:
+                    url = url_for(f'Endpoints.ilx_get /<group>/{ilx_pattern}.<extension>',
+                                  group=group, frag_pref_id=frag_pref + '_' + id, extension=extension)
+                else:
+                    url = url_for(f'Endpoints.ilx /<group>/{ilx_pattern}',
+                                  group=group, frag_pref_id=frag_pref + '_' + id)
+
+                return redirect(url, code=302)
 
                 #return redirect('https://curies.interlex.org/' + curie, code=302)  # TODO abstract
             return redirect(iri, code=302)
