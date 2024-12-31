@@ -1192,7 +1192,7 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
         # TODO user mapping of lexical
         args = dict(p=rdfs.label, label=label.lower())
         #sql = f'SELECT s FROM triples WHERE p = :p AND o_lit ~~* :label'  # ~~* is LIKE case insensitive
-        sql = 'SELECT s FROM triples WHERE s IS NOT NULL AND p = :p AND LOWER(o_lit) LIKE :label'
+        sql = 'SELECT DISTINCT s FROM triples WHERE s IS NOT NULL AND p = :p AND LOWER(o_lit) LIKE :label'
         # we can sort out the case sensitivity later if it is an issue
         results = [r.s for r in self.session_execute(sql, args)]
         if not results:
