@@ -55,6 +55,16 @@ $ilxIdFromIri$ language plpgsql;
 */
 
 CREATE TABLE existing_iris(
+       -- TODO i think the way that we handle history for this
+       -- is that this table can point to a triple identity
+       -- and the triple is then tracked as part of the history
+       -- for that ilx term added/removed etc. and this table
+       -- is used to ensure that the current global state is always
+       -- consistent, if you want to see the history for any individual
+       -- term then it rides along on that term for that perspective
+       -- just like any other, i think that is the answer
+       -- i also think it means that iri and perspective_id are what must be unique
+
        -- note that this table does NOT enumerate any uri.interlex.org identifiers
        -- the default/curated user will be the fail over
        -- do we need exclude rules? latest + original user will always be inserted

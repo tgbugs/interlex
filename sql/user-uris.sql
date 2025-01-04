@@ -12,8 +12,6 @@ CREATE TABLE uris(
        -- TODO may need a holding area for unmapped uris for certain workflows
        -- OR we may need to return the file with suggested mappings
        group_id integer NOT NULL,
-       ilx_prefix text NOT NULL,
-       ilx_id text NOT NULL,  -- TODO how to enforce the 'no changing the ilx_id' block delete?
        uri_path text NOT NULL,
 
        -- uri_full uri not null,  -- yes or no?
@@ -22,17 +20,39 @@ CREATE TABLE uris(
        -- but then we have to know which are branches...
        -- unique on user_id ilx_id as discussed in the spec or what?
        CONSTRAINT pk__uris PRIMARY KEY (group_id, uri_path), -- groups may only map a uri path to a single ilx_id
-       CONSTRAINT un__uris UNIQUE (group_id, ilx_prefix, ilx_id),  -- groups may only map an ilx_id to a single readable
+       CONSTRAINT fk__uris__group_id__groups FOREIGN key (group_id) REFERENCES groups (id) match simple
        -- FIXME un__uris does not account for provisional paths ...
-       CONSTRAINT fk__uris__group_id__groups FOREIGN key (group_id) REFERENCES groups (id) match simple,
-       CONSTRAINT fk__uris__ilx_prefix_ilx_id__interlex_ids FOREIGN key (ilx_prefix, ilx_id) REFERENCES interlex_ids (prefix, id) match simple
 );
+
+CREATE TABLE uri_mapping(
+       -- FIXME TODO same issues with history that we have with existing iris
+       -- likely the proposed solution using this table to ensure consistency
+       -- at all times while using triples to track history makes the most sense
+       -- we will likely have to grant update on uri_mapping and existing_iris
+       -- but we may do that with a specific user that is separate from interlex-user
+       group_id integer NOT NULL, -- FIXME perspective_id probably
+       uri_path text NOT NULL,
+       ilx_prefix text NOT NULL,
+       ilx_id text NOT NULL, -- TODO how to enforce the 'no changing the ilx_id' block delete?
+       PRIMARY KEY (group_id, uri_path), -- groups may only map a uri path to a single ilx_id
+       -- UNIQUE (group_id, ilx_prefix, ilx_id),  -- groups may only map an ilx_id to a single readable XXX this may be true for readables, but in the general case what if I have two separate ontologies where i want to use the same local conventions but have different uris? I think the answer is that for that you should use a different perspective? but that does seem like overkill, probably better to warn in cases where multiple uris map to the same value, OR set the unique restriction to be only on /uris/readable/
+       FOREIGN KEY (group_id, uri_path) references uris (group_id, uri_path),
+       FOREIGN key (ilx_prefix, ilx_id) REFERENCES interlex_ids (prefix, id) match simple
+);
+
+CREATE UNIQUE INDEX un__uri_mapping__readable_unique
+       ON uri_mapping (group_id, ilx_prefix, ilx_id)
+       WHERE uri_path like 'readable/%';
 
 -- CREATE TRIGGER uris_static ON uris BEFORE UPDATE OR DELETE -- dealt with via no update or delete permissions for interlex-user
 
+/* -- no longer needed because uris and uri_mapping now handled the unmapped cases transparently
 CREATE TABLE uri_branches(
        -- uris that may or may not be resolvable but that users want to make private or other things
        -- things can only start private, they cannot be unprivated
+
+       -- the logic for this is a bit tricky
+       -- because things u
        group_id integer NOT NULL,
        branch_path text NOT NULL,
        public boolean NOT NULL,
@@ -49,6 +69,7 @@ CREATE FUNCTION branch_no_hide() returns trigger AS $branch_no_hide$
 $branch_no_hide$ language plpgsql;
 
 CREATE TRIGGER branch_no_hide before update ON uri_branches FOR each row execute procedure branch_no_hide();
+*/
 
 CREATE TABLE curies(
        -- TODO hook this into the qualifiers and the identities section

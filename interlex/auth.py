@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 import argon2
 import flask_login as fl
 from interlex.utils import log
+from sqlalchemy.sql import text as sql_text
 
 ph = argon2.PasswordHasher(
     # want this to run a bit slower than default
@@ -30,6 +31,45 @@ def validate_password(argon2_string, password):
     finally:
         log.debug('end')
 
+# https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/
+# https://stackoverflow.com/questions/30092226/calculate-crc32-correctly-with-python
+
+# ixp_
+# ixr_
+# ixw_
+# base62 + 6 digits of crc32 checksum
+
+# we do not need all the complexity of jwts given our scale
+import binascii
+from idlib.utils import makeEnc
+base62_alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijlkmnopqrstuvwxyz'
+base62encode, base62decode = makeEnc(base62_alphabet)
+hrm = b'0' * 22
+chrm = binascii.crc32(hrm)
+tenc = hrm + chrm.to_bytes(4, byteorder='big')
+enc = base62encode(int.from_bytes(tenc, byteorder='big'))
+penc = 'ixp_' + enc
+###
+_denc = base62decode(penc[4:])
+denc = int.to_bytes(_denc, 26, byteorder='big')
+key, crc = denc[:-4], denc[-4:]
+binascii.crc32(key) == int.from_bytes(crc, byteorder='big')
+
+
+def key_from_auth_value(auth_value):
+    # FIXME TODO must test this, gh impl mentions zero padding which i don't have right now
+    raw_key = auth_value[7:]  # strip 'Bearer '
+    prefix, _key, _crc = raw_key[:4], raw_key[4:-6], raw_key[-6:]  # this isn't the exact inverse might break
+    _denc = base62decode(_key + _crc)
+    denc = int.to_bytes(_denc, 26, byteorder='big')
+    key, crc = denc[:-4], denc[-4:]
+    # FIXME should be able to do the split while still in the encoded form yeah?
+    if binascii.crc32(key) != int.from_bytes(crc, byteorder='big'):
+        msg = 'crc checksum failed'
+        raise Auth.MangledTokenError(msg)
+
+    return raw_key.encode()  # its a bytea in the database
+
 
 class Auth:
 
@@ -46,8 +86,23 @@ class Auth:
             ll(f'{self.__class__.__name__} - {extra_info} - {request.remote_addr} - {request.url} - \n{request.headers}')
             super().__init__(*args, **kwargs)
 
+    class MalformedRequestHeader(AuthError):
+        log_level = 'info'
+
+    class MissingTokenError(AuthError):
+        log_level = 'info'
+
     class MangledTokenError(AuthError):
         log_level = 'warning'
+
+    class UnknownTokenError(AuthError):
+        log_level = 'warning'
+
+    class RevokedTokenError(AuthError):
+        log_level = 'info'
+
+    class InvalidScopeError(AuthError):
+        log_level = 'info'
 
     class CannotTrustTokenError(AuthError):
         """ If these are attached to the auth class is there
@@ -67,13 +122,16 @@ class Auth:
     class ExpiredTokenError(AuthError):
         log_level = 'info'
 
+    class NotAuthorizedError(AuthError):
+        log_level = 'warning'
+
     class InternalRequest:
-        headers = 'Internal-Request: True'
+        headers = 'Internal-Request: True'  # XXX obviously this can't be True and needs to be random if we actually wanted to do this
         url = 'check-the-logs'
         remote_addr = "THEY'RE IN THE DATABASE!!!"
 
-    def __init__(self, session):
-        session  # we do not keep this around, it is only used at init
+    def __init__(self, session, rules_req_auth):
+        self.session = session  # this is always needed now
         # we do need two things to improve this though
         # 1 swap out of this class every 30 mins or something
         # 2 a secured admin api endpoint that will revoke
@@ -90,6 +148,11 @@ class Auth:
         self.private_key = 'a;lskdjfa;slkdjf;alksdjf;alkjg;aslkdjf;alskdfjas;dlkfj'
         self.current_secret = 'LOL-PLEASE-GET-ME-FROM-THE-DATABASE'
         self.revoked_secrets = 'i was leaked by some idiot', 'whoops data went everywhere'
+
+        self.rules_req_auth = rules_req_auth
+        #if not rules_maybe_auth:
+            #msg = 'rules_maybe_auth should never be empty'
+            #raise ValueError(msg)
 
     def decrypt(self, token):
         # do not implement this yourself, is this coming from orcid?
@@ -136,11 +199,157 @@ class Auth:
             # downstream logger will deal with this
             return None, None
 
-    def authenticate_request(self, request):  # TODO there's got to be a module for this
-        request_user = request.view_args['group']  # TODO do this here?
+    def authenticate_request(self, request):
         now = datetime.utcnow()
-        auth_value = request.headers.get('Authorization', '')
-        if auth_value.startswith('Bearer '):
+
+        write_requires_auth = request.method in ('POST', 'PATCH', 'PUT')
+        read_might_require_auth = (
+            request.method in ('GET', 'HEAD', 'OPTIONS') and
+            request.url_rule.rule in self.rules_req_auth)
+        # FIXME read might require auth is the WRONG way to handle this
+        # because it means the system is not safe by default for the scratch
+        # space, read never requires auth, we just won't return any values if
+        # auth user is not provided for the scratch space
+        request_needs_auth_or_auth_user = write_requires_auth or read_might_require_auth
+
+        if 'Authorization' in request.headers:
+            auth_value = request.headers['Authorization']
+        elif write_requires_auth:
+            msg = f'{request.method} requires authorization, but no token was provided'
+            raise self.MissingTokenError(msg)
+        else:
+            return None, None, None, None, None
+
+        if not auth_value.startswith('Bearer '):
+            msg = 'Authorization header did not start with "Bearer "'
+            raise self.MalformedRequestHeader(request, msg)
+
+        # TODO edge case for when request was made vs when it will end
+        # for long running queries start and end might cross the liftime
+        provided_key = key_from_auth_value(auth_value)  # XXX will raise on malformed key
+        resp = list(self.session.execute(
+            sql_text(('select a.key_scope, a.created_datetime, a.lifetime_seconds, '
+                      'a.revoked_datetime, g.groupname '
+                      'from api_keys as a '
+                      'join groups as g on g.id = a.user_id '
+                      'where a.key = :provided_key '
+                      # note that you won't be able to get api keys at all
+                      # until email and orcid workflows are done
+
+                      # if a user is deactivated, deleted, banned, erased,
+                      # etc. then this becomes an unknown token error while
+                      # we clean up the tokens from the database
+                      "and g.own_role < 'pending'")),
+            params=dict(provided_key=provided_key)))
+
+        if not resp:
+            msg = 'the provided token is not known to this system'
+            raise self.UnknownTokenError(request, msg)
+
+        row = resp[0]
+        if row.revoked_datetime is not None:
+            # XXX DO NOT RETURN ANY INFORMATION ABOUT REVOCATION TIME
+            # it can be used by an attacker to estimate response time
+            msg = 'the provided token has been revoked'
+            raise self.RevokedTokenError(request, msg)
+
+        if row.created_datetime + timedelta(seconds=row.lifetime_seconds) >= now:
+            # TODO need a way to document how long after
+            # expiration tokens are rotated out
+            msg = 'the provided token has expired'
+            raise self.ExpiredTokenError(request, msg)
+
+        # if a token is provided we MUST check it even if the request
+        # does not actually require authorization, doing otherwise
+        # creates systematic risk of mishandling a malformed, expired, etc.
+        # token at some point further down the pipeline
+        if not request_needs_auth_or_auth_user:
+            # FIXME make sure this fails safe ? or is this
+            # this fail safe point? this is the point i think
+
+            # for GET i think only
+            # ontologies
+            # uris
+            # priv
+            return None, None, None, None, None
+
+        # scope/method mismatch is checked first because we don't need an
+        # additional query
+        scope = row.key_scope
+        if write_requires_auth and scope.endswith('-only'):
+            msg = f'token has invalid scope {scope} for method {request.method}'
+            raise self.InvalidScopeError(request, msg)
+
+        def gvk(k):
+            return request.view_args[k] if k in request.view_args else None
+
+        request_group = gvk('group')
+        request_group_other = gvk('other_group')
+        request_group_other_diff = gvk('other_group_diff')
+
+        auth_user = row.groupname
+
+        rgroups = [rg for rg in
+                    (request_group,
+                    request_group_other,
+                    request_group_other_diff)
+                    if rg is not None]
+        need_group_perms = [rg for rg in rgroups if rg != auth_user]
+        _read_private = read_might_require_auth  # XXX unfortunately have to start on and turn off
+        if need_group_perms:
+            # if auth_user == request_group then unless we aborted on scope
+            # mismatch (i.e. we never get here), all requests are allowed
+            # so we only have to check mismatched cases
+            resp = list(self.session.execute(sql_text(
+                ('''
+select g.groupname, g.own_role, p.user_role
+from user_permissions as p
+join groups as g on g.id = p.group_id
+where g.groupname in :groups and p.user_id = idFromGroupName(:user)
+''')
+            ), params=dict(groups=need_perms, user=auth_user)))
+
+            write_roles = {'owner', 'contributor'}
+            read_roles = {'owner', 'contributor', 'curator', 'view'}
+            if resp:
+                for row in resp:
+                    if write_requires_auth:
+                        if row.own_role == 'org':
+                            # if request.url_rule.rule not in merge /ops/:
+                            msg = 'TODO /<org>/pulls/<number>/ops/ or something'
+                            raise NotImplementedError(msg)
+
+                        if row.user_role not in write_roles:
+                            msg = 'user lacks authorization for this operation'
+                            raise self.NotAuthorizedError(msg)
+
+                    elif read_might_require_auth:
+                        if row.user_role in read_roles:
+                            _read_private = _read_private and True
+                        else:
+                            _read_private = False
+
+                    else:
+                        msg = 'should not happen'
+                        raise NotImplementedError(msg)
+            else:
+                if write_requires_auth:
+                    msg = (f'requested group does not exist or user lacks authorization for this operation')
+                    # if someone sends us a non-existent group we don't
+                    # differentiate that here
+                    raise self.NotAuthorizedError(request, msg)
+                elif read_might_require_auth:
+                    _read_private = False
+                else:
+                    msg = 'should not happen'
+                    raise NotImplementedError(msg)
+
+        # FIXME TODO priv endpoints
+        read_private = _read_private or not need_group_perms
+        group = None
+        token = None
+
+        if False:  # old
             maybe_token = auth_value.split(' ', 1)[-1]
             maybe_group, maybe_auth_user, scope, issued_utc_epoch = self.decodeToken(request, maybe_token)  # errors spawn here, do not catch
             issued_utc_datetime = datetime.fromtimestamp(issued_utc_epoch)  # NOTE our timestamps are issued in utc so we dont convert
@@ -155,11 +364,5 @@ class Auth:
                 auth_user = maybe_auth_user
                 group = maybe_group
                 token = maybe_token
-        else:
-            group = None
-            auth_user = None
-            scope = None
-            token = None
 
-        return group, auth_user, scope, token
-
+        return group, auth_user, scope, token, read_private

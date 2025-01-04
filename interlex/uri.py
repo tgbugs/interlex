@@ -68,7 +68,7 @@ def uriStructure():
         '*contributions_ont': 'contributions',
         '*external': 'external',  # FIXME TEMP
         '*versions': 'versions',
-        #'*<other_group_diff>': '<other_group>',  # FIXME consider whether this is a good idea ...
+        #'*<other_group_diff>': '<other_group>',  # FIXME consider whether this is a good idea ... XXX i think it is, because we normalize them to the same value in request processing, and it simplifies auth processing, and Own/Diff/Other do not overlap so there is never a 3 way rule? but i could see maybe trying to view the diff between two other groups via you own context so yeah we could have 3 sort of "explain the argument between groups a and b using the language of perspective c"
     }
 
     def path_to_route(node):
@@ -134,7 +134,7 @@ def uriStructure():
                     #'versions':['GET'],
                     'spec':['GET', 'POST', 'PATCH'],  # post to create a new ontology with that name i think
                     #'<prefix_iri_curie>':[],  only prefixes can be updated...?
-                    'ilx':['GET', 'PATCH'],  # FIXME why is this compliaing?
+                    'ilx':['GET', 'PATCH'],  # FIXME why is this complaining?
                     #'*ilx_pattern':['GET', 'PATCH'],
                     '<word>':['GET', 'PATCH'],
                     '<filename>':['GET', 'POST'],
@@ -165,17 +165,17 @@ def add_leafbranches(nodes):
     return nodes
 
 
-def build_endpoints(db):
+def build_endpoints(db, rules_req_auth):
     from interlex.endpoints import Endpoints, Versions, Own, OwnVersions, Diff, DiffVersions
     from interlex.endpoints import Ontologies
 
-    endpoints = Endpoints(db)
-    ontologies = Ontologies(db)
-    versions = Versions(db)
-    own = Own(db)
-    ownversions = OwnVersions(db)
-    diff = Diff(db)
-    diffversions = DiffVersions(db)
+    endpoints = Endpoints(db, rules_req_auth)
+    ontologies = Ontologies(db, rules_req_auth)
+    versions = Versions(db, rules_req_auth)
+    own = Own(db, rules_req_auth)
+    ownversions = OwnVersions(db, rules_req_auth)
+    diff = Diff(db, rules_req_auth)
+    diffversions = DiffVersions(db, rules_req_auth)
 
     # build the route -> endpoint mapping function
 
@@ -326,10 +326,11 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
     if dbonly:  # FIXME consider putting this before mq or lm are inited or rename dbonly to setup only or something?
         return app
 
-    route_endpoint_mapper, endpoints = build_endpoints(db)   # endpoints
-    runonce = setup_runonce(app, endpoints, echo)            # runonce
+    rules_req_auth = set()
+    route_endpoint_mapper, endpoints = build_endpoints(db, rules_req_auth)  # endpoints
+    runonce = setup_runonce(app, endpoints, echo)                           # runonce
 
-    @lm.user_loader                                          # give login manager access to db
+    @lm.user_loader                                                         # give login manager access to db
     def load_user(user_id):
         cr = endpoints.session_execute(
             "SELECT * FROM groups WHERE own_role < 'pending' AND id = :user_id",
@@ -373,6 +374,10 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
         endpoint_type = route_endpoint_mapper(nodes)
         function = endpoint_type.get_func(nodes)
         methods = route_methods(nodes, node_methods)
+
+        if 'uris' in nodes or '*uris_ont' in nodes:
+            # FIXME TODO there are others
+            rules_req_auth.add(route)
 
         #log.info(nodes)
         #log.info(endpoint_type)

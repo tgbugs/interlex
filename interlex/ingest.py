@@ -22,7 +22,7 @@ from rdflib.exceptions import ParserError as ParseError
 from rdflib.plugins.parsers import ntriples as nt
 from sqlalchemy.sql import text as sql_text
 from ttlser.serializers import natsort, CustomTurtleSerializer
-from pyontutils.core import OntGraph, OntResIri
+from pyontutils.core import OntGraph, OntResIri, OntResPath
 from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import owl
 from pyontutils.identity_bnode import IdentityBNode, toposort, idf, it as ibn_it, split_named_bnode
@@ -844,11 +844,16 @@ def process_name_metadata(serialization_identity, metadata_to_fetch, metadata_no
             continue
 
         name = metadata.identifier
-        _http_resp = metadata.progenitor(type='stream-http')
-        http_resps = _http_resp.history + [_http_resp]
-        http_headers = [r.headers for r in http_resps]
+        try:
+            _http_resp = metadata.progenitor(type='stream-http')
+            http_resps = _http_resp.history + [_http_resp]
+            http_headers = [r.headers for r in http_resps]
 
-        names = [resp.url for resp in http_resps]
+            names = [resp.url for resp in http_resps]
+        except KeyError:  # FIXME cryptic error if there is no 'stream-http'
+            # OntResPath case
+            names = [name]
+
         # FIXME TODO consider whether we want to differentiate the type for
         # the name that was the input name
         name_rows.extend(names)
@@ -1081,7 +1086,18 @@ def process_bnode(
     # pop a subject from transitive trips i think? yes for sure
     #breakpoint()
 
-    # TODO process dangles up here
+    if dangle:
+        _ssord = set(sord)
+        for i, d in enumerate(sorted(dangle)):
+            subject_condensed_idents[d] = _hbn.null_identity
+            bnode_replicas[d] = i
+            if d not in _ssord:
+                # for dangles in conn it is safe to stick at the end of the
+                # list since they wont interact, if they already in sord then
+                # putting it in sci with the null identity is sufficient
+                sord.append(d)
+
+        _ssord = None
 
     for _s in sorted(term_bnode_subject_counts, key=skey):
         # make sure that we run cases where term -> conn directly
@@ -1361,7 +1377,13 @@ def process_bnode(
 
         if counter_row > batchsize or i == lsm1:
             if i == lsm1:
-                assert conn_bnode_object_counts == dict(conn_seen_o)
+                # FIXME TODO dangling cause issues here
+                if conn_bnode_object_counts != dict(conn_seen_o):
+                    assert not conn_seen_o
+                    assert set(conn_bnode_object_counts) == dangle
+                    breakpoint()
+                    # XXX FIXME uh how did we get an id for these at all?
+                    assert conn_bnode_object_counts == dict(conn_seen_o)
 
             yield from prepare_batch_bnode(
                 batch_term_uri_rows,
@@ -1671,7 +1693,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embe
 
 
 def do_process_into_session(session, process, *args, commit=False, batchsize=None, debug=False,
-                            force=False, dout=None):
+                            force=False, dout=None, close=False):
     if batchsize is None:
         batchsize = _batchsize
     try:
@@ -1715,7 +1737,8 @@ def do_process_into_session(session, process, *args, commit=False, batchsize=Non
         session.rollback()
         raise e
     finally:
-        session.close()
+        if close:
+            session.close()
 
 
 def recons_uri(uri_string, debug=True):
@@ -1772,19 +1795,20 @@ def recons_uri(uri_string, debug=True):
     assert resp == redout['graph_combined_local_conventions_identity'], 'oops'
 
 
+def ingest_path(path, user, **kwargs):
+    return ingest_uri(None, user, localfs=path, **kwargs)
+
+
 #@profile_me(sort='cumtime')
-def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, force=False):
+def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, debug=False, force=False):
     # FIXME TODO something with user yeah?
     if batchsize is None:
         batchsize = _batchsize
 
-    # XXX query_cache_size is THE major memory hog when doing batch inserts
-    # in an uberon load the default limit of 500 entires will use on the order
-    # of an additional 5 gigs of memory for nothing since all the cached content
-    # is unique and mostly params, the issue is so bad in fact that I'm considering
-    # changing our defaults to avoid memory issues
-    session = getScopedSession(echo=False, query_cache_size=0)
-    q = Queries(session)
+    if localfs:
+        assert uri_string is None
+        uri_string = localfs.as_uri()
+
     iri = rdflib.URIRef(uri_string)
     url = urlparse(iri)
     # FIXME need to populate reference names
@@ -1792,7 +1816,7 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
 
     # FIXME the logic for arriving at the correct reference name requires knowing
     # the name, the bound name
-    ori = OntResIri(iri)
+    ori = OntResPath(localfs) if localfs else OntResIri(iri)
     metadata = ori.metadata()
 
     # XXX XXX XXX preamble
@@ -1814,16 +1838,26 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
         metadata_to_fetch = metadata
         metadata_not_to_fetch = None
 
-    name_to_fetch = metadata_to_fetch.identifier_actionable
+    # FIXME name to fetch is not reliable if the serialization is different
+    name_to_fetch = localfs.as_uri() if localfs else metadata_to_fetch.identifier_actionable
     base = pathlib.Path(tempfile.tempdir) / 'interlex-load'
     if not base.exists():
         base.mkdir(exist_ok=True)
 
     url_ntf = urlparse(name_to_fetch)
-    etag = metadata_to_fetch.headers['etag']  # we can't trust etags not to be malformed so b64 them before sticking them on the fs
-    betag = base64.urlsafe_b64encode(etag.encode())[:-2].decode()
-    #etag = _etag[(2 if _etag.startswith('W/') else 0):].strip('"')
-    working_path = base / url_ntf.netloc / url.path[1:] / betag
+    if localfs:
+        import hashlib
+        import augpathlib as aug
+        _serialization_identity = aug.LocalPath(localfs).checksum(cypher=hashlib.sha256)
+        b64cs = base64.urlsafe_b64encode(
+            _serialization_identity).rstrip(b'=').decode()
+        working_path = base / f'local-file-system{url_ntf.path}' / b64cs
+    else:
+        etag = metadata_to_fetch.headers['etag']  # we can't trust etags not to be malformed so b64 them before sticking them on the fs
+        betag = base64.urlsafe_b64encode(etag.encode()).rstrip(b'=').decode()
+        #etag = _etag[(2 if _etag.startswith('W/') else 0):].strip('"')
+        working_path = base / url_ntf.netloc / url.path[1:] / betag
+
     #working_path = pathlib.Path(tempfile.mkdtemp(dir=base))  # unfriendly because of repeated fetches
     if not working_path.exists():
         working_path.mkdir(parents=True, exist_ok=True)
@@ -1832,7 +1866,7 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
     logfile = working_path / 'sysout.log'
     rapper_input_type = metadata_to_fetch.rapper_input_type()
     if rapper_input_type is None:
-        orif = OntResIri(metadata_to_fetch.iri)
+        orif = OntResPath(path_input) if localfs else OntResIri(metadata_to_fetch.iri)
         orif.graph_next(compute_identity=True)
         serialization_identity = orif._identity
         sha256hex = serialization_identity.hex()
@@ -1872,7 +1906,7 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
             IdentityBNode._if_cache = {}
         triple_count = dout['named_count'] + dout['bnode_count']
         if debug and triple_count < 1_000_000:
-            ori = OntResIri(metadata_to_fetch.iri)
+            ori = OntResPath(localfs) if localfs else OntResIri(metadata_to_fetch.iri)
             orid = ori.graph.identity()  # FIXME for small only obviously
             oridc = IdentityBNode(ori.graph, as_type=ibn_it['graph-combined-and-local-conventions'])
             ori.graph.write('/tmp/debug-1.ttl')
@@ -1964,38 +1998,51 @@ def ingest_uri(uri_string, user, commit=False, batchsize=None, debug=False, forc
 
     ### end post_check
 
-    ifv = _hbn.version
-    parsedTo = already_in(session, serialization_identity, ifv)
-    if parsedTo:
-        msg = f'{name_to_fetch} -> {sha256hex} parsedTo {parsedTo.hex()} with identity function version {ifv}'
-        log.info(msg)
-        if not force:
-            return
+    # XXX query_cache_size is THE major memory hog when doing batch inserts
+    # in an uberon load the default limit of 500 entires will use on the order
+    # of an additional 5 gigs of memory for nothing since all the cached content
+    # is unique and mostly params, the issue is so bad in fact that I'm considering
+    # changing our defaults to avoid memory issues
+    session = getScopedSession(echo=False, query_cache_size=0)
+    try:
+        q = Queries(session)
 
-    do_process_into_session(session, process_fun, *process_args,
-                            commit=commit, batchsize=batchsize, debug=debug, force=force, dout=dout)
+        ifv = _hbn.version
+        parsedTo = already_in(session, serialization_identity, ifv)
+        if parsedTo:
+            msg = f'{name_to_fetch} -> {sha256hex} parsedTo {parsedTo.hex()} with identity function version {ifv}'
+            log.info(msg)
+            if not force:
+                return
 
-        # TODO need to clean up shellout and stash the xz somewhere,
-        # especially if we are using a ramdisk, because the in-process
-        # files take up lots of space, starting with the .ntriples files
-        # might be enough, but also, these files xz down to teeny tiny sizes
-        # as in small enough to put as blobs into the database if we wanted
-        # not that that is a good idea, but we could, they are small enough
+        do_process_into_session(
+            session, process_fun, *process_args,
+            commit=commit, batchsize=batchsize, debug=debug, force=force, dout=dout)
 
-    #reference_name = figure_out_reference_name(  # TODO
-        #name=name,
-        #bound_name=bound_name,
-        #bound_version_name=bound_version_name,
-        #user_provided_reference_name=None,)
+            # TODO need to clean up shellout and stash the xz somewhere,
+            # especially if we are using a ramdisk, because the in-process
+            # files take up lots of space, starting with the .ntriples files
+            # might be enough, but also, these files xz down to teeny tiny sizes
+            # as in small enough to put as blobs into the database if we wanted
+            # not that that is a good idea, but we could, they are small enough
 
-    # TODO figure out when and how we use reference names because for
-    # general ingest we don't need them, external source are identified
-    # and their various components tracked implicitly there are one or
-    # more perspectives that they might belong to but that kind of
-    # doesn't matter right now?
-    #reference_name = rdflib.URIRef(f'http://uri.interlex.org/base/ontologies/dns/{url.netloc}{url.path}')
-    if debug:
-        post_check()
+        #reference_name = figure_out_reference_name(  # TODO
+            #name=name,
+            #bound_name=bound_name,
+            #bound_version_name=bound_version_name,
+            #user_provided_reference_name=None,)
+
+        # TODO figure out when and how we use reference names because for
+        # general ingest we don't need them, external source are identified
+        # and their various components tracked implicitly there are one or
+        # more perspectives that they might belong to but that kind of
+        # doesn't matter right now?
+        #reference_name = rdflib.URIRef(f'http://uri.interlex.org/base/ontologies/dns/{url.netloc}{url.path}')
+        if debug:
+            post_check()
+
+    finally:
+        session.close()
 
 
 def main():

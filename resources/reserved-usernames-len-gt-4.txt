@@ -345,12 +345,6 @@ terms|blacklist
 terms-of-service|blacklist
 terms_of_service|blacklist
 termsofservice|blacklist
-test1|blacklist
-test2|blacklist
-test3|blacklist
-teste|blacklist
-testing|blacklist
-tests|blacklist
 theme|blacklist
 themes|blacklist
 thread|blacklist
@@ -369,8 +363,6 @@ update|blacklist
 upload|blacklist
 uploads|blacklist
 usage|blacklist
-username|blacklist
-users|blacklist
 usuario|blacklist
 vendas|blacklist
 video|blacklist

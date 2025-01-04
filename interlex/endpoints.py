@@ -33,7 +33,10 @@ def getBasicDB(self, group, request):
 
     try:
         # FIXME pretty sure this isn't quite right
-        auth_group, auth_user, scope, auth_token = self.auth.authenticate_request(request)
+        # XXX yeah, auth_group is the wrong way to do this
+        # we have to check user persmissions in the group during
+        # authenticate_request
+        auth_group, auth_user, scope, auth_token, read_private = self.auth.authenticate_request(request)
     except self.auth.ExpiredTokenError:
         abort(401, {'message': (
             'Your token has expired, please get a '
@@ -52,22 +55,22 @@ def getBasicDB(self, group, request):
         db = self.getBasicInfoReadOnly(group, auth_user)
 
     else:
-        if auth_token:
-            if auth_group != group:
-                return f'This token is not valid for group {group}', 401
+        #if auth_token:
+        #    if auth_group != group:
+        #        return f'This token is not valid for group {group}', 401
 
-            if not auth_user:  # this should be impossible ...
-                if group == 'api':  # should this be hardcoded? probably
-                    return 'FIXME what do we want to do here?', 401
-                else:
-                    # not 403 because this way we are ignorant by default
-                    # we dont' have to wonder whether the url they were
-                    # looking for was private or not (most shouldn't be)
-                    abort(404)
+        #    if not auth_user:  # this should be impossible ...
+        #        if group == 'api':  # should this be hardcoded? probably
+        #            return 'FIXME what do we want to do here?', 401
+        #        else:
+        #            # not 403 because this way we are ignorant by default
+        #            # we dont' have to wonder whether the url they were
+        #            # looking for was private or not (most shouldn't be)
+        #            abort(404)
 
-        db = self.getBasicInfo(group, auth_user, auth_token)
+        db = self.getBasicInfo(group, auth_user)
 
-    return db, auth_user
+    return db, auth_user, read_private
 
 
 def basic(function):
@@ -82,7 +85,7 @@ def basic(function):
             # the kwarg dictionary accordingly
             raise KeyError('remember that basic needs kwargs not args!') from e
         if 'db' not in kwargs:  # being called via super() probably
-            maybe_db, _ = getBasicDB(self, group, request)
+            maybe_db, _, read_private = getBasicDB(self, group, request)
             if not isinstance(maybe_db, BasicDBFactory):
                 if maybe_db is None:
                     abort(404)
@@ -92,6 +95,10 @@ def basic(function):
                 db = maybe_db
 
             kwargs['db'] = db
+
+            if 'read_private' in kwargs:
+                breakpoint()
+                kwargs['read_private'] = read_private
 
         return function(self, *args, **kwargs)
 
@@ -103,7 +110,7 @@ def basic2(function):
     def basic2_checks(self, *args, **kwargs):
         if 'db' not in kwargs:  # being called via super() probably
             group = kwargs['group']
-            maybe_db, auth_user = getBasicDB(self, group, request)
+            maybe_db, auth_user, read_private = getBasicDB(self, group, request)
             if not isinstance(maybe_db, BasicDBFactory):
                 if maybe_db is None:
                     abort(404)
@@ -113,6 +120,10 @@ def basic2(function):
                 db = maybe_db
 
             kwargs['db'] = db
+
+            if 'read_private' in kwargs:
+                breakpoint()
+                kwargs['read_private'] = read_private
 
             if 'other_group' in kwargs:
                 other_group = kwargs['other_group']
@@ -140,13 +151,13 @@ def basic2(function):
 
 
 class Endpoints:
-    def __init__(self, db):
+    def __init__(self, db, rules_req_auth):
         self.db = db
         self.session = self.db.session
         self.queries = Queries(self.session)
-        self.auth = Auth(self.session)
-        self.FileFromIRI = FileFromIRIFactory(self.session)  # FIXME I think these go in tasks
-        self.FileFromPost = FileFromPostFactory(self.session)  # FIXME I think these go in tasks
+        self.auth = Auth(self.session, rules_req_auth)
+        #self.FileFromIRI = FileFromIRIFactory(self.session)  # FIXME I think these go in tasks
+        #self.FileFromPost = FileFromPostFactory(self.session)  # FIXME I think these go in tasks
         self.BasicDB = BasicDBFactory(self.session)
         self.UnsafeBasicDB = UnsafeBasicDBFactory(self.session)
 
@@ -161,9 +172,9 @@ class Endpoints:
     def link_to_new_token(self):
         return 'TODO url_for', 501
 
-    def getBasicInfo(self, group, auth_user, token):
+    def getBasicInfo(self, group, auth_user):
         try:
-            return self.BasicDB(group, auth_user, token, read_only=False)
+            return self.BasicDB(group, auth_user, read_only=False)
         except exc.NotGroup:
             return None
 
@@ -382,6 +393,7 @@ class Endpoints:
                     return abort(401)  # FIXME hrm what would the return code be here ...
                 
         elif operation == 'logout':
+            # FIXME this does not go here because it requires auth ...
             if request.method == 'GET':
                 # check if logged in?
                 # then log out
@@ -542,14 +554,18 @@ class Endpoints:
 
     # TODO POST ?private if private PUT (to change mapping) PATCH like readable
     @basic
-    def uris(self, group, uri_path, db=None):
+    def uris(self, group, uri_path, db=None, read_private=False):
         # owl:Class, owl:*Property
         # owl:Ontology
         # /<group>/ontologies/obo/uberon.owl << this way
         # /<group>/uris/obo/uberon.owl << no mapping to ontologies here
         title = f'uris.{group}:{uri_path}'
         PREFIXES, graph = self.getGroupCuries(group)
-        resp = self.queries.getByGroupUriPath(group, uri_path, redirect=False)
+        if read_private:
+            resp = self.queries.getUnmappedByGroupUriPath(group, uri_path, read_private, redirect=False)
+        else:
+            resp = self.queries.getByGroupUriPath(group, uri_path, redirect=False)
+
         if not resp:
             iri = request.url
             suggestions = ''  # TODO this requires them to have uploaded or we guess the suffix
@@ -727,6 +743,7 @@ class Endpoints:
         dbuser = db.user
 
         # TODO load stats etc
+        raise NotImplementedError('todo use new way')
         try:
             loader = self.FileFromPost(group, dbuser, self.reference_host)
         except exc.NotGroup:
@@ -970,6 +987,7 @@ class Ontologies(Endpoints):
 
                         # FIXME this needs to just go as a race
                         # either await sleep(limit) or await load(thing)
+                        raise NotImplementedError('TODO new workflow please')
                         try:
                             loader = self.FileFromIRI(group, dbuser, reference_name)
                             #task = tasks.multiple(loader, name, expected_bound_name)
@@ -1051,7 +1069,7 @@ class Versions(Endpoints):
         return request.path, 501
 
     @basic
-    def uris(self, group, epoch_verstr_id, uri_path, db=None):
+    def uris(self, group, epoch_verstr_id, uri_path, db=None, read_private=False):
         return request.path, 501
 
     @basic
@@ -1067,7 +1085,7 @@ class Versions(Endpoints):
 
 class Own(Ontologies):
     @basic2
-    def uris(self, group, other_group, uri_path, db=None):
+    def uris(self, group, other_group, uri_path, db=None, read_private=False):
         return request.path, 501
 
     @basic2
@@ -1128,7 +1146,7 @@ class OwnVersions(Own, Versions):
         return request.path, 501
 
     @basic2
-    def uris(self, group, other_group, epoch_verstr_id, uri_path, db=None):
+    def uris(self, group, other_group, epoch_verstr_id, uri_path, db=None, read_private=False):
         return request.path, 501
 
     @basic2
@@ -1202,7 +1220,7 @@ class Diff(Ontologies):
         return request.path, 501
 
     @basic2
-    def uris(self, group, other_group_diff, uri_path, db=None):
+    def uris(self, group, other_group_diff, uri_path, db=None, read_private=False):
         return request.path, 501
 
     @basic2
@@ -1259,7 +1277,7 @@ class DiffVersions(Diff, Versions):
         return request.path, 501
 
     @basic2
-    def uris(self, group, other_group_diff, epoch_verstr_id, uri_path, db=None):
+    def uris(self, group, other_group_diff, epoch_verstr_id, uri_path, db=None, read_private=False):
         return request.path, 501
 
     @basic2

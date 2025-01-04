@@ -1134,9 +1134,36 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
         resp = list(self.session_execute(self.sql.getById, args))
         return resp
 
+    def getUnmappedByGroupUriPath(self, group, path, read_private, redirect=False):
+        # XXX this should only be called via the api if the auth layer
+        # has passed because the user matches or the user has been
+        # granted at least the ability to view that groups scratch
+        # space, that is the view role, and it is for all uris
+        # TODO the most a single user can grant for another user
+        # is view
+
+        assert read_private  # read_private is included as a double sanity check
+
+        resp = self.getByGroupUriPath(group, path)  # FIXME dump should not be returning for flask directly
+        if resp:
+            return resp
+
+        args = dict(group=group, path=path)
+        sql = ('SELECT uri FROM uris WHERE group_id = idFromGroupname(:group) '
+               'AND uri_path = :path')
+
+        gen = self.session_execute(sql, args)
+        try:
+            guri = next(gen)
+            uri = guri.uri
+        except StopIteration:
+            return tuple()
+
+        return self.getBySubject(f'http://{self.reference_host}/{group}/uris/{path}', group)
+
     def getByGroupUriPath(self, group, path, redirect=False):  # TODO bulk versions of these
         args = dict(group=group, path=path)
-        sql = ('SELECT ilx_id FROM uris WHERE group_id = idFromGroupname(:group) '
+        sql = ('SELECT ilx_id FROM uri_mapping WHERE group_id = idFromGroupname(:group) '
                'AND uri_path = :path')
         # TODO handle the unmapped case (currently literally all of them)
         gen = self.session_execute(sql, args)

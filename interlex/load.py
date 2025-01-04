@@ -1566,7 +1566,7 @@ class BasicDBFactory:
                                  (cls,),
                                  dict(session=session,
                                       _execute=session.execute,
-                                      auth=Auth(session),
+                                      #auth=Auth(session),  # FIXME why is auth happening here?
                                       process_type=new_name))
         return classTypeInstance
 
@@ -1575,18 +1575,18 @@ class BasicDBFactory:
         """ Reset any 'global' state. """
         BasicDBFactory._cache_groups = {}
 
-    def __init__(self, group, user, token, read_only=True):  # safe by default
+    def __init__(self, group, user, read_only=True):  # safe by default
         # FIXME make sure that each on of these is really its own instance and never reused
         # so that there is no chance of letting users spoof as using a race condition
         # it looks like the __new__ functionality is used to bind per session, but make sure
         self.read_only = read_only
-        auth_group, auth_user = self.auth.decodeTokenSimple(token)
-        if group != auth_group or user != auth_user:
-            g = f'{group} {auth_group} {user} {auth_user}'
-            msg = f'FIXME this needs to be a logged auth consistency error {g}'
-            raise ValueError(msg)
+        #auth_group, auth_user = self.auth.decodeTokenSimple(token)
+        #if group != auth_group or user != auth_user:
+        #    g = f'{group} {auth_group} {user} {auth_user}'
+        #    msg = f'FIXME this needs to be a logged auth consistency error {g}'
+        #    raise ValueError(msg)
         self.group = group
-        self.user = user
+        self.user = user  # XXX auth_user
         #self.user_role = 'lol'  # TODO this works but testing
         # read only does not need to be enforced in the database becuase user role
         # is the ultimate defense and that _is_ in the database
@@ -1672,6 +1672,7 @@ class BasicDBFactory:
         # sec critical this function should not be modified
         # to prevent any long range affects from sneeking in here
         if hasattr(self, '_user_role'):
+            # FIXME how do we deal with these changing? while request is in flight?
             raise ValueError(f'{self} user_role can only be set in __init__!')
 
         self._user_role = value
@@ -1876,8 +1877,12 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
 
         return bde_switch
 
-    @exc.hasErrors(exc.LoadError)
     def load(self, commit=True):
+        from interlex import ingest as ing
+        raise NotImplementedError('TODO')
+
+    @exc.hasErrors(exc.LoadError)
+    def _old_load(self, commit=True):
         output = ''
         try:
             output += self.load_event()
@@ -2165,6 +2170,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         """
 
     def load_event(self):
+        raise NotImplementedError('use ingest please')
         # FIXME only insert on success...
         si = self.serialization_identity
 
@@ -2197,7 +2203,7 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         # not to use identities on annotations
         # also pretty sure that the connected subgraphs don't go in the idents table
         # FIXME I need to know which subgraphs need to be parented ser
-        sql_ident_base = 'INSERT INTO identities (reference_name, identity, type, triples_count) VALUES '
+        sql_ident_base = 'INSERT INTO identities (reference_name, identity, type, record_count) VALUES '
         types_idents = (('serialization', self.serialization_identity),  # TODO abstract... type + ident
                         ('local_naming_conventions', self.Loader.curies_identity),
                         #('bound_name', self.bound_name_identity),
@@ -2503,7 +2509,7 @@ class FileFromFileFactory(FileFromBaseFactory):
 
     def check(self, name):
         self.path = Path(name).resolve().absolute()
-        name = self.path.as_uri()
+        name = rdflib.URIRef(self.path.as_uri())
         return super().check(name)
 
     def __call__(self, expected_bound_name):
