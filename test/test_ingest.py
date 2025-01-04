@@ -4,7 +4,8 @@ from pyontutils.core import OntGraph
 from pyontutils.namespaces import ilxtr
 from pyontutils.identity_bnode import IdentityBNode, idf, it as ibn_it
 
-from interlex.ingest import process_triple_seq
+from interlex.ingest import process_triple_seq, ingest_path
+
 
 class TestIngestIdentityFunction(unittest.TestCase):
     """ make sure that ingest and ibnode produce the same results """
@@ -66,3 +67,12 @@ class TestIngestIdentityFunction(unittest.TestCase):
             (bn1, ilxtr.p2, ilxtr.o0),
         )
         self._doit(trips)
+
+    def test_path(self):
+        path = auth.get_path('git-local-base') / 'pyontutils/ttlser/test/nasty.ttl'
+        ingest_path(path, 'tgbugs', debug=True)
+
+    def test_evil(self):
+        # evil violations many assumptions
+        path = auth.get_path('git-local-base') / 'pyontutils/ttlser/test/evil.ttl'
+        ingest_path(path, 'tgbugs')
