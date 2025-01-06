@@ -22,7 +22,7 @@ from rdflib.exceptions import ParserError as ParseError
 from rdflib.plugins.parsers import ntriples as nt
 from sqlalchemy.sql import text as sql_text
 from ttlser.serializers import natsort, CustomTurtleSerializer
-from pyontutils.core import OntGraph, OntResIri, OntResPath
+from pyontutils.core import OntGraph, OntMetaIri, OntResIri, OntResPath
 from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import owl
 from pyontutils.identity_bnode import IdentityBNode, toposort, idf, it as ibn_it, split_named_bnode
@@ -399,6 +399,13 @@ def curl_url(iri, path, logfile):
     run_cmd(argv, cwd, logfile)
 
 
+cmd_gunzip = shutil.which('gunzip')
+def gunzip_path(path, logfile):
+    argv = [cmd_gunzip, path.as_posix()]
+    cwd = path.parent.as_posix()
+    run_cmd(argv, cwd, logfile)
+
+
 def path_to_ntriples_and_xz(path, rapper_input_type, logfile):
     argv = [cmd_sh, ilxbin('make-ntriples-xz.sh'), path.as_posix(), rapper_input_type]
     # can also fail
@@ -452,7 +459,10 @@ def process_edges(path_edges, raw=False):
 
 def shellout(iri, path, rapper_input_type, logfile, only_local=False):
     if not only_local:
-        curl_url(iri, path, logfile)
+        if not (path.as_uri() == iri and path.exists()):
+            # not already downloaded
+            curl_url(iri, path, logfile)
+
         path_to_ntriples_and_xz(path, rapper_input_type, logfile)
 
     make_subsets(path, logfile)
@@ -1758,13 +1768,13 @@ def do_process_into_session(session, process, *args, commit=False, batchsize=Non
             session.close()
 
 
-def recons_uri(uri_string, debug=True):
+def recons_uri(uri_string, name_type='pointer', debug=True):
     session = getScopedSession(echo=False, query_cache_size=0)
     q = Queries(session)
     te = TripleExporter()
     out_graph = OntGraph(bind_namespaces='none')
-    local_convention_rows = q.getCuriesByName(name=uri_string)
-    graph_rows = q.getGraphByName(uri_string)
+    local_convention_rows = q.getCuriesByName(name=uri_string, type=name_type)
+    graph_rows = q.getGraphByName(uri_string, type=name_type)
     curies = {p: n for p, n in local_convention_rows}
     out_graph.namespace_manager.populate_from(curies)
     trip_seq = [te.triple(*r) for r in graph_rows]
@@ -1804,7 +1814,7 @@ def recons_uri(uri_string, debug=True):
         in_mr_not_re = smrb - srbe
         wat = [(b, c) for b, c in Counter(redout['bnode_embedded']).most_common() if c > 1]
 
-    resp = q.getLatestIdentityByName(name=uri_string)
+    resp = q.getLatestIdentityByName(name=uri_string, type=name_type)
 
     if resp != redout['graph_combined_local_conventions_identity']:
         breakpoint()
@@ -1828,12 +1838,64 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
 
     iri = rdflib.URIRef(uri_string)
     url = urlparse(iri)
+
+    iri_suffix = pathlib.PurePath(url.path).suffix
+
+    base = pathlib.Path(tempfile.tempdir) / 'interlex-load'
+    if not base.exists():
+        base.mkdir(exist_ok=True)
+
+    if localfs:
+        import hashlib
+        import augpathlib as aug
+        _serialization_identity = aug.LocalPath(localfs).checksum(cypher=hashlib.sha256)
+        b64cs = base64.urlsafe_b64encode(
+            _serialization_identity).rstrip(b'=').decode()
+        working_path = base / f'local-file-system{url.path}' / b64cs
+    else:
+        resp = requests.get(uri_string, stream=True)
+        resp.close()
+        # note that a compressed etag will not matches metadata to fetch if that points to an uncompressed stream
+        etag = resp.headers['etag']  # we can't trust etags not to be malformed so b64 them before sticking them on the fs
+        betag = base64.urlsafe_b64encode(etag.encode()).rstrip(b'=').decode()
+        #etag = _etag[(2 if _etag.startswith('W/') else 0):].strip('"')
+        working_path = base / url.netloc / url.path[1:] / betag
+
+    #working_path = pathlib.Path(tempfile.mkdtemp(dir=base))  # unfriendly because of repeated fetches
+    if not working_path.exists():
+        working_path.mkdir(parents=True, exist_ok=True)
+
+    path = working_path / pathlib.PurePath(url.path).name
+    logfile = working_path / 'sysout.log'
+    final_file = working_path / 'raw-sord'
+
+    if iri_suffix in ('.gz', '.xz'):
+        compressed_resp = resp
+        unpath = path.with_suffix('')
+        if not (path.exists() or unpath.exists() or final_file.exists()) or force:
+            log.debug(f'fetching compressed {iri} to {path}')
+            curl_url(iri, path, logfile)
+
+        if not (unpath.exists() or final_file.exists()) or force:
+            if iri_suffix == '.gz':
+                gunzip_path(path, logfile)
+            elif iri_suffix == '.xz':
+                raise NotImplementedError('TODO')
+
+        localfs = path = unpath
+    else:
+        compressed_resp = None
+
     # FIXME need to populate reference names
     # FIXME read the file header
 
     # FIXME the logic for arriving at the correct reference name requires knowing
     # the name, the bound name
-    ori = OntResPath(localfs) if localfs else OntResIri(iri)
+    ori = ((OntResPath(localfs.with_suffix(localfs.suffix + '.xz'))
+            # there is a window where this can fail if the xz is still running
+            if (localfs == path and not localfs.exists() and final_file.exists())
+            else OntRestPath(localfs))
+           if localfs else OntResIri(iri))
     metadata = ori.metadata()
 
     # XXX XXX XXX preamble
@@ -1841,10 +1903,19 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
     bound_name = metadata.identifier_bound
     bound_version_name = metadata.identifier_version
 
+    if compressed_resp is not None:
+        # XXX hack to get names inserted correctly despite using localfs
+        metadata._progenitors['stream-http'] = compressed_resp
+
     if bound_version_name is not None:
-        metadata_version = metadata.__class__(bound_version_name)
+        metadata_version = OntMetaIri(bound_version_name)
         try:
             metadata_version.graph
+            # NOTE in the event that localfs is set because we were compressed
+            # we already fetched some other metadata entirely, we don't bother
+            # switching them here in this case because that is already handled
+            # using localfs and the relevant name metadata will be inserted as
+            # expected TODO consider storing a compressed checksum as well?
             metadata_to_fetch = metadata_version
             metadata_not_to_fetch = metadata
         except requests.exceptions.HTTPError:
@@ -1857,30 +1928,6 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
 
     # FIXME name to fetch is not reliable if the serialization is different
     name_to_fetch = localfs.as_uri() if localfs else metadata_to_fetch.identifier_actionable
-    base = pathlib.Path(tempfile.tempdir) / 'interlex-load'
-    if not base.exists():
-        base.mkdir(exist_ok=True)
-
-    url_ntf = urlparse(name_to_fetch)
-    if localfs:
-        import hashlib
-        import augpathlib as aug
-        _serialization_identity = aug.LocalPath(localfs).checksum(cypher=hashlib.sha256)
-        b64cs = base64.urlsafe_b64encode(
-            _serialization_identity).rstrip(b'=').decode()
-        working_path = base / f'local-file-system{url_ntf.path}' / b64cs
-    else:
-        etag = metadata_to_fetch.headers['etag']  # we can't trust etags not to be malformed so b64 them before sticking them on the fs
-        betag = base64.urlsafe_b64encode(etag.encode()).rstrip(b'=').decode()
-        #etag = _etag[(2 if _etag.startswith('W/') else 0):].strip('"')
-        working_path = base / url_ntf.netloc / url.path[1:] / betag
-
-    #working_path = pathlib.Path(tempfile.mkdtemp(dir=base))  # unfriendly because of repeated fetches
-    if not working_path.exists():
-        working_path.mkdir(parents=True, exist_ok=True)
-
-    path = working_path / pathlib.PurePath(url.path).name
-    logfile = working_path / 'sysout.log'
     rapper_input_type = metadata_to_fetch.rapper_input_type()
     if rapper_input_type is None:
         orif = OntResPath(path_input) if localfs else OntResIri(metadata_to_fetch.iri)
@@ -1895,8 +1942,8 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
         msg = f'ingesting {name_to_fetch} to {path} as {rapper_input_type}'
         log.debug(msg)
         (_, checksum_sha256, *_, raw_sord_path, _pen, _peb) = get_paths(path)
-        if not (working_path / 'edges').exists() or force:
-            only_local = (working_path / 'edges').exists() and force
+        if not final_file.exists() or force:
+            only_local = final_file.exists() and force
             log.debug(f'{name_to_fetch} starting shellout with only_local {only_local}')
             raw_sord = shellout(name_to_fetch, path, rapper_input_type, logfile, only_local=only_local)
             # FIXME may want to write raw_sord to disk given the time it can take
