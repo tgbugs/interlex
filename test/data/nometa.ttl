@@ -1,0 +1,4 @@
+@prefix ilxtr: <http://uri.interlex.org/tgbugs/uris/readable/> .
+
+ilxtr:this-file a ilxtr:has ;
+ilxtr:no ilxtr:metadata .

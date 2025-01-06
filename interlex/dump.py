@@ -873,15 +873,25 @@ select * from gclc_idtys
         if resp:
             return resp[0][0].tobytes()
 
-    def getCuriesByName(self, name, type='bound'):
-        args = dict(name=name, type=type)
-        sql = '''
-with ser_idtys as (
+    def getCuriesByName(self, name, type='bound', serialization_identity=None):
+        if serialization_identity is None:
+            args = dict(name=name, type=type)
+            _sql_ser_idtys = '''
   select ids.identity
   from identities as ids
   join name_to_identity as nti on nti.identity = ids.identity
   where ids.type = 'serialization' and nti.type = :type and nti.name::text = :name
   order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
+'''
+
+        else:
+            args = dict(serialization_identity=serialization_identity)
+            _sql_ser_idtys = 'select :serialization_identity'
+
+
+        sql = f'''
+with ser_idtys as (
+{_sql_ser_idtys}
 ), gclc_idtys as (
   select irs.o
   from identity_relations as irs
@@ -901,19 +911,31 @@ where c.local_conventions_identity in (select * from lc_idtys)
         resp = list(self.session_execute(sql, args))
         return resp
 
-    def getGraphByName(self, name, type='bound'):
+    def getCuriesBySerializationIdentity(self, serialization_identity):
+        return self.getCuriesByName(None, None, serialization_identity=serialization_identity)
+
+    def getGraphByName(self, name, type='bound', serialization_identity=None):
         # defaults to latest probably
         # FIXME need to do a query to get the latest first and then call getGraphByIdentity instead of the direct way we do it here, but this is ok for now
         # if we ran this once there were multiple identities pulled in we would serialize all versions into a single file
 
-        args = dict(name=name, type=type)
-        _sql_common = '''
-with ser_idtys as (
+        if serialization_identity is None:
+            args = dict(name=name, type=type)
+            _sql_ser_idtys = '''
   select ids.identity
   from identities as ids
   join name_to_identity as nti on nti.identity = ids.identity
   where ids.type = 'serialization' and nti.type = :type and nti.name::text = :name
   order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
+'''
+
+        else:
+            args = dict(serialization_identity=serialization_identity)
+            _sql_ser_idtys = 'select :serialization_identity'
+
+        _sql_common = f'''
+with ser_idtys as (
+{_sql_ser_idtys}
 ), gclc_idtys as (
   select irs.o
   from identity_relations as irs
@@ -1027,16 +1049,14 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
                 yield nr
                 #derp.append(nr)
 
-    def getGraphByIdentity(self, identity):
-        args = dict(identity=identity)
-        # FIXME going to have to deal with replicas and matching replicas between versions :/
-        sql = '''
-        WITH graph AS (
+    def getGraphBySerializationIdentity(self, serialization_identity):
+        return self.getGraphByName(None, None, serialization_identity=serialization_identity)
 
-        ), subgraphs AS ()
-        '''
-        resp = list(self.session_execute(sql, args))
-        return resp
+    def getGraphByIdentity(self, identity):
+        # TODO smart version that will search the identities table to
+        # find whether such an identity exists and then dispatch to
+        # identity relations based on that identity
+        raise NotImplementedError('TODO')
 
     def getBySubject(self, subject, user):
         # FIXME ah uri normalization ... what to do about you

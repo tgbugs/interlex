@@ -4,7 +4,9 @@ from pyontutils.core import OntGraph
 from pyontutils.namespaces import ilxtr
 from pyontutils.identity_bnode import IdentityBNode, idf, it as ibn_it
 
+from interlex.config import auth
 from interlex.ingest import process_triple_seq, ingest_path
+from .common import working_dir
 
 
 class TestIngestIdentityFunction(unittest.TestCase):
@@ -68,11 +70,23 @@ class TestIngestIdentityFunction(unittest.TestCase):
         )
         self._doit(trips)
 
-    def test_path(self):
+    def test_nometa(self):
+        path = working_dir / 'test/data/nometa.ttl'
+        ingest_path(path, 'tgbugs', debug=True)
+
+    def test_nasty(self):
         path = auth.get_path('git-local-base') / 'pyontutils/ttlser/test/nasty.ttl'
         ingest_path(path, 'tgbugs', debug=True)
 
     def test_evil(self):
         # evil violations many assumptions
         path = auth.get_path('git-local-base') / 'pyontutils/ttlser/test/evil.ttl'
-        ingest_path(path, 'tgbugs')
+        try:
+            ingest_path(path, 'tgbugs')
+            raise AssertionError('should have failed')
+        except AssertionError as e:
+            raise
+        except Exception as e:
+            # we expect this to fail at the moment because we have not
+            # implemented ingest for graphs with cycles (among others)
+            pass

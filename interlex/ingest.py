@@ -852,7 +852,10 @@ def process_name_metadata(serialization_identity, metadata_to_fetch, metadata_no
             names = [resp.url for resp in http_resps]
         except KeyError:  # FIXME cryptic error if there is no 'stream-http'
             # OntResPath case
-            names = [name]
+            # we don't record local file names because they are not
+            # meaningful globally instead this information should be
+            # inserted into load prov
+            names = []
 
         # FIXME TODO consider whether we want to differentiate the type for
         # the name that was the input name
@@ -882,97 +885,105 @@ def process_name_metadata(serialization_identity, metadata_to_fetch, metadata_no
             # TODO try to resolve the bound name and see where it goes, if it resolves
             pass
 
-        # trunc first because non-trunc is impossible at this point if dangling
-        mg = metadata.graph
-        # we are not using graph_combined for this
-        # also, metadata_graph is needed in cases where we have non-truncated multi-parent
-        # but that can usually only be calculated from the full graph, so a separate phase
-        _if_cache = IdentityBNode._if_cache
-        metadata_graph = IdentityBNode(mg, as_type=ibn_it['triple-seq'], id_method=idf['record-seq'])
-        metadata_embedded = _if_cache[mg, bound_name, idf['embedded']]
-        metadata_condensed = _if_cache[mg, bound_name, idf['condensed']]
-        metadata_combined = IdentityBNode(mg, as_type=ibn_it['triple-seq'], id_method=idf['graph-combined'])
-        # if there are no bnodes then metadata_named = oid(metadata_embedded)
-        metadata_named = _if_cache[(mg, 'named'), idf['record-seq']]  # thi is invar to trunc
-        metadata_bnode = _if_cache[(mg, 'bnode'), idf['record-seq']]
-        metadata_named_embedded = _if_cache[(mg, 'named'), bound_name, idf['embedded']]
-        metadata_named_condensed = _if_cache[(mg, 'named'), bound_name, idf['condensed']]
-        # mbc is what is used as the subgraph identifier, but mbe is used in metadata_bnode
-        # mbc should also show up in identity relations during the later load if non-trunc
-        mbc_key = (mg, 'bnode'), bound_name, idf['condensed']
-        metadata_bnode_condensed = (_if_cache[mbc_key]
-                                    if mbc_key in _if_cache else
-                                    _hbn.null_identity)
-        record_count = len(mg)
-        named, bnode = split_named_bnode(mg)  # sigh, but metadata is small so ok
-        named_record_count = len(named)
-        bnode_record_count = len(bnode)
+        if bound_name is not None:
+            # trunc first because non-trunc is impossible at this point if dangling
+            mg = metadata.graph
+            # we are not using graph_combined for this
+            # also, metadata_graph is needed in cases where we have non-truncated multi-parent
+            # but that can usually only be calculated from the full graph, so a separate phase
+            _if_cache = IdentityBNode._if_cache
+            metadata_graph = IdentityBNode(mg, as_type=ibn_it['triple-seq'], id_method=idf['record-seq'])
+            metadata_embedded = _if_cache[mg, bound_name, idf['embedded']]
+            metadata_condensed = _if_cache[mg, bound_name, idf['condensed']]
+            metadata_combined = IdentityBNode(mg, as_type=ibn_it['triple-seq'], id_method=idf['graph-combined'])
+            # if there are no bnodes then metadata_named = oid(metadata_embedded)
+            metadata_named = _if_cache[(mg, 'named'), idf['record-seq']]  # thi is invar to trunc
+            metadata_bnode = _if_cache[(mg, 'bnode'), idf['record-seq']]
+            metadata_named_embedded = _if_cache[(mg, 'named'), bound_name, idf['embedded']]
+            metadata_named_condensed = _if_cache[(mg, 'named'), bound_name, idf['condensed']]
+            # mbc is what is used as the subgraph identifier, but mbe is used in metadata_bnode
+            # mbc should also show up in identity relations during the later load if non-trunc
+            mbc_key = (mg, 'bnode'), bound_name, idf['condensed']
+            metadata_bnode_condensed = (_if_cache[mbc_key]
+                                        if mbc_key in _if_cache else
+                                        _hbn.null_identity)
+            record_count = len(mg)
+            named, bnode = split_named_bnode(mg)  # sigh, but metadata is small so ok
+            named_record_count = len(named)
+            bnode_record_count = len(bnode)
 
-        truncated = _dangling(mg)
-        if truncated:  # metadata_embedded is None:
-            _type = 'truncated_metadata'
-            #embedded = metadata_truncated_embedded
-            #condensed = metadata_truncated_condensed
-        else:
-            _type = 'metadata'
+            truncated = _dangling(mg)
+            if truncated:  # metadata_embedded is None:
+                _type = 'truncated_metadata'
+                #embedded = metadata_truncated_embedded
+                #condensed = metadata_truncated_condensed
+            else:
+                _type = 'metadata'
 
-        graph = metadata_graph.identity
-        embedded = metadata_embedded
-        condensed = metadata_condensed
+            graph = metadata_graph.identity
+            embedded = metadata_embedded
+            condensed = metadata_condensed
 
-        combined = metadata_combined.identity
-        named = metadata_named
-        bnode = metadata_bnode
-        named_embedded = metadata_named_embedded
-        # FIXME we need conn free seq in here too, but I'm not sure
-        # what that is called in the identity function right now?
-        # record-seq i think? all the others are still useful for
-        # other use cases but we need conn free seq for consistency?
-        named_condensed = metadata_named_condensed
-        bnode_condensed = metadata_bnode_condensed
+            combined = metadata_combined.identity
+            named = metadata_named
+            bnode = metadata_bnode
+            named_embedded = metadata_named_embedded
+            # FIXME we need conn free seq in here too, but I'm not sure
+            # what that is called in the identity function right now?
+            # record-seq i think? all the others are still useful for
+            # other use cases but we need conn free seq for consistency?
+            named_condensed = metadata_named_condensed
+            bnode_condensed = metadata_bnode_condensed
 
-        idents.extend((
-            (f'{_type}_graph', graph, record_count),
-            (f'{_type}_graph_combined', combined, record_count),
-            # FIXME this isn't quite right ... conn free seq needs to be in here
+            idents.extend((
+                (f'{_type}_graph', graph, record_count),
+                (f'{_type}_graph_combined', combined, record_count),
+                # FIXME this isn't quite right ... conn free seq needs to be in here
 
-            ('embedded', embedded, record_count),
-            ('condensed', condensed, record_count),
+                ('embedded', embedded, record_count),
+                ('condensed', condensed, record_count),
 
-            ('named_embedded_seq', named, named_record_count),
-            ('named_embedded', named_embedded, named_record_count),
-            ('named_condensed', named_condensed, named_record_count),
+                ('named_embedded_seq', named, named_record_count),
+                ('named_embedded', named_embedded, named_record_count),
+                ('named_condensed', named_condensed, named_record_count),
 
-            ('bnode_conn_free_seq', bnode, bnode_record_count),
-            ('bnode_condensed', bnode_condensed, bnode_record_count),
-        ))
+                ('bnode_conn_free_seq', bnode, bnode_record_count),
+                ('bnode_condensed', bnode_condensed, bnode_record_count),
+            ))
 
-        irels.extend(
-            ((serialization_identity, 'hasMetadataGraph', graph),
-             (serialization_identity, 'hasMetadataGraph', combined),
-             (graph, 'hasEquivalent', combined),
+            irels.extend(
+                ((serialization_identity, 'hasMetadataGraph', graph),
+                (serialization_identity, 'hasMetadataGraph', combined),
+                (graph, 'hasEquivalent', combined),
 
-             (graph, 'hasMetadataRecord', embedded),
-             (embedded, 'hasCondensed', condensed),
+                (graph, 'hasMetadataRecord', embedded),
+                (embedded, 'hasCondensed', condensed),
 
-             (combined, 'hasNamedGraph', named),
-             (combined, 'hasBnodeGraph', bnode),
-             (named, 'hasNamedRecord', named_embedded),
-             (named_embedded, 'hasCondensed', named_condensed),
-             (bnode, 'hasBnodeRecord', bnode_condensed),  # XXX might miss free but dedupe should cover it?
-             # FIXME if this is not truncated then bnode_condensed
-             # will be a subgraph identity, if it is truncated then
-             # we have map metadata_graph_combined to truncated_metadata_graph_combined
-             # i think going via bound name will work
+                (combined, 'hasNamedGraph', named),
+                (combined, 'hasBnodeGraph', bnode),
+                (named, 'hasNamedRecord', named_embedded),
+                (named_embedded, 'hasCondensed', named_condensed),
+                (bnode, 'hasBnodeRecord', bnode_condensed),  # XXX might miss free but dedupe should cover it?
+                # FIXME if this is not truncated then bnode_condensed
+                # will be a subgraph identity, if it is truncated then
+                # we have map metadata_graph_combined to truncated_metadata_graph_combined
+                # i think going via bound name will work
 
-             ))
+                ))
 
-    yield prepare_batch('INSERT INTO names (name) VALUES', [(n,) for n in name_rows], ocdn)
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 8 */',
-                        idents,
-                        ocdn,)
-    yield prepare_batch('INSERT INTO name_to_identity (name, identity, type) VALUES', name_to_idents, ocdn)
-    yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
+    if name_rows:
+        yield prepare_batch('INSERT INTO names (name) VALUES', [(n,) for n in name_rows], ocdn)
+
+    if idents:
+        yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 8 */',
+                            idents,
+                            ocdn,)
+
+    if name_to_idents:
+        yield prepare_batch('INSERT INTO name_to_identity (name, identity, type) VALUES', name_to_idents, ocdn)
+
+    if irels:
+        yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
 
 
 def process_local_conventions(local_conventions, local_conventions_count, dout=None):
@@ -1088,6 +1099,7 @@ def process_bnode(
 
     if dangle:
         _ssord = set(sord)
+        _more = []
         for i, d in enumerate(sorted(dangle)):
             subject_condensed_idents[d] = _hbn.null_identity
             bnode_replicas[d] = i
@@ -1095,11 +1107,14 @@ def process_bnode(
                 # for dangles in conn it is safe to stick at the end of the
                 # list since they wont interact, if they already in sord then
                 # putting it in sci with the null identity is sufficient
-                sord.append(d)
+                _more.append(d)
 
         _ssord = None
+        _more_sord = sorted(list(term_bnode_subject_counts) + _more, key=skey)
+    else:
+        _more_sord = sorted(term_bnode_subject_counts, key=skey)
 
-    for _s in sorted(term_bnode_subject_counts, key=skey):
+    for _s in _more_sord:
         # make sure that we run cases where term -> conn directly
         # we put them all at the end given that we don't know where
         # they actually occur in the graph, so we may end up carrying
@@ -1113,6 +1128,7 @@ def process_bnode(
         # we are still missing free terminal cases and this doesn't
         # help reorder term anyway so the memory usage issue remains
         if _s not in link_bnode_object_counts and _s not in link_bnode_subject_counts:
+            # TODO see if we can avoid these checks for the dangle cases?
             sord.append(_s)
 
     def make_subgraph_rows(s, scid, replica):
@@ -1385,12 +1401,13 @@ def process_bnode(
                     # XXX FIXME uh how did we get an id for these at all?
                     assert conn_bnode_object_counts == dict(conn_seen_o)
 
-            yield from prepare_batch_bnode(
-                batch_term_uri_rows,
-                batch_term_lit_rows,
-                batch_link_rows,
-                batch_conn_rows,
-                batch_idents,)
+            if batch_idents:
+                yield from prepare_batch_bnode(
+                    batch_term_uri_rows,
+                    batch_term_lit_rows,
+                    batch_link_rows,
+                    batch_conn_rows,
+                    batch_idents,)
 
             if i != lsm1:
                 yield None, None
@@ -1945,20 +1962,39 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
         out_graph = OntGraph(bind_namespaces='none')
         # potential memory issues with having two copies of the same graph around
 
-        if iri != bound_name:
+        if localfs:
+            if bound_name is None:
+                name_to_check = None
+                type_to_check = None
+            else:
+                name_to_check = bound_name
+                type_to_check = 'bound'
+        elif iri != bound_name:
             name_to_check = iri
             type_to_check = 'pointer'
         else:
             name_to_check = bound_name
             type_to_check = 'bound'
 
-        local_convention_rows = q.getCuriesByName(name=name_to_check, type=type_to_check)
-        # FIXME these two queries need to be run together
-        # because it could happen that the latest identity
-        # could change between the two calls causing reconstruction
-        # to fail, another solution is to get the latest identity
-        # and then use it to retrieve both parts
-        graph_rows = q.getGraphByName(name=name_to_check, type=type_to_check)
+        if name_to_check is None:
+            if serialization_identity is None:
+                _gclc = dout['graph_combined_local_conventions_identity']
+                breakpoint()
+                raise NotImplementedError('TODO use gclc')
+                local_convention_rows = q.getCuriesByGCLCIdentity(_gclc)
+                graph_rows = q.getGraphByGCLCIdentity(_gclc)
+            else:
+                local_convention_rows = q.getCuriesBySerializationIdentity(serialization_identity)
+                graph_rows = q.getGraphBySerializationIdentity(serialization_identity)
+        else:
+            # FIXME these two queries need to be run together
+            # because it could happen that the latest identity
+            # could change between the two calls causing reconstruction
+            # to fail, another solution is to get the latest identity
+            # and then use it to retrieve both parts
+            local_convention_rows = q.getCuriesByName(name=name_to_check, type=type_to_check)
+            graph_rows = q.getGraphByName(name=name_to_check, type=type_to_check)
+
         curies = {p: n for p, n in local_convention_rows}
         out_graph.namespace_manager.populate_from(curies)
         @profile_me
@@ -1972,7 +2008,6 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
         _ = [out_graph.add(t) for t in trip_seq]
         log.debug('begin populate outgraph')
         out_graph.namespace_manager.populate_from()
-        herpderp()
         log.debug('end populate outgraph')
 
         if len(trip_seq) != triple_count:
