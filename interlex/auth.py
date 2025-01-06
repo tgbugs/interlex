@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta
 import argon2
+import secrets
+import binascii
 import flask_login as fl
+from idlib.utils import makeEnc
 from interlex.utils import log
 from sqlalchemy.sql import text as sql_text
 
@@ -40,34 +43,46 @@ def validate_password(argon2_string, password):
 # base62 + 6 digits of crc32 checksum
 
 # we do not need all the complexity of jwts given our scale
-import binascii
-from idlib.utils import makeEnc
 base62_alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijlkmnopqrstuvwxyz'
 base62encode, base62decode = makeEnc(base62_alphabet)
-hrm = b'0' * 22
-chrm = binascii.crc32(hrm)
-tenc = hrm + chrm.to_bytes(4, byteorder='big')
-enc = base62encode(int.from_bytes(tenc, byteorder='big'))
-penc = 'ixp_' + enc
-###
-_denc = base62decode(penc[4:])
-denc = int.to_bytes(_denc, 26, byteorder='big')
-key, crc = denc[:-4], denc[-4:]
-binascii.crc32(key) == int.from_bytes(crc, byteorder='big')
+max_30 = base62decode('z' * 30) + 1
 
 
-def key_from_auth_value(auth_value):
-    # FIXME TODO must test this, gh impl mentions zero padding which i don't have right now
-    raw_key = auth_value[7:]  # strip 'Bearer '
+def gen_key(key_type='p'):
+    int_key = secrets.randbelow(max_30)
+    actual_key = int.to_bytes(int_key, 23, byteorder='big')
+    return _gen_key(actual_key, key_type=key_type)
+
+
+def _gen_key(actual_key, key_type='p'):
+    chrm = binascii.crc32(actual_key)
+    chrm_bytes = chrm.to_bytes(4, byteorder='big')
+    tenc = actual_key + chrm_bytes
+    int_enc = int.from_bytes(tenc, byteorder='big')
+    enc = base62encode(int_enc)
+    lz = 36 - len(enc)
+    penc = f'ix{key_type}_' + ('0' * lz) + enc
+    return penc
+
+
+def _decompose_key(raw_key, fail=True):
     prefix, _key, _crc = raw_key[:4], raw_key[4:-6], raw_key[-6:]  # this isn't the exact inverse might break
     _denc = base62decode(_key + _crc)
-    denc = int.to_bytes(_denc, 26, byteorder='big')
+    denc = int.to_bytes(_denc, 27, byteorder='big')
     key, crc = denc[:-4], denc[-4:]
     # FIXME should be able to do the split while still in the encoded form yeah?
     if binascii.crc32(key) != int.from_bytes(crc, byteorder='big'):
         msg = 'crc checksum failed'
-        raise Auth.MangledTokenError(msg)
+        if fail:
+            raise Auth.MangledTokenError(None, msg)
 
+    return key, crc
+
+
+def key_from_auth_value(auth_value):
+    # FIXME TODO must test this, gh impl mentions zero padding which i don't have right now
+    raw_key = auth_value[8:]  # strip 'Bearer '
+    _decompose_key(raw_key)
     return raw_key.encode()  # its a bytea in the database
 
 
@@ -81,9 +96,10 @@ class Auth:
             # ah class scope
             # TODO make sure access route has the actual source not nginx
             # FIXME use extra
-            breakpoint()
-            ll = getattr(Auth.log, self.log_level)
-            ll(f'{self.__class__.__name__} - {extra_info} - {request.remote_addr} - {request.url} - \n{request.headers}')
+            if request is not None:
+                ll = getattr(Auth.log, self.log_level)
+                ll(f'{self.__class__.__name__} - {extra_info} - {request.remote_addr} - {request.url} - \n{request.headers}')
+
             super().__init__(*args, **kwargs)
 
     class MalformedRequestHeader(AuthError):
@@ -226,7 +242,11 @@ class Auth:
 
         # TODO edge case for when request was made vs when it will end
         # for long running queries start and end might cross the liftime
-        provided_key = key_from_auth_value(auth_value)  # XXX will raise on malformed key
+        try:
+            provided_key = key_from_auth_value(auth_value)  # XXX will raise on malformed key
+        except self.MangledTokenError as e:
+            raise self.MangledTokenError(request, e.extra_info)
+
         resp = list(self.session.execute(
             sql_text(('select a.key_scope, a.created_datetime, a.lifetime_seconds, '
                       'a.revoked_datetime, g.groupname '
