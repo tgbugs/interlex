@@ -85,12 +85,14 @@ def uriStructure():
     # reminder: None is used to mark branches that are also terminals
     parent_child = {
         '<group>':             basic + ['*ilx_get', 'lexical'] + branches + compare + [
-            'ops', 'priv', 'contributions', 'upload', 'prov', 'external',
-            'request-ingest',
-            #'new-ontology',  # not clear whether we actually need new-ontology on the api because all new ontologies should be POSTed to their desired uri, the frontend probably needs that though?
-            'new-entity', 'modify-a-b', 'modify-add-rem'],
+            'ops', 'priv', 'contributions', 'prov', 'external',],
         'ops':                 ['<operation>'],  # in the uri api top level ops are not meaningful  # FIXME likely merge ...
-        'priv':                ['role', '<page>'],  # XXX TODO see if we really need this also probably want /<group>/priv/settings/<sub>
+        'priv':                ['role',
+                                'upload',
+                                'request-ingest',
+                                #'ontology-new',  # not clear whether we actually need new-ontology on the api because all new ontologies should be POSTed to their desired uri, the frontend probably needs that though?
+                                'entity-new', 'modify-a-b', 'modify-add-rem',
+                                '<page>'],  # XXX TODO see if we really need this also probably want /<group>/priv/settings/<sub>
         'role':                ['<user>'],
         '*ilx_pattern':        [None, 'other', '*versions'],  # FIXME this is now doing a stupid redirect to ilx_pattern/ >_<
         '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_

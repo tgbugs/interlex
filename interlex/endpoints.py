@@ -256,7 +256,7 @@ class Endpoints:
             'mapped':self.mapped,
 
             'request-ingest': self.request_ingest,
-            'new-entity': self.new_entity,
+            'entity-new': self.entity_new,
             'modify-a-b': self.modify_a_b,
             'modify-add-rem': self.modify_add_rem,
         }
@@ -306,7 +306,7 @@ class Endpoints:
             return (f'{iri} submitted for processing {job_url}', 202)
 
     @basic
-    def new_entity(self, group, db=None): return 'NOT IMPLEMENTED\n', 400
+    def entity_new(self, group, db=None): return 'NOT IMPLEMENTED\n', 400
     @basic
     def modify_a_b(self, group, db=None): return 'NOT IMPLEMENTED\n', 400
     @basic
@@ -350,7 +350,7 @@ class Endpoints:
     def ops(self, group, operation):
         # FIXME this needs to be able to detect whether a user is already
         # logged in as the same or another user
-        if operation == 'new-user':  # aka new-user
+        if operation == 'user-new':
             # FIXME if a user does not exist they will have no group
             # so which user should it go to? probably base? idk?
             # maybe a dedicated ops user? /ops/ops ? /nobody/ops ?
