@@ -17,6 +17,7 @@ Usage:
     interlex post entity   [options] <rdf:type> <rdfs:sub*Of> <rdfs:label> [<definition:>] [<synonym:> ...]
     interlex post triple   [options] <subject> <predicate> <object>
     interlex post login    [options]
+    interlex post signup   [options] <email> <orcid>
     interlex id     [options] <match-curie-or-iri> ...
     interlex label  [options] <match-label> ...
     interlex term   [options] <match-label-or-synonym> ...
@@ -197,7 +198,7 @@ class Shell(clif.Dispatcher):
         from sqlalchemy.orm.session import sessionmaker
         from interlex.alt import dbUri
         from interlex.dump import MysqlExport
-        engine = create_engine(dbUri(), echo=True)
+        engine = create_engine(dbUri(), echo=True)  # FIXME dburi from config pls
         Session = sessionmaker()
         Session.configure(bind=engine)
         session = Session()
@@ -292,15 +293,37 @@ class Post(clif.Dispatcher):
         # TODO ORCID on the front end
         s = requests.Session()  # use session to auto handle cookies
         resp = s.post(url, headers={'Authorization': 'Basic ' + getpass()})
+        #resp = s.post(url, data={'username': username, 'password': getpass()})
         resp.headers
         #s.cookies.set("COOKIE_NAME", "the cookie works", domain="example.com")
         log.debug(resp.text)
         log.debug(resp.headers)
+        url_test = f'{scheme}://{host}/{group}/priv/settings'  # https duh
+        resp_test = s.get(url_test)
         breakpoint()
 
     def signup(self):
         from getpass import getpass
         scheme, host, group, headers = self._post()
+        username = group
+        url = f'{scheme}://{host}/base/ops/new-user'  # https duh
+        s = requests.Session()
+        resp = s.post(url, data={
+            'username': username,
+            'password': getpass(),
+            'email': self.options.email,
+            'orcid': self.options.orcid,})
+
+        if not resp.ok:
+            from pprint import pprint
+            if resp.status_code < 500:
+                pprint(resp.json())
+
+        else:
+            # TODO orcid flow
+            # TODO email flow
+            pass
+
         breakpoint()
         pass
 
@@ -374,7 +397,8 @@ class Post(clif.Dispatcher):
         ontology_iri = self.options.rdf_iri
         u = urlparse(ontology_iri)
         j = {'name':ontology_iri}
-        url = f'{scheme}://{host}/{group}/ontologies/' + u.path[1:]
+        #url = f'{scheme}://{host}/{group}/ontologies/' + u.path[1:]
+        url = f'{scheme}://{host}/{group}/request-ingest'
         resp = requests.post(url, json=j, headers=headers)
         printD(resp.text)
 

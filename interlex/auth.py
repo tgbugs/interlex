@@ -217,6 +217,8 @@ class Auth:
 
     def authenticate_request(self, request):
         now = datetime.utcnow()
+        # unauthed requests don't really need this
+        request._auth_datetime = now
 
         write_requires_auth = request.method in ('POST', 'PATCH', 'PUT')
         read_might_require_auth = (
@@ -228,77 +230,117 @@ class Auth:
         # auth user is not provided for the scratch space
         request_needs_auth_or_auth_user = write_requires_auth or read_might_require_auth
 
+        logged_in_user = fl.current_user
+        if logged_in_user is not None and not logged_in_user.is_anonymous:
+            li_user = logged_in_user.groupname
+        else:
+            li_user = None
+
+        def no_token_ok(r):
+            notok = {
+                'logout',
+                'settings',
+                'password-change',  # TODO figure out what to do about accounts without email validation
+                'orcid-change',
+                'orcid-verify',
+                'email-add',
+                'email-del',
+                'email-verify',
+                'email-primary',
+                # api-token* requires email and orcid verification complete but that is checked later
+                'api-tokens',
+                'api-token-new',
+                'api-token-revoke',
+            }
+            return r.url_rule.rule == '/<group>/priv/<page>' and r.view_args['page'] in notok
+
         if 'Authorization' in request.headers:
             auth_value = request.headers['Authorization']
+        elif li_user is not None and no_token_ok(request):
+            # we don't actually check for pending here, we only allow
+            # specific resources and operations to be accessed if
+            # password login is being used
+            auth_value = None
         elif write_requires_auth:
             msg = f'{request.method} requires authorization, but no token was provided'
             raise self.MissingTokenError(msg)
         else:
             return None, None, None, None, None
 
-        if not auth_value.startswith('Bearer '):
-            msg = 'Authorization header did not start with "Bearer "'
-            raise self.MalformedRequestHeader(request, msg)
+        if auth_value is not None:
+            if not auth_value.startswith('Bearer '):
+                msg = 'Authorization header did not start with "Bearer "'
+                raise self.MalformedRequestHeader(request, msg)
 
-        # TODO edge case for when request was made vs when it will end
-        # for long running queries start and end might cross the liftime
-        try:
-            provided_key = key_from_auth_value(auth_value)  # XXX will raise on malformed key
-        except self.MangledTokenError as e:
-            raise self.MangledTokenError(request, e.extra_info)
+            # TODO edge case for when request was made vs when it will end
+            # for long running queries start and end might cross the liftime
+            try:
+                provided_key = key_from_auth_value(auth_value)  # XXX will raise on malformed key
+            except self.MangledTokenError as e:
+                raise self.MangledTokenError(request, e.extra_info)
 
-        resp = list(self.session.execute(
-            sql_text(('select a.key_scope, a.created_datetime, a.lifetime_seconds, '
-                      'a.revoked_datetime, g.groupname '
-                      'from api_keys as a '
-                      'join groups as g on g.id = a.user_id '
-                      'where a.key = :provided_key '
-                      # note that you won't be able to get api keys at all
-                      # until email and orcid workflows are done
+            resp = list(self.session.execute(
+                sql_text(('select a.key_scope, a.created_datetime, a.lifetime_seconds, '
+                          'a.revoked_datetime, g.groupname '
+                          'from api_keys as a '
+                          'join groups as g on g.id = a.user_id '
+                          'where a.key = :provided_key '
+                          # note that you won't be able to get api keys at all
+                          # until email and orcid workflows are done
 
-                      # if a user is deactivated, deleted, banned, erased,
-                      # etc. then this becomes an unknown token error while
-                      # we clean up the tokens from the database
-                      "and g.own_role < 'pending'")),
-            params=dict(provided_key=provided_key)))
+                          # if a user is deactivated, deleted, banned, erased,
+                          # etc. then this becomes an unknown token error while
+                          # we clean up the tokens from the database
+                          "and g.own_role < 'pending'")),
+                params=dict(provided_key=provided_key)))
 
-        if not resp:
-            msg = 'the provided token is not known to this system'
-            raise self.UnknownTokenError(request, msg)
+            if not resp:
+                msg = 'the provided token is not known to this system'
+                raise self.UnknownTokenError(request, msg)
 
-        row = resp[0]
-        if row.revoked_datetime is not None:
-            # XXX DO NOT RETURN ANY INFORMATION ABOUT REVOCATION TIME
-            # it can be used by an attacker to estimate response time
-            msg = 'the provided token has been revoked'
-            raise self.RevokedTokenError(request, msg)
+            row = resp[0]
+            if row.revoked_datetime is not None:
+                # XXX DO NOT RETURN ANY INFORMATION ABOUT REVOCATION TIME
+                # it can be used by an attacker to estimate response time
+                msg = 'the provided token has been revoked'
+                raise self.RevokedTokenError(request, msg)
 
-        if row.created_datetime + timedelta(seconds=row.lifetime_seconds) >= now:
-            # TODO need a way to document how long after
-            # expiration tokens are rotated out
-            msg = 'the provided token has expired'
-            raise self.ExpiredTokenError(request, msg)
+            if row.created_datetime + timedelta(seconds=row.lifetime_seconds) >= now:
+                # TODO need a way to document how long after
+                # expiration tokens are rotated out
+                msg = 'the provided token has expired'
+                raise self.ExpiredTokenError(request, msg)
 
-        # if a token is provided we MUST check it even if the request
-        # does not actually require authorization, doing otherwise
-        # creates systematic risk of mishandling a malformed, expired, etc.
-        # token at some point further down the pipeline
-        if not request_needs_auth_or_auth_user:
-            # FIXME make sure this fails safe ? or is this
-            # this fail safe point? this is the point i think
+            # if a token is provided we MUST check it even if the request
+            # does not actually require authorization, doing otherwise
+            # creates systematic risk of mishandling a malformed, expired, etc.
+            # token at some point further down the pipeline
+            if not request_needs_auth_or_auth_user:
+                # FIXME make sure this fails safe ? or is this
+                # this fail safe point? this is the point i think
 
-            # for GET i think only
-            # ontologies
-            # uris
-            # priv
-            return None, None, None, None, None
+                # for GET i think only
+                # ontologies
+                # uris
+                # priv
+                return None, None, None, None, None
 
-        # scope/method mismatch is checked first because we don't need an
-        # additional query
-        scope = row.key_scope
-        if write_requires_auth and scope.endswith('-only'):
-            msg = f'token has invalid scope {scope} for method {request.method}'
-            raise self.InvalidScopeError(request, msg)
+            # scope/method mismatch is checked first because we don't need an
+            # additional query
+            scope = row.key_scope
+            if write_requires_auth and scope.startswith('read-'):
+                msg = f'token has invalid scope {scope} for method {request.method}'
+                raise self.InvalidScopeError(request, msg)
+
+            auth_user = row.groupname
+
+        elif li_user is not None:
+            scope = 'user-only'
+            auth_user = li_user
+
+        else:
+            msg = 'more like not implemented correctly amirite'
+            raise NotImplementedError(msg)
 
         def gvk(k):
             return request.view_args[k] if k in request.view_args else None
@@ -306,17 +348,18 @@ class Auth:
         request_group = gvk('group')
         request_group_other = gvk('other_group')
         request_group_other_diff = gvk('other_group_diff')
-
-        auth_user = row.groupname
-
         rgroups = [rg for rg in
-                    (request_group,
+                   (request_group,
                     request_group_other,
                     request_group_other_diff)
-                    if rg is not None]
+                   if rg is not None]
         need_group_perms = [rg for rg in rgroups if rg != auth_user]
         _read_private = read_might_require_auth  # XXX unfortunately have to start on and turn off
         if need_group_perms:
+            if scope.endswith('-only'):
+                msg = f'token has invalid scope {scope} for other groups'
+                raise self.InvalidScopeError(request, msg)
+
             # if auth_user == request_group then unless we aborted on scope
             # mismatch (i.e. we never get here), all requests are allowed
             # so we only have to check mismatched cases

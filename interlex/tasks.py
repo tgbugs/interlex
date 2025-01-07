@@ -5,6 +5,7 @@ from celery.signals import worker_process_init, worker_process_shutdown
 from interlex import config
 from interlex.core import getScopedSession
 from interlex.load import FileFromIRIFactory, FileFromPostFactory
+from interlex.ingest import run_cmd
 from pprint import pprint
 
 
@@ -138,6 +139,7 @@ def long_load(self, loader, expected_bound_name):
 
     return loader.load()  # TODO error handling
 
+
 @cel.task(bind=True)#, ignore_result=True)
 def bigload(self, loader):
     #self.update_state('this is going to take awhile')
@@ -145,3 +147,15 @@ def bigload(self, loader):
     self.update_state(state='STARTING')
     sleep(3)
     return 'actually done now'
+
+
+@cel.task(bind=True)
+def load_iri_via_ingest(self, user, uri):
+    argv = [
+        sys.executable,
+        '-m',
+        'interlex.ingest',
+        user,
+        uri,
+        '--commit',]
+    run_cmd(argv, pathlib.Path.cwd(), logfile)

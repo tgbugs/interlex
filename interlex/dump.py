@@ -716,6 +716,13 @@ class Queries:
     def getBuiltinGroups(self):
         return list(self.session_execute("SELECT * FROM groups WHERE own_role = 'builtin'"))
 
+    def getGroupExisting(self, groupname):
+        # we can't use getGroupIds for this because getGroupIds requires
+        # that a group already exists and otherwise aborts hard
+        return list(self.session_execute(
+            'select g.id from groups as g where g.groupname = :groupname',
+            params=dict(groupname=groupname)))
+
     def getGroupIds(self, *group_names):
         # have to type group_names as list because postgres doesn't know what to do with a tuple
         return {r.g:r[1] for r in self.session_execute('SELECT g, idFromGroupname(g) '
@@ -729,10 +736,10 @@ class Queries:
         if epoch_verstr is not None:
             # TODO
             sql = ('SELECT curie_prefix, iri_namespace FROM curies as c '
-                    'WHERE c.group_id = idFromGroupname(:group)')
+                   'WHERE c.group_id = idFromGroupname(:group)')
         else:
             sql = ('SELECT curie_prefix, iri_namespace FROM curies as c '
-                    'WHERE c.group_id = idFromGroupname(:group)')  # FIXME idFromGroupname??
+                   'WHERE c.group_id = idFromGroupname(:group)')  # FIXME idFromGroupname??
         resp = self.session_execute(sql, params)
         PREFIXES = {cp:ip for cp, ip in resp}
         return PREFIXES
@@ -842,6 +849,25 @@ class Queries:
                'JOIN existing_iris ON i = ilx_id')
         resp = list(self.session_execute(sql, args))
         return resp
+
+    def getNamesFirstLatest(self, *iris):
+        args = dict(uris=iris)
+        sql = '''
+select n.name, nti.type, n.first_seen as n_first_seen, ids.identity, ids.first_seen as i_first_seen
+from names as n
+left join name_to_identity as nti on n.name = nti.name
+join identities as ids on ids.identity = nti.identity
+where n.name in :uris
+'''
+        names_first_seen = {}
+        for r in self.session_execute(sql, args):
+            if r.name in names_first_seen:
+                names_first_seen[r.name]['type'].append(r.type)
+            else:
+                names_first_seen[r.name] = {}
+
+        breakpoint()
+        return names_first_seen
 
     def getReplicasByIdentity(self, identity):
         # XXX this should probably not be used, there should be a join variant that will properly attach the replicas for the given identity and produce ALL the duplicated triples in a single pass
@@ -1265,3 +1291,18 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
                                                 'WITH ORDINALITY id',
                                                 dict(triples_ids=list(triples_ids))):
             yield identity
+
+    def getConstraint(self, schema, table, constraint):
+        args = dict(schema=schema, table=table, constraint=constraint)
+        sql = '''
+SELECT con.conname, pg_get_constraintdef(con.oid)
+       FROM pg_catalog.pg_constraint con
+            INNER JOIN pg_catalog.pg_class rel
+                       ON rel.oid = con.conrelid
+            INNER JOIN pg_catalog.pg_namespace nsp
+                       ON nsp.oid = connamespace
+       WHERE nsp.nspname = :schema
+             AND rel.relname = :table
+             AND con.conname = :constraint
+'''
+        return list(self.session_execute(sql, args))

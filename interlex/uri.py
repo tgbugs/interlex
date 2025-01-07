@@ -86,10 +86,12 @@ def uriStructure():
     parent_child = {
         '<group>':             basic + ['*ilx_get', 'lexical'] + branches + compare + [
             'ops', 'priv', 'contributions', 'upload', 'prov', 'external',
+            'request-ingest',
+            #'new-ontology',  # not clear whether we actually need new-ontology on the api because all new ontologies should be POSTed to their desired uri, the frontend probably needs that though?
             'new-entity', 'modify-a-b', 'modify-add-rem'],
         'ops':                 ['<operation>'],  # in the uri api top level ops are not meaningful  # FIXME likely merge ...
-        'priv':                ['<page>'],  # XXX TODO see if we really need this also probably want /<group>/priv/settings/<sub>
-
+        'priv':                ['role', '<page>'],  # XXX TODO see if we really need this also probably want /<group>/priv/settings/<sub>
+        'role':                ['<user>'],
         '*ilx_pattern':        [None, 'other', '*versions'],  # FIXME this is now doing a stupid redirect to ilx_pattern/ >_<
         '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
         '<other_group_diff>':  basic + ['lexical'] + branches,
@@ -129,8 +131,10 @@ def uriStructure():
     node_methods = {'curies_':['GET', 'POST'],
                     'ontologies_':['GET'],
                     'upload':['HEAD', 'POST'],
+                    'request-ingest':['POST'],
                     'modify-add-rem':['PATCH'],  # accepts add remove ban requires both add and remove but can be empty for either only for bulk
                     'modify-a-b':['PATCH'],  # takes a before and after so that the backend can generate the add and remove subset
+                    '<user>': ['GET', 'PUT', 'DELETE', 'OPTIONS'],  # for user roles
                     #'versions':['GET'],
                     'spec':['GET', 'POST', 'PATCH'],  # post to create a new ontology with that name i think
                     #'<prefix_iri_curie>':[],  only prefixes can be updated...?
@@ -265,7 +269,7 @@ def build_api(app):
         'own':api.namespace('Own', 'See one group\'s view of another group\'s personalized IRIs', '/'),
         # XXX these are being trialed
         'ops':api.namespace('Operations', 'Stateful operations.'),
-        'priv':api.namespace('Privileged endpoints'),
+        'priv':api.namespace('Privileged resources'),
     }
     extra = {name + '_':ns for name, ns in doc_namespaces.items() if name in ('curies', 'contributions', 'ontologies')}
     doc_namespaces = {**extra, **doc_namespaces}  # make sure the extras come first for priority ordering
@@ -332,8 +336,8 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
 
     @lm.user_loader                                                         # give login manager access to db
     def load_user(user_id):
-        cr = endpoints.session_execute(
-            "SELECT * FROM groups WHERE own_role < 'pending' AND id = :user_id",
+        cr = endpoints.session_execute(  # have to allow login for pending users so they can fix broken email and orcid
+            "SELECT * FROM groups AS g JOIN users AS u ON g.id = u.id WHERE g.own_role <= 'pending' AND u.id = :user_id",
             dict(user_id=user_id),)
         rows = list(cr)
         if not rows:
@@ -341,6 +345,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
         else:
             class tuser:
                 is_active = True
+                is_anonymous = False
                 id = rows[0].id
                 own_role = rows[0].own_role
                 groupname = rows[0].groupname
@@ -375,7 +380,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
         function = endpoint_type.get_func(nodes)
         methods = route_methods(nodes, node_methods)
 
-        if 'uris' in nodes or '*uris_ont' in nodes:
+        if 'uris' in nodes or '*uris_ont' in nodes or 'priv' in nodes:
             # FIXME TODO there are others
             rules_req_auth.add(route)
 

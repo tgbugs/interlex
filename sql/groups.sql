@@ -19,7 +19,7 @@ CREATE TABLE perspectives(
 CREATE type group_role AS enum (
 'admin',
 'owner',
-'contributor',
+'contributor', -- contributors are users that have auto-pull rights when they either directly edit their perspective of a org term or merge their own user perspective to their view of the or org term manually
 'curator',
 'view', -- really means view-scratch because all non-scratch is public
 'org',
@@ -260,7 +260,7 @@ CREATE OR REPLACE FUNCTION idFromGroupname(groupname text, OUT group_id integer)
        -- FIXME run this off groups not org_user_view?
        BEGIN
            SELECT id INTO STRICT group_id FROM groups as g WHERE g.groupname = idFromGroupname.groupname;
-           -- usd STRICT to abort a transaction eary if the user does not exist
+           -- use STRICT to abort a transaction early if the user does not exist
        END;
 $idFromGroupname$ language plpgsql;
 
