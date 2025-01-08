@@ -368,12 +368,6 @@ BEGIN
        -- and it will prevent a user from squatting on the wrong email, easy for them to change later and
        -- if they reverify we can auto reset within the 1 week
        -- for orcids we expire by appending -EXPIRED to the end of the url
-       /*
-       api_key_done_expire_dur := (select duration from ;
-       user_email_unverified_expire_dur := interval '2 days';
-       user_orcid_unverified_expire_dur := interval '2 days';
-       user_account_unverified_expire_dur := interval '1 week';
-       */
        SELECT * FROM api_keys
        WHERE ((revoked_datetime                           IS NOT NULL
                AND
@@ -390,9 +384,8 @@ BEGIN
        WHERE orcid_verified IS NULL AND created_datetime + user_orcid_unverified_expire_dur >= CURRENT_TIMESTAMP;
 
        SELECT * FROM users AS u JOIN groups AS g ON g.id = u.id
-       WHERE orcid_verified IS NULL
-             AND u.id NOT IN (SELECT u.id FROM users AS u JOIN user_emails AS ue ON u.id = ue.user_id AND ue.email_validated IS NOT NULL)
-             AND g.created_datetime + user_account_unverified_expire_dur >= CURRENT_TIMESTAMP;
+       WHERE g.own_role = 'pending'
+         AND g.created_datetime + user_account_unverified_expire_dur >= CURRENT_TIMESTAMP;
 
 END;
 $cullExpiredThings$ language plpgsql;
