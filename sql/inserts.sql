@@ -176,9 +176,9 @@ INSERT INTO users (id, orcid) VALUES
 INSERT INTO user_emails (user_id, email, email_primary) VALUES
        (idFromGroupname('tgbugs'), 'tgbugs@gmail.com', TRUE);
 
-UPDATE user_emails SET email_validated = TRUE WHERE user_id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
+UPDATE user_emails SET email_validated = CURRENT_TIMESTAMP WHERE user_id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
 -- correct, interlex-user only has insert and select access, so these need to be populated via trigger on insert
-UPDATE users SET orcid_validated = TRUE WHERE id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
+UPDATE users SET orcid_validated = CURRENT_TIMESTAMP WHERE id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
 
 INSERT INTO user_permissions VALUES (0, idFromGroupname('tgbugs'), 'admin');
 

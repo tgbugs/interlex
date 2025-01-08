@@ -86,13 +86,33 @@ def uriStructure():
     parent_child = {
         '<group>':             basic + ['*ilx_get', 'lexical'] + branches + compare + [
             'ops', 'priv', 'contributions', 'prov', 'external',],
-        'ops':                 ['<operation>'],  # in the uri api top level ops are not meaningful  # FIXME likely merge ...
+        'u':                   ['ops'],
+        'ops':                 ['user-new', 'user-recover', 'email-verify', 'ever', 'login'],
         'priv':                ['role',
                                 'upload',
                                 'request-ingest',
                                 #'ontology-new',  # not clear whether we actually need new-ontology on the api because all new ontologies should be POSTed to their desired uri, the frontend probably needs that though?
-                                'entity-new', 'modify-a-b', 'modify-add-rem',
-                                '<page>'],  # XXX TODO see if we really need this also probably want /<group>/priv/settings/<sub>
+
+                                'entity-new',
+                                'modify-a-b',
+                                'modify-add-rem',
+
+                                'org-new',
+
+                                # XXX TODO see if we really need this also probably want /<group>/priv/settings/<sub>
+                                'settings',
+                                'password-change',
+                                'orcid-change',
+                                'orcid-verify',
+                                'email-add',
+                                'email-del',
+                                'email-verify',
+                                'email-primary',
+
+                                'api-tokens',
+                                'api-token-new',
+                                'api-token-revoke',
+                                ],
         'role':                ['<user>'],
         '*ilx_pattern':        [None, 'other', '*versions'],  # FIXME this is now doing a stupid redirect to ilx_pattern/ >_<
         '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
@@ -132,26 +152,48 @@ def uriStructure():
     }
     node_methods = {'curies_':['GET', 'POST'],
                     'ontologies_':['GET'],
-                    'upload':['HEAD', 'POST'],
-                    'request-ingest':['POST'],
-                    'modify-add-rem':['PATCH'],  # accepts add remove ban requires both add and remove but can be empty for either only for bulk
-                    'modify-a-b':['PATCH'],  # takes a before and after so that the backend can generate the add and remove subset
-                    '<user>': ['GET', 'PUT', 'DELETE', 'OPTIONS'],  # for user roles
                     #'versions':['GET'],
                     'spec':['GET', 'POST', 'PATCH'],  # post to create a new ontology with that name i think
+                    'spec.<extension>':['GET', 'POST', 'PATCH'],
                     #'<prefix_iri_curie>':[],  only prefixes can be updated...?
                     'ilx':['GET', 'PATCH'],  # FIXME why is this complaining?
                     #'*ilx_pattern':['GET', 'PATCH'],
                     '<word>':['GET', 'PATCH'],
                     '<filename>':['GET', 'POST'],
-                    '<filename>.<extension>':['GET', 'POST'],
+                    '<filename>.<extension>':['GET', 'POST'],  # TODO probably should only be get and use /spec for post ... that's not strictly true ?
                     '<filename_terminal>':['GET', 'POST'],
                     '<filename_terminal>.<extension>':['GET', 'POST'],
                     'mapped':['GET', 'POST'],
-                    '<operation>': ['GET', 'POST'],
-                    '<page>': ['GET', 'POST'],
+
+                    # ops
+                    'user-new': ['GET', 'POST', 'OPTIONS'],  # FIXME do we need explicit OPTIONS?
+                    'login': ['GET', 'POST'],
+
+                    # priv
+                    '<user>': ['GET', 'PUT', 'DELETE', 'OPTIONS'],  # for user roles
+                    'upload':['HEAD', 'POST'],  # FIXME why did this need head?
+                    'request-ingest': ['POST'],
+
+                    'entity-new': ['POST'],
+                    'modify-a-b': ['PATCH'],  # accepts add remove ban requires both add and remove but can be empty for either only for bulk
+                    'modify-add-rem': ['PATCH'],  # takes a before and after so that the backend can generate the add and remove subset
+
+                    'org-new': ['POST'],
+
+                    #'settings': ['GET'],  # TODO might allow PUT ?
+                    'password-change': ['POST'],
+                    'orcid-change': ['POST'],
+                    'orcid-verify': ['POST'],
+                    'email-add': ['POST'],
+                    'email-del': ['POST'],
+                    'email-verify': ['POST'],
+                    'email-primary': ['POST'],
+
+                    'api-tokens': ['GET'],
+                    'api-token-new': ['POST'],
+                    'api-token-revoke': ['POST'],
     }
-    return parent_child, node_methods, path_to_route
+    return parent_child, node_methods, path_to_route, path_names
 
 
 def add_leafbranches(nodes):
@@ -159,21 +201,22 @@ def add_leafbranches(nodes):
         prefix = tuple(nodes[:-2])
         if 'curies' in nodes:
             nodes = prefix + ('curies_',)
-        elif nodes == ['', '<group>', 'ontologies', '']:  # only at depth 2
+        elif nodes == ['', '<group>', 'ontologies', TERMINAL]:  # only at depth 2
             nodes = prefix + ('ontologies_',)
         elif 'contributions' in nodes:
             nodes = prefix + ('contributions_',)
         elif '*ilx_pattern' in nodes:
             nodes = prefix + ('ilx',)
         else:
-            log.debug(f'possibly unhandled leafbranch {nodes}')
+            if not nodes[-2].startswith('<') and not nodes[-2].startswith('*<'):
+                log.debug(f'possibly unhandled leafbranch {nodes}')
 
     return nodes
 
 
 def build_endpoints(db, rules_req_auth):
     from interlex.endpoints import Endpoints, Versions, Own, OwnVersions, Diff, DiffVersions
-    from interlex.endpoints import Ontologies
+    from interlex.endpoints import Ontologies, Ops, Priv
 
     endpoints = Endpoints(db, rules_req_auth)
     ontologies = Ontologies(db, rules_req_auth)
@@ -182,6 +225,8 @@ def build_endpoints(db, rules_req_auth):
     ownversions = OwnVersions(db, rules_req_auth)
     diff = Diff(db, rules_req_auth)
     diffversions = DiffVersions(db, rules_req_auth)
+    ops = Ops(db, rules_req_auth)
+    priv = Priv(db, rules_req_auth)
 
     # build the route -> endpoint mapping function
 
@@ -192,6 +237,8 @@ def build_endpoints(db, rules_req_auth):
                         '': own},
                 'versions': {'': versions},
                 'ontologies': {'': ontologies},
+                'priv': {'': priv},
+                'ops': {'': ops},
                 '': endpoints,
                 #'': {'ontologies': {'': ontologies}, '': endpoints}
     }
@@ -210,10 +257,12 @@ def build_endpoints(db, rules_req_auth):
 
     return route_endpoint_mapper, endpoints
 
+
 _known_default = (
     #'other',
     #'*ilx_get'
-    '',  # unhandled terminal case
+    #'',  # unhandled terminal case
+    #TERMINAL,  # unhandled terminal case FIXME these aren't unhandled ... it is a path/route mismatch
     'other',
     '*ilx_get',
     '<label>',
@@ -224,19 +273,32 @@ _known_default = (
     '<filename_terminal>',
     '<filename_terminal>.<extension>',
     '<word>',
-
+    'contributions',
 )
-def route_methods(nodes, node_methods):
+
+
+def route_methods(nodes, node_methods, path_names):
     default_methods = ['GET', 'HEAD']
+    if nodes[-1] == TERMINAL:
+        idx = -2
+    else:
+        idx = -1
+
     def erms(extra=''):
-        if nodes[-1] not in _known_default:
-            msg = f'using default methods GET HEAD for {nodes[-1]}{extra}'
+        if (nodes[idx] not in _known_default and
+            (nodes[idx] not in path_names or
+             (nodes[idx] in path_names and path_names[nodes[idx]] not in _known_default))):
+            if extra:
+                extra = (' ' * (24 - len(nodes[idx]))) + extra
+            msg = f'using default methods GET HEAD for {nodes[idx]}{extra}'
             log.warning(msg)
 
 
     if 'diff' not in nodes and 'version' not in nodes and 'versions' not in nodes:
-        if nodes[-1] in node_methods:
-            methods = node_methods[nodes[-1]]
+        if nodes[idx] in node_methods:
+            methods = node_methods[nodes[idx]]
+        elif nodes[idx] in path_names and path_names[nodes[idx]] in node_methods:
+            methods = node_methods[path_names[nodes[idx]]]
         else:
             erms()
             methods = default_methods
@@ -270,8 +332,8 @@ def build_api(app):
         'diff':api.namespace('Diff', 'Compare groups', '/'),
         'own':api.namespace('Own', 'See one group\'s view of another group\'s personalized IRIs', '/'),
         # XXX these are being trialed
-        'ops':api.namespace('Operations', 'Stateful operations.'),
-        'priv':api.namespace('Privileged resources'),
+        'ops':api.namespace('Operations', 'Stateful operations.', '/'),
+        'priv':api.namespace('Privileged', 'Resources and operations that always require auth', '/'),
     }
     extra = {name + '_':ns for name, ns in doc_namespaces.items() if name in ('curies', 'contributions', 'ontologies')}
     doc_namespaces = {**extra, **doc_namespaces}  # make sure the extras come first for priority ordering
@@ -286,6 +348,13 @@ def api_rule_maker(api, doc_namespaces):
                                             if m != 'HEAD'})
         for name, ns in list(doc_namespaces.items())[::-1]:  # reversed so versions diff etc get their endpoints  # also ICK :/
             if name in nodes:
+                if ' ' in ns.name:
+                    # causes api namespaces to print in debug below obviously
+                    # we could be smarter than checking whether there is a
+                    # space in the name, but for now, nospace
+                    msg = f'namespace names should not contain spaces! {ns.name!r}'
+                    raise ValueError(msg)
+
                 ns.route(route)(apiclass)
                 break
         else:
@@ -348,6 +417,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
             class tuser:
                 is_active = True
                 is_anonymous = False
+                is_authenticated = True  # FIXME but is it true?
                 id = rows[0].id
                 own_role = rows[0].own_role
                 groupname = rows[0].groupname
@@ -359,7 +429,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
     api, doc_namespaces = build_api(app)                     # api init
     add_api_rule = api_rule_maker(api, doc_namespaces)       # api binding
 
-    parent_child, node_methods, path_to_route = structure() # uri path nodes
+    parent_child, node_methods, path_to_route, path_names = structure() # uri path nodes
     paths = list(make_paths(parent_child))                  # paths
     routes = ['/'.join(remove_terminals([path_to_route(node) for node in path])) for path in paths]
 
@@ -380,7 +450,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
         nodes = add_leafbranches(nodes)
         endpoint_type = route_endpoint_mapper(nodes)
         function = endpoint_type.get_func(nodes)
-        methods = route_methods(nodes, node_methods)
+        methods = route_methods(nodes, node_methods, path_names)
 
         if 'uris' in nodes or '*uris_ont' in nodes or 'priv' in nodes:
             # FIXME TODO there are others
@@ -398,13 +468,14 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
         add_api_rule(route, apiname, function, methods, nodes)
 
     for k, v in app.view_functions.items():
-        if ' ' in k:
+        if ' ' in k:  # FIXME this is a dumb way to detect api vs real
             name, path = str(k).split(' ', 1)
         else:
             name, path = k, ''
 
         if path:
             log.debug(f'{name:<40}{path:<140}{v}')
+
         #printD(k, v)
 
     runonce()

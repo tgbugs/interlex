@@ -69,4 +69,13 @@
 
      # fl
      'fl-session-secret-key': None,
+
+     # smtp
+     'smtp-host': {
+         'default': None,
+         'environment-variables': 'INTERLEX_SMTP_HOST',},
+     'smtp-port': {
+         'default': 25,
+         'environment-variables': 'INTERLEX_SMTP_PORT',},
+     'smtp-local-hostname': None,  # not sure if need
  }}

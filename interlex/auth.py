@@ -100,6 +100,7 @@ class Auth:
                 ll = getattr(Auth.log, self.log_level)
                 ll(f'{self.__class__.__name__} - {extra_info} - {request.remote_addr} - {request.url} - \n{request.headers}')
 
+            self.extra_info = extra_info
             super().__init__(*args, **kwargs)
 
     class MalformedRequestHeader(AuthError):
@@ -140,6 +141,9 @@ class Auth:
 
     class NotAuthorizedError(AuthError):
         log_level = 'warning'
+
+    class HasNotCompletedVerificationError(AuthError):
+        log_level = 'info'
 
     class InternalRequest:
         headers = 'Internal-Request: True'  # XXX obviously this can't be True and needs to be random if we actually wanted to do this
@@ -220,7 +224,8 @@ class Auth:
         # unauthed requests don't really need this
         request._auth_datetime = now
 
-        write_requires_auth = request.method in ('POST', 'PATCH', 'PUT')
+        write_requires_auth = request.method in ('POST', 'PATCH', 'PUT', 'DELETE')
+        read_requires_auth = 'priv' in request.url_rule.rule  # FIXME not the best way to do it
         read_might_require_auth = (
             request.method in ('GET', 'HEAD', 'OPTIONS') and
             request.url_rule.rule in self.rules_req_auth)
@@ -228,7 +233,7 @@ class Auth:
         # because it means the system is not safe by default for the scratch
         # space, read never requires auth, we just won't return any values if
         # auth user is not provided for the scratch space
-        request_needs_auth_or_auth_user = write_requires_auth or read_might_require_auth
+        request_needs_auth_or_auth_user = write_requires_auth or read_requires_auth or read_might_require_auth
 
         logged_in_user = fl.current_user
         if logged_in_user is not None and not logged_in_user.is_anonymous:
@@ -237,7 +242,7 @@ class Auth:
             li_user = None
 
         def no_token_ok(r):
-            notok = {
+            _notok = [
                 'logout',
                 'settings',
                 'password-change',  # TODO figure out what to do about accounts without email validation
@@ -251,8 +256,9 @@ class Auth:
                 'api-tokens',
                 'api-token-new',
                 'api-token-revoke',
-            }
-            return r.url_rule.rule == '/<group>/priv/<page>' and r.view_args['page'] in notok
+            ]
+            notok = set(f'/<group>/priv/{p}' for p in _notok)  # FIXME
+            return r.url_rule.rule in notok
 
         if 'Authorization' in request.headers:
             auth_value = request.headers['Authorization']
@@ -260,10 +266,28 @@ class Auth:
             # we don't actually check for pending here, we only allow
             # specific resources and operations to be accessed if
             # password login is being used
+            if True:  # FIXME temp for dev obvs wrong
+                check_login = fl.fresh_login_required(lambda: None)
+                check_login()
+
+            # TODO fresh_login_required
             auth_value = None
         elif write_requires_auth:
-            msg = f'{request.method} requires authorization, but no token was provided'
-            raise self.MissingTokenError(msg)
+            if li_user:
+                msg = f'{request.method} requires token authorization, but login was provided'
+            else:
+                msg = f'{request.method} requires authorization, but none was provided'
+
+            raise self.MissingTokenError(request, msg)
+
+        elif read_requires_auth:
+            if li_user:
+                msg = f'{request.url_rule.rule} requires token authorization, but login was provided'
+            else:
+                msg = f'{request.url_rule.rule} requires authorization, but none was provided'
+
+            raise self.MissingTokenError(request, msg)
+
         else:
             return None, None, None, None, None
 
@@ -337,6 +361,10 @@ class Auth:
         elif li_user is not None:
             scope = 'user-only'
             auth_user = li_user
+            if logged_in_user.own_role != 'owner':  # pending user
+                if request.url_rule.rule.startswith('/<group>/priv/api-token'):
+                    msg = 'email and orcid verfication must be completed to access this resource'
+                    raise self.HasNotCompletedVerificationError(request, msg)
 
         else:
             msg = 'more like not implemented correctly amirite'
@@ -368,7 +396,7 @@ class Auth:
 select g.groupname, g.own_role, p.user_role
 from user_permissions as p
 join groups as g on g.id = p.group_id
-where g.groupname in :groups and p.user_id = idFromGroupName(:user)
+where g.groupname in :groups and p.user_id = idFromGroupname(:user)
 ''')
             ), params=dict(groups=need_perms, user=auth_user)))
 

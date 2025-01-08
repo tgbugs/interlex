@@ -84,6 +84,7 @@ Options:
 """
 
 import os
+import base64
 from pathlib import Path
 from urllib.parse import urlparse
 import requests
@@ -289,10 +290,11 @@ class Post(clif.Dispatcher):
     def login(self):
         from getpass import getpass
         scheme, host, group, headers = self._post()
-        url = f'{scheme}://{host}/{group}/ops/login'  # https duh
+        url = f'{scheme}://{host}/ops/ops/login'  # https duh
         # TODO ORCID on the front end
         s = requests.Session()  # use session to auto handle cookies
-        resp = s.post(url, headers={'Authorization': 'Basic ' + getpass()})
+        group_pass = base64.b64encode((group + ':' + getpass()).encode()).decode()
+        resp = s.post(url, headers={'Authorization': 'Basic ' + group_pass})
         #resp = s.post(url, data={'username': username, 'password': getpass()})
         resp.headers
         #s.cookies.set("COOKIE_NAME", "the cookie works", domain="example.com")
@@ -306,7 +308,7 @@ class Post(clif.Dispatcher):
         from getpass import getpass
         scheme, host, group, headers = self._post()
         username = group
-        url = f'{scheme}://{host}/base/ops/new-user'  # https duh
+        url = f'{scheme}://{host}/base/ops/user-new'  # https duh
         s = requests.Session()
         resp = s.post(url, data={
             'username': username,

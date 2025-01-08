@@ -9,10 +9,10 @@ from interlex.utils import log
 
 
 def makeTestRoutes(limit=1):
-    parent_child, node_methods, path_to_route = uriStructure()
-    groups = 'base', 'origin', 'tgbugs'  # base redirects to default/curated ...
-    other_groups = 'latest', 'curated', 'bob'
-    ilx_patterns = 'ilx_0123456', 'ilx_0090000'
+    parent_child, node_methods, path_to_route, path_names = uriStructure()
+    groups = 'base', 'tgbugs'  # , 'origin'  # base redirects to default/curated ...
+    other_groups = 'latest', 'curated'  # , 'bob'  # FIXME apparently NoGroup is insanely slow on error???
+    ilx_patterns = 'ilx_0123456', 'ilx_0090000', 'cde_1000000'
     words = 'isReadablePredicate', 'cookies'
     labels = 'brain', 'mus musculus'
     versions = '1524344335', '2018-04-01'  # FIXME should version alone 404 or return the qualifier?
@@ -20,16 +20,22 @@ def makeTestRoutes(limit=1):
     extensions = 'ttl', 'owl', 'n3', 'xml', 'json'
     filenames_extensions = tuple(f + '.' + e for f in filenames for e in extensions)
     ilx_patterns_extensions = tuple(f + '.' + e for f in ilx_patterns for e in extensions)
+    spec_extensions = tuple('spec.' + e for e in extensions)
     pics = 'GO', 'GO:', 'GO:123', 'http://purl.obolibrary.org/obo/GO_'
+    pics_ext = 'UBERON:0000955', 'ILX:0101431'
     identities = 'i am a tea pot short and stout this is my hash and i am out!',
     ont_paths = 'anatomy', 'anatomy/brain', 'anatomy/stomach', 'methods-core/versions/100'
     uri_paths = ('mouse/labels', 'mouse/labels/', 'mouse/labels/1',
                  'mouse/versions/1',
                  'mouse/versions/1/',
                  'mouse/versions/1/labels')
+    operations = ('user-new', 'login')
+    pages = 'email-verify', 'orcid-verify', 'api-tokens', 'org-new', 'logout', 'settings'
+    users_role = 'tgbugs',
+
     options = {
-        ilx_pattern: ilx_patterns,
-        ilx_pattern + '.<extension>': ilx_patterns_extensions,
+        '*ilx_pattern': ilx_patterns,
+        '*ilx_get': ilx_patterns_extensions,
         '<group>': groups,
         '<other_group>': other_groups,
         '<other_group_diff>': other_groups,
@@ -42,9 +48,17 @@ def makeTestRoutes(limit=1):
         '<filename>.<extension>': filenames_extensions,
         '<filename_terminal>.<extension>': filenames_extensions,
         '<prefix_iri_curie>': pics,
+        '<prefix_iri_curie>.<extension>': pics_ext,
         '<path:uri_path>': uri_paths,
         '<path:ont_path>': ont_paths,
+        '*<path:uris_ont_p>': ont_paths,
         '<identity>': identities,
+
+        'spec.<extension>': spec_extensions,
+
+        '<operation>': operations,
+        '<page>': pages,
+        '<user>': users_role,
 
         '*ont_ilx_get': ilx_patterns_extensions,
         '*<uris_filename>': filenames,
@@ -121,7 +135,7 @@ class RouteTester:
 class TestRoutes(RouteTester, unittest.TestCase):
 
     def test_routes(self):
-        routes = makeTestRoutes()  # up limite here for more tests, 2 is about max reasonable
+        routes = makeTestRoutes()  # up limit here for more tests, 2 is about max reasonable
         # TODO a way to mark expected failures
         urls = [
             # NOTE: have to use lists here because url_blaster needs to call shuffle
@@ -130,7 +144,8 @@ class TestRoutes(RouteTester, unittest.TestCase):
             f'{self.prefix}/tgbugs/curies/BIRNLEX:796',
             ]
         urls = [f'{self.prefix}{r}' for r in routes] + urls
-        [print(u) for u in urls]
+        if len(urls) < 1000:
+            [print(u) for u in urls]
 
         def ok_test(r):
             if r.status_code == 501:

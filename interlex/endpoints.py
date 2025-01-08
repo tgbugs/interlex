@@ -1,6 +1,9 @@
 import os
 import re
 import json
+import base64
+import secrets
+from datetime import timedelta
 from functools import wraps
 import sqlalchemy as sa
 import flask_login as fl
@@ -24,6 +27,7 @@ from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderF
 from interlex.utils import log as _log
 from interlex.config import ilx_pattern  # FIXME pull from database probably
 from interlex.render import TripleRender  # FIXME need to move the location of this
+from interlex.notifications import send_message, get_smtp_spec, msg_email_verify
 
 log = _log.getChild('endpoints')
 
@@ -45,8 +49,17 @@ def getBasicDB(self, group, request):
         abort(401, {'message': (
             'Your token has expired, please get a '
             f'new one at {self.link_to_new_token}')})
-    except self.auth.AuthError:
-        abort(400, {'message': 'Your token could not be verified.'})  # FIXME pull the message up?
+    except (self.auth.MissingTokenError, self.auth.InvalidScopeError, self.auth.HasNotCompletedVerificationError) as e:
+        # it is ok to return a 401 for missing token because it is returned for
+        # particular methods or well known endpoints, never for scratch space
+        # urls, also ok for invalid scope because the result doesn't check whether
+        # the target group exists, only that it does not match
+        return abort(401, {'message': e.extra_info})
+    except (self.auth.MalformedRequestHeader, self.auth.MangledTokenError) as e:
+        return abort(400, {'message': e.extra_info})
+    except self.auth.AuthError as e:
+        log.exception(e)
+        return abort(400, {'message': 'something went wrong on your end'})
 
     if request.method in ('HEAD', 'GET', 'OPTIONS'):
         # FIXME there are some pages we need to reject at this point?
@@ -82,6 +95,7 @@ def basic(function):
             # to self.view_functions[rule.endpoint] so you need to construct
             # the kwarg dictionary accordingly
             raise KeyError('remember that basic needs kwargs not args!') from e
+
         if 'db' not in kwargs:  # being called via super() probably
             maybe_db, _, read_private = getBasicDB(self, group, request)
             if not isinstance(maybe_db, BasicDBFactory):
@@ -187,7 +201,7 @@ class Endpoints:
             # we keep the user for provenance and auditing purposes
             return self.UnsafeBasicDB(group, auth_user, read_only=True)
         except exc.NotGroup:
-            log.debug('not group?')
+            log.debug(f'not group? {group}')
             return None
 
     def getGroupCuries(self, group, epoch_verstr=None,
@@ -217,100 +231,48 @@ class Endpoints:
         else:
             return f'Unknown prefix {prefix}', 404
 
-    def get_func(self, nodes):
+    def get_func(self, nodes, mapping=None):
         #ilx_get = ilx_pattern + '.<extension>'  # FIXME TODO where did we need this again?
-        mapping = {
-            'ilx':self.ilx,
-            'other':self.other,
-            '*versions':self.versions,
-            #ilx_get:self.ilx_get,
-            '*ilx_get':self.ilx_get,
-            'ops':self.ops,
-            'priv':self.priv,
-            '<user>':self.user_role,
-            'lexical':self.lexical,
-            'readable':self.readable,
-            'uris':self.uris,
-            'curies_':self.curies_,
-            'curies':self.curies,
+        if mapping is None:
+            mapping = {
+                'ilx': self.ilx,
+                'other': self.other,
+                '*versions': self.versions,
+                #ilx_get: self.ilx_get,
+                '*ilx_get': self.ilx_get,
 
-            # FIXME how to deal with own/other for ontologies/uris ?
-            # FIXME ontologies are weird with need to be here ...
-            # but eithe you duplicate functions or you duplicate diff and own classes
-            'ontologies_':self.ontologies_,
-            'ontologies':self.ontologies,
-            'version':self.ontologies_version,  # FIXME collision prone?
+                'lexical': self.lexical,
+                'readable': self.readable,
+                'uris': self.uris,
+                'curies_': self.curies_,
+                'curies': self.curies,
 
-            '*ont_ilx_get':self.ontologies_ilx,
-            '*uris_ont':self.ontologies_uris,
-            '*<path:uris_ont_path>':self.ontologies_uris,
-            '*uris_version':self.ontologies_uris_version,
+                # FIXME how to deal with own/other for ontologies/uris ?
+                # FIXME ontologies are weird with need to be here ...
+                # but eithe you duplicate functions or you duplicate diff and own classes
+                'ontologies_': self.ontologies_,
+                'ontologies': self.ontologies,
+                'version': self.ontologies_version,  # FIXME collision prone?
 
-            'contributions_':self.contributions_,
-            'contributions':self.contributions,
-            '*contributions_ont':self.ontologies_contributions,
+                '*ont_ilx_get': self.ontologies_ilx,
+                '*uris_ont': self.ontologies_uris,
+                '*<path:uris_ont_path>': self.ontologies_uris,
+                '*uris_version': self.ontologies_uris_version,
 
-            'upload':self.upload,
-            'prov':self.prov,
+                'contributions_': self.contributions_,
+                'contributions': self.contributions,
+                '*contributions_ont': self.ontologies_contributions,
 
-            'mapped':self.mapped,
+                'prov': self.prov,
 
-            'request-ingest': self.request_ingest,
-            'entity-new': self.entity_new,
-            'modify-a-b': self.modify_a_b,
-            'modify-add-rem': self.modify_add_rem,
-        }
+                'mapped': self.mapped,
+            }
+
         for node in nodes[::-1]:
             if node in mapping:
                 return mapping[node]
         else:
             raise KeyError(f'could not find any value for {nodes}')
-
-    @basic
-    def request_ingest(self, group, db=None):
-        if 'iri' not in request.json:
-            return 'iri is a required field', 400
-
-        _iri = request.json['iri']
-        iri = URIRef(_name)
-
-        if iri.startswith('file://'):
-            return 'file:// scheme not allowed', 400
-
-        # TODO record alternate name sources for files with same identity maybe?
-        if self.reference_host in name:
-            # FIXME TODO make sure that we don't ingest iris that
-            # resolve back to the referene host via redirects
-            return "cannot request ingest directly from interlex", 400
-
-        # XXX do not attempt any dereferencing in this process can
-        # call the db to check, everything else should be done via a
-        # separate process
-        nfl = self.queries.getNamesFirstLatest(iri)
-        if iri in nfl:
-            nfs = nfl[iri]['n_first_seen']
-            nls = nfl[iri]['i_first_seen']
-            li = nfl[iri]['identity'].hex()
-            tys = nfl[iri]['type']
-
-            msg = f'iri {tys} already tracked, first seen {nfs}, latest identity {li} first seen {nls}'
-            resp = {'message': msg}
-            return json.dumps(resp), 200, {'Content-Type': 'application/json'}
-        else:
-            task = tasks.load_iri_via_ingest.apply_async(
-                (group, dbuser, reference_name, self.reference_host, name, expected_bound_name),
-                serializer='pickle')
-            # TODO inside of ingest we will need to handle the potential failure cases e.g. too big etc.
-            job_url = request.scheme + '://' + self.reference_host + url_for("route_api_job", jobid=task.id)
-            # FIXME TODO json response
-            return (f'{iri} submitted for processing {job_url}', 202)
-
-    @basic
-    def entity_new(self, group, db=None): return 'NOT IMPLEMENTED\n', 400
-    @basic
-    def modify_a_b(self, group, db=None): return 'NOT IMPLEMENTED\n', 400
-    @basic
-    def modify_add_rem(self, group, db=None): return 'NOT IMPLEMENTED\n', 400
 
     def mapped(self, group):
         # see the alt implementation of external/mapped for use case
@@ -346,344 +308,6 @@ class Endpoints:
             _, _, func = tripleRender.check(request)
         except exc.UnsupportedType as e:
             abort(e.code, {'message': e.message})
-
-    def ops(self, group, operation):
-        # FIXME this needs to be able to detect whether a user is already
-        # logged in as the same or another user
-        if operation == 'user-new':
-            # FIXME if a user does not exist they will have no group
-            # so which user should it go to? probably base? idk?
-            # maybe a dedicated ops user? /ops/ops ? /nobody/ops ?
-
-            # TODO email
-            # password
-            # TODO only orcid
-            if request.method != 'POST':
-                return abort(404)
-
-
-            errors = {}
-            if 'username' not in request.form:
-                username = None
-                errors['username'] = ['required']
-            else:
-                username = request.form['username']
-                def check_username(u):
-                    # this covers some but not all of the database username
-                    # restrictions, so additional errors may appear later
-                    # after we talk to the db
-                    lu = len(u)
-                    if lu > 40:
-                        errors['username'] = ['too long']
-                    elif lu < 5:
-                        errors['username'] = ['too short']
-                    else:
-                        return True
-
-                username_ok = check_username(username)
-                if username_ok:
-                    existing = self.queries.getGroupExisting(username)
-                    if existing:
-                        errors['username'] = ['exists']
-
-            if 'password' not in request.form:
-                password = None
-                errors['password'] = ['required']
-            else:
-                password = request.form['password']
-                def password_check(p, lr=10):
-                    # this is a bad check but is absolute min that is sane now
-                    lp = len(p) >= lr
-                    d, u, l = False, False, False
-                    for char in p:
-                        if char.isdigit():
-                            d = True
-                        elif char.isupper():
-                            u = True
-                        elif char.islower():
-                            l = True
-
-                    errs = []
-                    for crit, err in ((lp, f'shorter than {lr}'),
-                                      (d, 'no digit'),
-                                      (u, 'no upper'),
-                                      (l, 'no lower')):
-                        if not crit:
-                            errs.append(err)
-                    if errs:
-                        return errs
-
-                pass_fail = password_check(password)
-                if pass_fail:
-                    errors['password'] = pass_fail
-
-            if 'email' not in request.form:
-                email = None
-                errors['email'] = ['required']
-            else:
-                email = request.form['email']
-                def email_check(e):
-                    # we do not validate email structure beyond making sure
-                    # there is an @ in the middle somewhere all we care is that
-                    # the user can receive mail and click the validation link
-                    return e.count('@') == 1 and not e.startswith('@') and not e.endswith('@')
-
-                email_ok = email_check(email)
-                if not email_ok:
-                    errors['email'] = ['malformed']
-
-            if 'orcid' not in request.form:
-                orcid = None
-                errors['orcid'] = ['required']
-            else:
-                orcid = request.form['orcid']
-                def orcid_check(o):
-                    # TODO better feedback on malformed
-                    try:
-                        oid = idlib.Orcid(orcid)
-                    except idlib.exceptions.IdlibError as e:
-                        errors['orcid'] = ['malformed']
-                        return
-
-                    if not oid.identifier.checksumValid:
-                        errors['orcid'] = ['invalid checksum']
-                        return
-
-                    return oid
-
-                orcid_ok = orcid_check(orcid)
-
-            if errors:
-                return json.dumps({'errors': errors}), 422, {'Content-Type': 'application/json'}
-
-            argon2_string = iauth.hash_password(password)
-            # TODO multiple operations see cli.Ops.password
-            #sql = 'INSERT INTO user_passwords (user_id, argon2_string) VALUES ((SELECT id FROM groups WHERE groupname :groupname JOIN users ON groups.id = users.id), :argon2_string)'
-            params = dict(groupname=username, argon2_string=argon2_string, orcid=orcid, email=email)
-            sql = '''
-WITH grow AS (INSERT INTO groups (groupname) VALUES (:groupname) RETURNING id),
-gru AS (INSERT INTO users (id, orcid) SELECT id, :orcid FROM grow RETURNING id),
-gre AS (INSERT INTO user_emails (user_id, email, email_primary) SELECT id, :email, TRUE FROM gru RETURNING user_id)
-INSERT INTO user_passwords (user_id, argon2_string) SELECT user_id, :argon2_string FROM gre
-'''
-            try:
-                self.session_execute(sql, params=params)
-                self.session.commit()
-            except Exception as e:
-                # username format
-                # orcid non-unique # we don't allow robot bot users right now
-                # email non-unqiue
-                self.session.rollback()
-                if e.orig.diag.constraint_name.startswith('groups_groupname_check'):
-                    args = (
-                        e.orig.diag.schema_name,
-                        e.orig.diag.table_name,
-                        e.orig.diag.constraint_name,)
-                    asdf = self.queries.getConstraint(*args)
-                    if not asdf:
-                        log.critical(f'no constraint for: {args} ???')
-                        errors['username'] = ['not sure']
-                    else:
-                        constraint = asdf[0][1]
-                        errors['username'] = [constraint]
-
-                elif e.orig.diag.constraint_name == 'users_orcid_key':
-                    errors['orcid'] = ['exists']
-
-                elif e.orig.diag.constraint_name == 'user_emails_email_key':
-                    errors['email'] = ['exists']
-                else:
-                    log.exception(e)
-                    errors['unhandled'] = ['unhandled']
-
-                if errors:
-                    return json.dumps({'errors': errors}), 422, ctaj
-
-                return 'something went wrong TODO better messages', 422
-
-            # TODO send email
-            return f'a verification email has been sent to {email}, now starting orcid auth flow', 201
-
-        if operation == 'login':
-            # XXX NOTE this is pretty much only for development
-            # because in production login is going to go directly
-            # to orcid and /<group>/ops/login should pretty much never be used
-            if request.method == 'GET':
-                # only accept post with password on this endpoint
-                # to prevent user name discovery, though obviously
-                # there are other legitimate way to discover this
-                # information in bulk
-                return abort(405)
-
-            elif request.method == 'POST':
-                # if the the group is not a user then 404 since can only log in to orcid mapped users
-                # FIXME must check roles
-                sql = '''
-SELECT * FROM groups AS g
-JOIN users AS u ON g.id = u.id
-WHERE g.groupname = :groupname AND g.own_role <= 'pending'
-'''
-                # FIXME TODO must also check users here to ensure actually allowed to log in
-                rows = list(self.session_execute(sql, dict(groupname=group)))
-                basic_group_password_or_password = request.headers.get('Authorization', '')
-                if not basic_group_password_or_password or not rows:  # order matters to try to minimize timing attack risk
-                    return abort(404)
-
-                group_row = rows[0]
-
-                abasic, *_group_password_or_password = basic_group_password_or_password.split(None, 1)
-                if abasic.lower() != 'basic' or not _group_password_or_password:  # FIXME do we force case sense or not here ...
-                    return abort(404)  # FIXME maybe malformed from client
-                else:
-                    group_password_or_password = _group_password_or_password[0]
-
-                sql = 'SELECT argon2_string FROM user_passwords WHERE user_id = :user_id'
-                params = {'user_id': group_row.id}
-                rows = list(self.session_execute(sql, params))
-                if not rows:
-                    return abort(404)  # not a user
-
-                user_password = rows[0]
-                argon2_string = user_password.argon2_string
-                if ':' in group_password_or_password:
-                    pass_group, password = group_password_or_password.split(':', 1)
-                    # try password
-                    if pass_group != group:  # passwords with colons yo
-                        # XXX watch out for timing attacks
-                        password_matches = iauth.validate_password(argon2_string, group_password_or_password)
-                        # try the whole thing
-                        # fail if no match
-                    else:
-                        password_matches = iauth.validate_password(argon2_string, password)
-                else:
-                    password = group_password_or_password
-                    password_matches = iauth.validate_password(argon2_string, password)
-
-                if password_matches:
-                    # return the relevant session information so that the browser can store it and retain the session
-                    # or however that works?
-                    # TODO flask login or something
-                    # XXX if they came here directly just go ahead and give them the api token probably?? not quite sure
-                    # I'm sure this will change with the orcid stuff
-                    class tuser:
-                        is_active = True  # TODO translate from the permission model
-                        def get_id(self, __id=group_row.id):
-                            return __id
-
-                    fl.login_user(tuser())
-                    return 'login successful, check your cookies (use requests.Session)'
-                else:
-                    return abort(401)  # FIXME hrm what would the return code be here ...
-
-        else:
-            # unsupported operation
-            abort(404)
-
-        breakpoint()
-
-    @basic
-    def priv(self, group, page, db=None):
-        # separate privilidged pages from ops which technically don't require privs
-
-        # TODO check user first
-
-        # XXX NOTE almost all of these need to work before the user has been verified
-        # which means that they need to work without an api token because api tokens
-        # are only issued once a user completes orcid and email
-
-        if page == 'settings':
-            # TODO can handle logged in user x group membership and role in a similar way
-            return (
-                'ilx:group/priv/settings a ilxtr:interlex-settings ;\n'
-                'skos:comment "completely fake ttlish representation of settings" ;\n'
-                f'settings:groupname "{group}" ;\n'
-                'settings:email "email" ;\n'
-                'settings:orcid "orcid-id-thing-yeah" ;\n'
-                'settings:notification-prefs "email" ;\n'
-                'settings:api-token "maybe we just put this here sure why not" ;\n'
-                'settings:own-role "maybe we just put this here sure why not" ;\n'
-                '.')
-
-        elif page == 'logout':
-            if request.method == 'GET':
-                # check if logged in?
-                # then log out
-                fl.logout_user()
-                return 'logged out'
-            else:
-                return abort(405)
-
-        elif page == 'password-change':
-            return 'TODO', 501
-
-        elif page == 'orcid-change':
-            # XXX cannot change a validated orcid
-            # can only change an unvalidated orcid
-            return 'TODO', 501
-
-        elif page == 'orcid-verify':
-            # start orcid verification workflow if something went wrong
-            return 'TODO', 501
-
-        elif page == 'email-add':
-            return 'TODO', 501
-
-        elif page == 'email-del':
-            # TODO must have at least one primary verified email
-            return 'TODO', 501
-
-        elif page == 'email-verify':
-            # request to verify email address if something went wrong
-            return 'TODO', 501
-
-        elif page == 'email-primary':
-            # set email address as primary
-            return 'TODO', 501
-
-        elif page == 'api-tokens':
-            resp = [{'token': 'TODO-lol-token', 'note': ''}]
-            return json.dumps(resp)
-
-        elif page == 'api-token-new':
-            return abort(501)
-
-        elif page == 'api-token-revoke':
-            return abort(501)
-
-        elif page == 'org-new':
-            # TODO in the simplest case authed users would just be able to POST
-            # to /<group>/ that they wanted to claim but of course it isn't
-            # that easy because
-            return (
-                'If you would like to create a new organization please contact support@interlex.org '
-                'with "new organization request" as the subject. Please include the name of the '
-                'organization that you would like to create, a brief explaination of what it will '
-                'be used for, and the interlex username associated with the email you are sending '
-                'from which will become the owner of the new organization.'), 501
-
-        else:
-            return abort(404)
-
-    @basic
-    def user_role(self, group, user, db=None):
-        if request.method == 'GET':
-            pass
-        elif request.method == 'PUT':
-            pass
-        elif request.method == 'DELETE':
-            pass
-        elif request.method == 'OPTIONS':
-            pass
-        else:
-            return abort(405)
-
-        breakpoint()
-        # FIXME /<group>/priv/role/<user>
-        # GET to show effective
-        # PUT to create or change
-        # DELETE to remove record
-        # OPTIONS to list possible roles
-        return abort(501)
 
     def _ilx(self, group, frag_pref, id, func):
         PREFIXES, graph = self.getGroupCuries(group)
@@ -873,7 +497,7 @@ WHERE g.groupname = :groupname AND g.own_role <= 'pending'
         else:
             PREFIXES, g = self.getGroupCuries(group)
 
-        return json.dumps(PREFIXES), 200, {'Content-Type': 'application/json'}
+        return json.dumps(PREFIXES), 200, ctaj
 
     # TODO POST PATCH PUT
     @basic
@@ -938,7 +562,7 @@ WHERE g.groupname = :groupname AND g.own_role <= 'pending'
                         except exc.UnsupportedType as e:
                             abort(e.code, {'message': e.message})
 
-                        resp = self.queries.getBySubject(iri, group)
+                        resp = self.queries.getBySubject(iri, group)  # FIXME shouldn't we not be using self.queries for this?
                         te = TripleExporter()
                         _ = [graph.add(te.triple(*r)) for r in resp]
                         object_to_existing = self.queries.getResponseExisting(resp, type='o')
@@ -985,6 +609,520 @@ WHERE g.groupname = :groupname AND g.own_role <= 'pending'
                 ordered_prefix_sets = PREFIXES,
 
             return self.iriFromPrefix(prefix, *ordered_prefix_sets)
+
+    @basic
+    def prov(self, *args, **kwargs):
+        """ Return all the identities that an org/user has uploaded
+            Show users their personal uploads and then their groups.
+            Show groups all uploads with the user who did it
+        """
+        # in html
+        # reference_name, bound_name, identity, date, triple_count, parts
+        # if org: uploading_user
+        # if user: contribs per group
+        return 'TODO\n', 501
+
+    @basic
+    def ontologies_(self, group, db=None):
+        """ The terminal ontologies query does go on endpoints """
+        return json.dumps('your list sir')
+
+    @basic
+    def ontologies_ilx(self, group, frag_pref_id, extension, db=None):
+        # FIXME termset
+        return self.ilx(group=group, frag_pref_id=frag_pref_id, db=db)
+
+    @basic
+    def ontologies(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_version(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_uris(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_uris_version(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_contributions(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+
+class Ops(Endpoints):
+
+    def get_func(self, nodes):
+        mapping = {
+            'user-new': self.user_new,
+            'user-recover': self.user_recover,
+            'login': self.login,
+            'email-verify': self.email_verify,
+            'ever': self.email_verify,
+        }
+        return super().get_func(nodes, mapping=mapping)
+
+    def user_new(self, group):
+        # FIXME if a user does not exist they will have no group
+        # so which user should it go to? probably base? idk?
+        # maybe a dedicated ops user? /ops/ops ? /nobody/ops ?
+
+        # TODO email
+        # password
+        # TODO only orcid
+        if group != 'u':  # u for utility or something
+            return abort(404)
+
+        if request.method == 'GET':
+            # fine we'll send you a form to fill out
+            user_new_form = '''
+<form action="" method="post" class="user-new">
+  <div class="user-new">
+    <label for="username">Username: </label>
+    <input type="text" name="username" id="username" size="40" required />
+  </div>
+  <div class="user-new">
+    <label for="password">Password: </label>
+    <input type="password" name="password" id="password" size="40" required />
+  </div>
+  <div class="user-new">
+    <label for="email">Email:       </label>
+    <input type="email" name="email" id="email" size="40" required />
+  </div>
+  <div class="user-new">
+    <label for="orcid">ORCiD:       </label>
+    <input type="url" name="orcid" id="orcid" size="37" required />
+  </div>
+  <div class="user-new">
+    <input type="submit" value="Register" />
+  </div>
+</form>
+'''
+            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex login</title></head>
+<body>
+{user_new_form}
+</body>
+</html>'''
+
+        if request.method != 'POST':
+            return abort(404)
+
+        errors = {}
+        if 'username' not in request.form:
+            username = None
+            errors['username'] = ['required']
+        else:
+            username = request.form['username']
+            def check_username(u):
+                # this covers some but not all of the database username
+                # restrictions, so additional errors may appear later
+                # after we talk to the db
+                lu = len(u)
+                if lu > 40:
+                    errors['username'] = ['too long']
+                elif lu < 5:
+                    errors['username'] = ['too short']
+                else:
+                    return True
+
+            username_ok = check_username(username)
+            if username_ok:
+                existing = self.queries.getGroupExisting(username)
+                if existing:
+                    errors['username'] = ['exists']
+
+        if 'password' not in request.form:
+            password = None
+            errors['password'] = ['required']
+        else:
+            password = request.form['password']
+            def password_check(p, lr=10):
+                # this is a bad check but is absolute min that is sane now
+                lp = len(p) >= lr
+                d, u, l = False, False, False
+                for char in p:
+                    if char.isdigit():
+                        d = True
+                    elif char.isupper():
+                        u = True
+                    elif char.islower():
+                        l = True
+
+                errs = []
+                for crit, err in ((lp, f'shorter than {lr}'),
+                                    (d, 'no digit'),
+                                    (u, 'no upper'),
+                                    (l, 'no lower')):
+                    if not crit:
+                        errs.append(err)
+                if errs:
+                    return errs
+
+            pass_fail = password_check(password)
+            if pass_fail:
+                errors['password'] = pass_fail
+
+        if 'email' not in request.form:
+            email = None
+            errors['email'] = ['required']
+        else:
+            email = request.form['email']
+            def email_check(e):
+                # we do not validate email structure beyond making sure
+                # there is an @ in the middle somewhere all we care is that
+                # the user can receive mail and click the validation link
+                return e.count('@') == 1 and not e.startswith('@') and not e.endswith('@')
+
+            email_ok = email_check(email)
+            if not email_ok:
+                errors['email'] = ['malformed']
+
+        if 'orcid' not in request.form:
+            orcid = None
+            errors['orcid'] = ['required']
+        else:
+            orcid = request.form['orcid']
+            def orcid_check(o):
+                # TODO better feedback on malformed
+                try:
+                    oid = idlib.Orcid(orcid)
+                except idlib.exceptions.IdlibError as e:
+                    errors['orcid'] = ['malformed']
+                    return
+
+                try:
+                    oid.identifier.checksumValid
+                except oid.identifier.OrcidChecksumError:
+                    errors['orcid'] = ['invalid checksum']
+                    return
+
+                return oid
+
+            orcid_ok = orcid_check(orcid)
+
+        if errors:
+            return json.dumps({'errors': errors}), 422, {'Content-Type': 'application/json'}
+
+        argon2_string = iauth.hash_password(password)
+        # TODO multiple operations see cli.Ops.password
+        #sql = 'INSERT INTO user_passwords (user_id, argon2_string) VALUES ((SELECT id FROM groups WHERE groupname :groupname JOIN users ON groups.id = users.id), :argon2_string)'
+        params = dict(groupname=username, argon2_string=argon2_string, orcid=orcid, email=email)
+        sql = '''
+WITH grow AS (INSERT INTO groups (groupname) VALUES (:groupname) RETURNING id),
+gru AS (INSERT INTO users (id, orcid) SELECT id, :orcid FROM grow RETURNING id),
+gre AS (INSERT INTO user_emails (user_id, email, email_primary) SELECT id, :email, TRUE FROM gru RETURNING user_id)
+INSERT INTO user_passwords (user_id, argon2_string) SELECT user_id, :argon2_string FROM gre RETURNING user_id
+'''
+        try:
+            user_id = list(self.session_execute(sql, params=params))
+            self.session.commit()
+        except Exception as e:
+            # username format
+            # orcid non-unique # we don't allow robot bot users right now
+            # email non-unqiue
+            self.session.rollback()
+            if e.orig.diag.constraint_name.startswith('groups_groupname_check'):
+                args = (
+                    e.orig.diag.schema_name,
+                    e.orig.diag.table_name,
+                    e.orig.diag.constraint_name,)
+                asdf = self.queries.getConstraint(*args)
+                if not asdf:
+                    log.critical(f'no constraint for: {args} ???')
+                    errors['username'] = ['not sure']
+                else:
+                    constraint = asdf[0][1]
+                    errors['username'] = [constraint]
+
+            elif e.orig.diag.constraint_name == 'users_orcid_key':
+                errors['orcid'] = ['exists']
+
+            elif e.orig.diag.constraint_name == 'user_emails_email_key':
+                errors['email'] = ['exists']
+            else:
+                log.exception(e)
+                errors['unhandled'] = ['unhandled']
+
+            if errors:
+                return json.dumps({'errors': errors}), 422, ctaj
+
+            return 'something went wrong TODO better messages', 422
+
+        # TODO login user
+        class tuser:
+            is_active = True  # TODO translate from the permission model
+            is_anonymous = False
+            is_authenticated = True  # FIXME but is it true?
+            own_role = 'pending'
+            groupname = username
+            def get_id(self, __id=user_id[0].user_id):
+                return __id
+
+        fl.login_user(tuser())
+
+        start_email_verify(username, email)
+        # TODO send email
+        return f'a verification email has been sent to {email}, now starting orcid auth flow', 201
+
+    def _start_email_verify(self, username, email):
+        # this is usually a priv operation, but we call it
+        # immediately after signup
+
+        # XXX we could try to get the user's full name from their orcid record, but
+        # we don't want to make any external calls in this workflow, the full name
+        # will be filled in as part of the orcid workflow, not the email workflow
+
+        # these tokens have a short lifetime so don't need to be quite as long so
+        # using 24, also considered 33, it is important to avoid email linewrap
+        # which because linewrap uses = which is the same as base64 padding
+        token = base64.urlsafe_b64encode(secrets.token_bytes(24))
+        token_str = token.decode()
+        sql = 'insert into emails_validating (user_id, email, token) VALUES (idFromGroupname(:username), :email, :token) RETURNING created_datetime, delay_seconds, lifetime_seconds'
+        args = dict(username=username, email=email, token=token)
+
+        resp = list(self.session_execute(sql, args))
+
+        minutes = resp.lifetime_seconds // 60
+
+        nowish = resp.created_datetime
+        startish = nowish + timedelta(seconds=resp.delay_seconds)
+        thenish = nowish + timedelta(seconds=resp.lifetime_seconds)
+        scheme = 'https'  # FIXME ...
+        reference_host = self.reference_host  # FIXME vs actual host for testing
+        #verification_link = f'{scheme}://{reference_host}/{username}/ops/email-verify?{token}'
+        verification_link = f'{scheme}://{reference_host}/u/ops/ever?{token_str}'
+        reverify_link = f'{scheme}://{reference_host}/{username}/priv/email-verify'  # FIXME obviously wrong link
+        msg = msg_email_verify(
+            email, nowish, startish, resp.delay_seconds, minutes, thenish,
+            verification_link, reverify_link)
+
+        send_message(msg, get_smtp_spec())
+
+    def user_recover(self, group):
+        if group != 'u':
+            return abort(404)
+
+        return abort(501)
+
+    def email_verify(self, group):
+        if group != 'u':
+            return abort(404)
+
+        breakpoint()
+        return abort(501)
+
+    def login(self, group):
+        # FIXME this needs to be able to detect whether a user is already
+        # logged in as the same or another user
+
+        # XXX NOTE this is pretty much only for development
+        # because in production login is going to go directly
+        # to orcid and /<group>/ops/login should pretty much never be used
+        if group != 'u':
+            return abort(404)
+
+        if False and request.method in ('GET', 'HEAD'):
+            # only accept post with password on this endpoint
+            # to prevent user name discovery, though obviously
+            # there are other legitimate way to discover this
+            # information in bulk
+            return abort(405)
+
+        if request.method == 'GET' and 'Authorization' not in request.headers:
+            # need simple login for testing so provide one
+            login_form = ''
+            _login_form = '''
+<form action="" method="post" class="login">
+  <div class="login">
+    <label for="username">Username: </label>
+    <input type="text" name="username" id="username" required />
+  </div>
+  <div class="login">
+    <label for="password">Password: </label>
+    <input type="password" name="password" id="password" required />
+  </div>
+  <div class="login">
+    <input type="submit" value="Login" />
+  </div>
+</form>
+'''
+            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex login</title></head>
+<body>
+{login_form}
+</body>
+</html>''', 401, {'WWW-Authenticate': 'Basic realm="InterLex"'}
+
+        elif request.method == 'POST' or request.method == 'GET' and 'Authorization' in request.headers:
+            # if the the group is not a user then 404 since can only log in to orcid mapped users
+            # FIXME must check roles
+            # FIXME forcing group == ops causes issues here
+
+            basic_group_password = request.headers.get('Authorization', '')
+            if not basic_group_password:
+                return abort(404)
+
+            abasic, *_group_password = basic_group_password.split(None, 1)
+            if abasic.lower() != 'basic' or not _group_password:  # FIXME do we force case sense or not here ...
+                return abort(404)  # FIXME maybe malformed from client
+            else:
+                b64_group_password = _group_password[0]
+
+            group_password = base64.b64decode(b64_group_password).decode()
+            pass_group, password = group_password.split(':', 1)
+
+            sql = '''
+SELECT * FROM groups AS g
+JOIN users AS u ON g.id = u.id
+JOIN user_passwords AS up ON up.user_id = u.id
+WHERE g.groupname = :groupname AND g.own_role <= 'pending'
+'''
+            # FIXME TODO must also check users here to ensure actually allowed to log in
+            rows = list(self.session_execute(sql, dict(groupname=pass_group)))
+            if not rows:
+                # not a user
+                return abort(401)
+
+            group_row = rows[0]
+
+            #sql = 'SELECT argon2_string FROM user_passwords WHERE user_id = :user_id'
+            #params = {'user_id': group_row.id}
+            #rows = list(self.session_execute(sql, params))
+
+            #user_password = rows[0]
+            argon2_string = group_row.argon2_string
+            password_matches = iauth.validate_password(argon2_string, password)
+
+            if password_matches:
+                # return the relevant session information so that the browser can store it and retain the session
+                # or however that works?
+                # TODO flask login or something
+                # XXX if they came here directly just go ahead and give them the api token probably?? not quite sure
+                # I'm sure this will change with the orcid stuff
+                class tuser:
+                    is_active = True  # TODO translate from the permission model
+                    is_anonymous = False
+                    is_authenticated = True  # FIXME but is it true?
+                    own_role = group_row.own_role  # FIXME could change ?
+                    groupname = group_row.groupname
+                    def get_id(self, __id=group_row.id):
+                        return __id
+
+                fl.login_user(tuser())
+                return 'login successful, check your cookies (use requests.Session)'
+            else:
+                return abort(401)  # FIXME hrm what would the return code be here ...
+
+        else:
+            return abort(405)
+
+    def ops(self, group, operation):
+        # unsupported operation
+        return abort(404)
+
+
+class Priv(Endpoints):
+
+    def get_func(self, nodes):
+        mapping = {
+            'settings': self.settings,
+
+            '<user>': self.user_role,
+            'upload': self.upload,
+            'request-ingest': self.request_ingest,
+            'entity-new': self.entity_new,
+            'modify-a-b': self.modify_a_b,
+            'modify-add-rem': self.modify_add_rem,
+
+            'org-new': self.org_new,
+
+            'password-change': self.password_change,
+            'orcid-change': self.orcid_change,
+            'orcid-verify': self.orcid_verify,
+            'email-add': self.email_add,
+            'email-del': self.email_del,
+            'email-verify': self.email_verify,
+            'email-primary': self.email_primary,
+
+            'api-tokens': self.api_tokens,
+            'api-token-new': self.api_token_new,
+            'api-token-revoke': self.api_token_revoke,
+
+        }
+        return super().get_func(nodes, mapping=mapping)
+
+    @basic
+    def user_role(self, group, user, db=None):
+        if request.method == 'GET':
+            pass
+        elif request.method == 'PUT':
+            pass
+        elif request.method == 'DELETE':
+            pass
+        elif request.method == 'OPTIONS':
+            pass
+        else:
+            return abort(405)
+
+        breakpoint()
+        # FIXME /<group>/priv/role/<user>
+        # GET to show effective
+        # PUT to create or change
+        # DELETE to remove record
+        # OPTIONS to list possible roles
+        return abort(501)
+
+    @basic
+    def request_ingest(self, group, db=None):
+        if 'iri' not in request.json:
+            return 'iri is a required field', 400
+
+        _iri = request.json['iri']
+        iri = URIRef(_name)
+
+        if iri.startswith('file://'):
+            return 'file:// scheme not allowed', 400
+
+        # TODO record alternate name sources for files with same identity maybe?
+        if self.reference_host in name:
+            # FIXME TODO make sure that we don't ingest iris that
+            # resolve back to the referene host via redirects
+            return "cannot request ingest directly from interlex", 400
+
+        # XXX do not attempt any dereferencing in this process can
+        # call the db to check, everything else should be done via a
+        # separate process
+        nfl = self.queries.getNamesFirstLatest(iri)
+        if iri in nfl:
+            nfs = nfl[iri]['n_first_seen']
+            nls = nfl[iri]['i_first_seen']
+            li = nfl[iri]['identity'].hex()
+            tys = nfl[iri]['type']
+
+            msg = f'iri {tys} already tracked, first seen {nfs}, latest identity {li} first seen {nls}'
+            resp = {'message': msg}
+            return json.dumps(resp), 200, {'Content-Type': 'application/json'}
+        else:
+            task = tasks.load_iri_via_ingest.apply_async(
+                (group, dbuser, reference_name, self.reference_host, name, expected_bound_name),
+                serializer='pickle')
+            # TODO inside of ingest we will need to handle the potential failure cases e.g. too big etc.
+            job_url = request.scheme + '://' + self.reference_host + url_for("route_api_job", jobid=task.id)
+            # FIXME TODO json response
+            return (f'{iri} submitted for processing {job_url}', 202)
 
     @basic
     def upload(self, group, db=None):
@@ -1052,51 +1190,130 @@ WHERE g.groupname = :groupname AND g.own_role <= 'pending'
                 return json.dumps(names), 200, {'Content-Type':'application/json'}
 
     @basic
-    def prov(self, *args, **kwargs):
-        """ Return all the identities that an org/user has uploaded
-            Show users their personal uploads and then their groups.
-            Show groups all uploads with the user who did it
-        """
-        # in html
-        # reference_name, bound_name, identity, date, triple_count, parts
-        # if org: uploading_user
-        # if user: contribs per group
-        return 'TODO\n', 501
+    def priv(self, group, page, db=None):
+        # separate privilidged pages from ops which technically don't require privs
+
+        # TODO check user first
+
+        # XXX NOTE almost all of these need to work before the user has been verified
+        # which means that they need to work without an api token because api tokens
+        # are only issued once a user completes orcid and email
+        pass
 
     @basic
-    def ontologies_(self, group, db=None):
-        """ The terminal ontologies query does go on endpoints """
-        return json.dumps('your list sir')
+    def settings(self, group, db=None):
+        # TODO can handle logged in user x group membership and role in a similar way
+        recs = self.queries.getUserSettings(group)
+        user = [r for r in recs if r.rec_type == 'u'][0]
+        emails = [r for r in recs if r.rec_type == 'e']
+        keys = [r for r in recs if r.rec_type == 'k']
+        ep = [e for e in emails if e.email_primary][0]
+        emails_str = '\n\n' + '\n'.join([
+            (f'<mailto:{e.email}> a ilxtr:interlex-email-record ;\n'
+             f'email:primary {e.email_primary};\n'
+             f'email:verified {e.email_validated} .')
+                   for e in emails])
+        keys_str = ('\n\n' + '\n'.join([
+            ('[] a ilxtr:api-key-record ;\n'
+             f'key:key {k.key} ;\n'
+             f'key:type {k.key_type} ;\n'
+             f'key:scope {k.key_scope} ;\n'
+             f'key:created {k.created_datetime} ') +
+            (f';\nkey:lifetime-seconds {k.lifetime_seconds} ' if k.lifetime_seconds else '')
+            (f';\nkey:revoked {k.revoked_datetime} ' if k.revoked_datetime else '') + '.'
+            for k in keys])) if keys else ''
+
+        return (
+            f'ilx:{group}/priv/settings a ilxtr:interlex-settings ;\n'
+            'skos:comment "completely fake ttlish representation of settings" ;\n'
+            f'settings:groupname "{group}" ;\n'
+            f'settings:email [ <mailto:{ep.email}> {ep.email_validated} ] ;\n'  # implicitly primary email
+            f'settings:orcid [ <{user.orcid}> {user.orcid_validated} ] ;\n'
+            'settings:notification-prefs "email" ;\n'
+            f'settings:own-role "{user.own_role}" .'
+        ) + emails_str + keys_str + '\n', 200, {'Content-Type': 'text/turtle'}
 
     @basic
-    def ontologies_ilx(self, group, frag_pref_id, extension, db=None):
-        # FIXME termset
-        return self.ilx(group=group, frag_pref_id=frag_pref_id, db=db)
+    def logout(self, group, db=None):
+        # FIXME GET vs POST vs DELETE
+        if request.method == 'GET':
+            # check if logged in?
+            # then log out
+            fl.logout_user()
+            return 'logged out'
+        else:
+            return abort(405)
 
     @basic
-    def ontologies(self, *args, **kwargs):
-        """ needed because ontologies appear under other routes """
-        raise NotImplementedError('should not be hitting this')
+    def password_change(self, group, db=None):
+        return 'TODO', 501
 
     @basic
-    def ontologies_version(self, *args, **kwargs):
-        """ needed because ontologies appear under other routes """
-        raise NotImplementedError('should not be hitting this')
+    def orcid_change(self, group, db=None):
+        # XXX cannot change a validated orcid
+        # can only change an unvalidated orcid
+        return 'TODO', 501
 
     @basic
-    def ontologies_uris(self, *args, **kwargs):
-        """ needed because ontologies appear under other routes """
-        raise NotImplementedError('should not be hitting this')
+    def orcid_verify(self, group, db=None):
+        # start orcid verification workflow if something went wrong
+        return 'TODO', 501
 
     @basic
-    def ontologies_uris_version(self, *args, **kwargs):
-        """ needed because ontologies appear under other routes """
-        raise NotImplementedError('should not be hitting this')
+    def email_add(self, group, db=None):
+        return 'TODO', 501
 
     @basic
-    def ontologies_contributions(self, *args, **kwargs):
-        """ needed because ontologies appear under other routes """
-        raise NotImplementedError('should not be hitting this')
+    def email_del(self, group, db=None):
+        # TODO must have at least one primary verified email
+        return 'TODO', 501
+
+    @basic
+    def email_verify(self, group, db=None):
+        # request to verify email address if something went wrong
+        return 'TODO', 501
+
+    @basic
+    def email_primary(self, group, db=None):
+        # set email address as primary
+        return 'TODO', 501
+
+    @basic
+    def api_tokens(self, group, db=None):
+        resp = [{'token': 'TODO-lol-token', 'note': ''}]
+        return json.dumps(resp)
+
+    @basic
+    def api_token_new(self, group, db=None):
+        return abort(501)
+
+    @basic
+    def api_token_revoke(self, group, db=None):
+        return abort(501)
+
+    @basic
+    def org_new(self, group, db=None):
+        # TODO in the simplest case authed users would just be able to POST
+        # to /<group>/ that they wanted to claim but of course it isn't
+        # that easy because
+        return (
+            'If you would like to create a new organization please contact support@interlex.org '
+            'with "new organization request" as the subject. Please include the name of the '
+            'organization that you would like to create, a brief explaination of what it will '
+            'be used for, and the interlex username associated with the email you are sending '
+            'from which will become the owner of the new organization.'), 501
+
+    @basic
+    def entity_new(self, group, db=None):
+        return 'NOT IMPLEMENTED\n', 400
+
+    @basic
+    def modify_a_b(self, group, db=None):
+        return 'NOT IMPLEMENTED\n', 400
+
+    @basic
+    def modify_add_rem(self, group, db=None):
+        return 'NOT IMPLEMENTED\n', 400
 
 
 class Ontologies(Endpoints):
