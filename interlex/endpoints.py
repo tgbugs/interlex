@@ -671,9 +671,8 @@ class Ops(Endpoints):
 
     def _orcid(self, url_orcid_land)
         # sign_up_with_orcid
-        client_id = 'TODO'
         scope = 'openid'  # /read-limited
-        reiri = (f'https://sandbox.orcid.org/oauth/authorize?client_id={client_id}&'
+        reiri = (f'https://sandbox.orcid.org/oauth/authorize?client_id={config.orcid_client_id}&'
                  f'response_type=code&scope={scope}&redirect_uri={url_orcid_land}',)
         return redirect(reiri, 302)
 
@@ -684,11 +683,9 @@ class Ops(Endpoints):
         return self._orcid(url_orcid_land)
 
     def _orcid_landing(self, code):
-        client_id = 'TODO'
-        client_secret = 'TODO'
         data = {
-            'client_id': client_id,
-            'client_secret': client_secret,
+            'client_id': config.orcid_client_id,
+            'client_secret': config.orcid_client_secret,
             'grant_type': 'authorization_code',
             'code': code,
             'redirect_uri': request.url,  # FIXME not sure why we need this again here ???

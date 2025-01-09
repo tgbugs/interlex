@@ -40,3 +40,7 @@ vhost = auth.get('mq-vhost')
 broker_url = auth.get('mq-broker-url')
 broker_backend = auth.get('mq-broker-backend')
 accept_content = auth.get('mq-accept-content')
+
+# orcid
+orcid_client_id = auth.get('orcid-client-id')
+orcid_client_secret = auth.get('orcid-client-secret')

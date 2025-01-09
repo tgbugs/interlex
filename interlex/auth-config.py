@@ -78,4 +78,13 @@
          'default': 25,
          'environment-variables': 'INTERLEX_SMTP_PORT',},
      'smtp-local-hostname': None,  # not sure if need
+
+     # orcid oauth client
+     'orcid-client-id': {
+         'default': None,
+         'environment-variables': 'INTERLEX_ORCID_CLIENT_ID',},
+     'orcid-client-secret':{
+         'default': None,
+         'environment-variables': 'INTERLEX_ORCID_CLIENT_SECRET',},
+
  }}
