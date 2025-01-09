@@ -166,11 +166,11 @@ def uriStructure():
                     'mapped':['GET', 'POST'],
 
                     # ops
-                    'user-new': ['GET', 'POST', 'OPTIONS'],  # FIXME do we need explicit OPTIONS?
+                    'user-new': ['GET', 'POST'],  # FIXME do we need explicit OPTIONS?
                     'login': ['GET', 'POST'],
 
                     # priv
-                    '<user>': ['GET', 'PUT', 'DELETE', 'OPTIONS'],  # for user roles
+                    '<user>': ['GET', 'PUT', 'DELETE'],  # for user roles
                     'upload':['HEAD', 'POST'],  # FIXME why did this need head?
                     'request-ingest': ['POST'],
 
@@ -377,17 +377,19 @@ def setup_runonce(app, endpoints, echo):
     return runonce
 
 
-def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, dbonly=False):
+def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, dbonly=False, db_kwargs=None):
     # app setup and database binding
     app = Flask('InterLex uri server')
-    kwargs = {k:config.auth.get(f'db-{k}')  # TODO integrate with cli options
-              for k in ('user', 'host', 'port', 'database')}
-    kwargs['dbuser'] = kwargs.pop('user')
-    if kwargs['database'] is None:
-        raise ValueError('db-database is None, did you remember to set one?')
+
+    if db_kwargs is None:
+        db_kwargs = {k:config.auth.get(f'db-{k}')  # TODO integrate with cli options
+                for k in ('user', 'host', 'port', 'database')}
+        db_kwargs['dbuser'] = db_kwargs.pop('user')
+        if db_kwargs['database'] is None:
+            raise ValueError('db-database is None, did you remember to set one?')
 
     app.config['SECRET_KEY'] = config.auth.get('fl-session-secret-key')
-    app.config['SQLALCHEMY_DATABASE_URI'] = dbUri(**kwargs)  # use os.environ.update
+    app.config['SQLALCHEMY_DATABASE_URI'] = dbUri(**db_kwargs)  # use os.environ.update
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['CELERY_BROKER_URL'] = config.broker_url
     app.config['CELERY_RESULT_BACKEND'] = config.broker_backend
@@ -407,6 +409,10 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
 
     @lm.user_loader                                                         # give login manager access to db
     def load_user(user_id):
+        if not isinstance(user_id, integer):
+            # FIXME TODO handle orcids coming in as user ids
+            breakpoint()
+
         cr = endpoints.session_execute(  # have to allow login for pending users so they can fix broken email and orcid
             "SELECT * FROM groups AS g JOIN users AS u ON g.id = u.id WHERE g.own_role <= 'pending' AND u.id = :user_id",
             dict(user_id=user_id),)
@@ -481,5 +487,5 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
     runonce()
     return app
 
-def run_uri(echo=False, dbonly=False):
-    return server_uri(db=SQLAlchemy(), mq=cel, lm=LoginManager(), echo=echo, dbonly=dbonly)
+def run_uri(echo=False, dbonly=False, db_kwargs=None):
+    return server_uri(db=SQLAlchemy(), mq=cel, lm=LoginManager(), echo=echo, dbonly=dbonly, db_kwargs=db_kwargs)

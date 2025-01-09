@@ -1894,7 +1894,7 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
     ori = ((OntResPath(localfs.with_suffix(localfs.suffix + '.xz'))
             # there is a window where this can fail if the xz is still running
             if (localfs == path and not localfs.exists() and final_file.exists())
-            else OntRestPath(localfs))
+            else OntResPath(localfs))
            if localfs else OntResIri(iri))
     metadata = ori.metadata()
 

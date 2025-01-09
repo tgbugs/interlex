@@ -26,6 +26,7 @@ from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
 from interlex.utils import log as _log
 from interlex.config import ilx_pattern  # FIXME pull from database probably
+from interlex.dbstuff import Stuff
 from interlex.render import TripleRender  # FIXME need to move the location of this
 from interlex.notifications import send_message, get_smtp_spec, msg_email_verify
 
@@ -478,16 +479,9 @@ class Endpoints:
             elif not to_add:
                 return 'No new curies were added.', 409  # FIXME
 
-            values = tuple((cp, ip) for cp, ip in to_add.items())
-
-            # FIXME impl in load pls
-            values_template, params = makeParamsValues(values,
-                                                        constants=('idFromGroupname(:group)',))  # FIXME surely this is slow as balls
-            params['group'] = group
-            base = 'INSERT INTO curies (group_id, curie_prefix, iri_namespace) VALUES '
-            sql = base + values_template
+            dbstuff = Stuff(self.session)
             try:
-                resp = self.session_execute(sql, params)
+                resp = dbstuff.insert_curies(group, to_add)
                 self.session.commit()
                 return message, 201
             except sa.exc.IntegrityError as e:
@@ -670,7 +664,124 @@ class Ops(Endpoints):
         }
         return super().get_func(nodes, mapping=mapping)
 
+    def orcid_new(self):
+        # TODO make sure to register all landing variants in the orcid app
+        url_orcid_land = url_for('Ops.orcid_landing /u/ops/orcid-land-new')
+        return self._orcid(url_orcid_land)
+
+    def _orcid(self, url_orcid_land)
+        # sign_up_with_orcid
+        client_id = 'TODO'
+        scope = 'openid'  # /read-limited
+        reiri = (f'https://sandbox.orcid.org/oauth/authorize?client_id={client_id}&'
+                 f'response_type=code&scope={scope}&redirect_uri={url_orcid_land}',)
+        return redirect(reiri, 302)
+
+    def orcid_login(self):
+        # so apparently we get an access code every time they log in or something?
+        # TODO make sure to register all landing variants in the orcid app
+        url_orcid_land = url_for('Ops.orcid_landing /u/ops/orcid-land-login')
+        return self._orcid(url_orcid_land)
+
+    def _orcid_landing(self, code):
+        client_id = 'TODO'
+        client_secret = 'TODO'
+        data = {
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'grant_type': 'authorization_code',
+            'code': code,
+            'redirect_uri': request.url,  # FIXME not sure why we need this again here ???
+        }
+        headers = {'Accept': 'application/json',
+                   'Content-Type': 'application/x-www-form-urlencoded',}
+        resp = requests.post('https://sandbox.orcid.org/oauth/token',
+                     headers=headers,
+                     data=data)
+
+        if not resp.ok:
+            # FIXME TODO need to tell the user that login failed
+            resp.raise_for_status()
+
+        orcid_meta = resp.json
+        return orcid_meta
+
+    def orcid_landing_login(self):
+        code = request.data['code']
+        orcid_meta = self._orcid_landing(code)
+        orcid = idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
+        dbstuff = Stuff(self.session)
+        user_row = dbstuff.getUserByOrcid(orcid)
+        if not user_row:
+            # TODO options
+            # create new account
+            # link existing account
+            self._orcid_login_user_temp(orcid_meta)
+            # TODO get email for autofill if we can
+            reiri = url_for('Priv.user_new /u/priv/user-new') + '?from=orcid-login'
+
+        return abort(501)
+
+    def _insert_orcid_meta(self, orcid_meta):
+        dbstuff = Stuff(self.session)
+        dbstuff.insertOrcidMetadata(
+            idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri,
+            orcid_meta['name'],
+            orcid_meta['token_type'],
+            orcid_meta['token_scope'],
+            orcid_meta['access_token'],
+            orcid_meta['refresh_token'],
+            orcid_meta['expires_in'],
+        )
+
+    def _orcid_login_user_temp(self, orcid_meta):
+        # TODO give them a session cookie but use the orcid
+        # as the user id, they will have no groupname so we
+        # use /u/ but it needs to be priv because they do have
+        # to have their session cookie
+        class tuser:
+            is_active = True
+            is_anonymous = True
+            is_authenticated = True
+            id = orcid_meta['orcid']
+            def get_id(self):
+                return self.id
+
+        fl.login_user(tuser())
+
+    def orcid_landing_new(self):
+        # read from auth at start and isolate somewhere outside this class
+        code = request.data['code']
+        orcid_meta = self._orcid_landing(code)
+        self._insert_orcid_meta(code)
+        self._orcid_login_user_temp(orcid_meta)
+
+        #reiri = url_for('Ops.user_new /u/ops/user-new')
+        reiri = url_for('Priv.user_new /u/priv/user-new') + '?from=orcid-new'
+
+        return redirect(reiri, 302)
+
     def user_new(self, group):
+        ''' updated flow theory
+
+        user can create a new account or sign up using orcid
+
+        sign up using orcid, when complete, redirects to a page where they put in their username and email
+        internally this means that we need to maintain an orcid only inflow?
+
+        major advantage of this flow is that we don't have to validate orcids, we will only ever store
+        what we get back from orcid itself
+
+        use orcid -> orcid -> username, email, optional password
+        new account -> username pass email -> orcid
+
+        the question is what we do as a placeholder until we get the username in the orcid flow
+
+        '''
+        # TODO python social-auth-app-flask seems to have reasonable examples of how to integrate with social-core
+        # so that we don't have to fight with all the crazyness XXX no ... I've actually done this twice already
+
+
         # FIXME if a user does not exist they will have no group
         # so which user should it go to? probably base? idk?
         # maybe a dedicated ops user? /ops/ops ? /nobody/ops ?
@@ -697,10 +808,12 @@ class Ops(Endpoints):
     <label for="email">Email:       </label>
     <input type="email" name="email" id="email" size="40" required />
   </div>
+  <!--
   <div class="user-new">
     <label for="orcid">ORCiD:       </label>
     <input type="url" name="orcid" id="orcid" size="37" required />
   </div>
+  -->
   <div class="user-new">
     <input type="submit" value="Register" />
   </div>
@@ -789,8 +902,11 @@ class Ops(Endpoints):
                 errors['email'] = ['malformed']
 
         if 'orcid' not in request.form:
+            # FIXME this is not the right way to do this, the right way to do
+            # this according to orcid is to have user log in with orcid so they
+            # never copy and paste the orcid
             orcid = None
-            errors['orcid'] = ['required']
+            #errors['orcid'] = ['required']
         else:
             orcid = request.form['orcid']
             def orcid_check(o):
@@ -802,9 +918,11 @@ class Ops(Endpoints):
                     return
 
                 try:
-                    oid.identifier.checksumValid
+                    if not oid.identifier.checksumValid:
+                        errors['orcid'] = ['invalid checksum']
+                        return
                 except oid.identifier.OrcidChecksumError:
-                    errors['orcid'] = ['invalid checksum']
+                    errors['orcid'] = ['checksum failure']
                     return
 
                 return oid
@@ -815,17 +933,9 @@ class Ops(Endpoints):
             return json.dumps({'errors': errors}), 422, {'Content-Type': 'application/json'}
 
         argon2_string = iauth.hash_password(password)
-        # TODO multiple operations see cli.Ops.password
-        #sql = 'INSERT INTO user_passwords (user_id, argon2_string) VALUES ((SELECT id FROM groups WHERE groupname :groupname JOIN users ON groups.id = users.id), :argon2_string)'
-        params = dict(groupname=username, argon2_string=argon2_string, orcid=orcid, email=email)
-        sql = '''
-WITH grow AS (INSERT INTO groups (groupname) VALUES (:groupname) RETURNING id),
-gru AS (INSERT INTO users (id, orcid) SELECT id, :orcid FROM grow RETURNING id),
-gre AS (INSERT INTO user_emails (user_id, email, email_primary) SELECT id, :email, TRUE FROM gru RETURNING user_id)
-INSERT INTO user_passwords (user_id, argon2_string) SELECT user_id, :argon2_string FROM gre RETURNING user_id
-'''
+        dbstuff = Stuff(self.session)
         try:
-            user_id = list(self.session_execute(sql, params=params))
+            user_id = dbstuff.user_new(username, argon2string, orcid, email)
             self.session.commit()
         except Exception as e:
             # username format
@@ -871,7 +981,7 @@ INSERT INTO user_passwords (user_id, argon2_string) SELECT user_id, :argon2_stri
 
         fl.login_user(tuser())
 
-        start_email_verify(username, email)
+        self._start_email_verify(username, email)
         # TODO send email
         return f'a verification email has been sent to {email}, now starting orcid auth flow', 201
 
@@ -886,12 +996,21 @@ INSERT INTO user_passwords (user_id, argon2_string) SELECT user_id, :argon2_stri
         # these tokens have a short lifetime so don't need to be quite as long so
         # using 24, also considered 33, it is important to avoid email linewrap
         # which because linewrap uses = which is the same as base64 padding
-        token = base64.urlsafe_b64encode(secrets.token_bytes(24))
-        token_str = token.decode()
-        sql = 'insert into emails_validating (user_id, email, token) VALUES (idFromGroupname(:username), :email, :token) RETURNING created_datetime, delay_seconds, lifetime_seconds'
-        args = dict(username=username, email=email, token=token)
+        dbstuff = Stuff(self.session)
 
-        resp = list(self.session_execute(sql, args))
+        retry_n = 10
+        for i in range(retry_n):
+            token = base64.urlsafe_b64encode(secrets.token_bytes(24))
+            token_str = token.decode()
+            try:
+                resp = dbstuff.email_verify_start(username, email, token)
+                break
+            except Exception as e:
+                # there is an infinitesimal chance that there could be a token
+                # collision, so if that happens make sure we handle it
+                log.exception(e)
+                breakpoint()
+                continue
 
         minutes = resp.lifetime_seconds // 60
 
@@ -984,25 +1103,14 @@ INSERT INTO user_passwords (user_id, argon2_string) SELECT user_id, :argon2_stri
             group_password = base64.b64decode(b64_group_password).decode()
             pass_group, password = group_password.split(':', 1)
 
-            sql = '''
-SELECT * FROM groups AS g
-JOIN users AS u ON g.id = u.id
-JOIN user_passwords AS up ON up.user_id = u.id
-WHERE g.groupname = :groupname AND g.own_role <= 'pending'
-'''
             # FIXME TODO must also check users here to ensure actually allowed to log in
-            rows = list(self.session_execute(sql, dict(groupname=pass_group)))
+            dbstuff = Stuff(self.session)
+            rows = dbstuff.getUserPassword(pass_group)
             if not rows:
                 # not a user
                 return abort(401)
 
             group_row = rows[0]
-
-            #sql = 'SELECT argon2_string FROM user_passwords WHERE user_id = :user_id'
-            #params = {'user_id': group_row.id}
-            #rows = list(self.session_execute(sql, params))
-
-            #user_password = rows[0]
             argon2_string = group_row.argon2_string
             password_matches = iauth.validate_password(argon2_string, password)
 
@@ -1252,12 +1360,19 @@ class Priv(Endpoints):
     def orcid_change(self, group, db=None):
         # XXX cannot change a validated orcid
         # can only change an unvalidated orcid
-        return 'TODO', 501
+        return 'XXX DO NOT USE', 501
 
     @basic
     def orcid_verify(self, group, db=None):
         # start orcid verification workflow if something went wrong
-        return 'TODO', 501
+        return 'XXX DO NOT USE', 501
+
+    _orcid = Ops._orcid
+    @basic
+    def orcid_associate(self, group, db=None):
+        # TODO make sure to register all landing variants in the orcid app
+        url_orcid_land = url_for('Ops.orcid_landing /u/ops/orcid-land-assoc')
+        return self._orcid(url_orcid_land)
 
     @basic
     def email_add(self, group, db=None):

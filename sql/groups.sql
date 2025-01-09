@@ -153,14 +153,14 @@ $orcid_complete$ language plpgsql;
 
 CREATE TRIGGER orcid_complete AFTER UPDATE ON users FOR each row execute procedure orcid_complete();
 
-CREATE TABLE orcid_tokens(
-       orcid uri NOT NULL, 
-       orcid_auth_code char(6),
+CREATE TABLE orcid_metadata(
+       orcid uri PRIMARY KEY,
+       name text,
        token_type text,
+       token_scope text,
        access_token uuid,
        refresh_token uuid,
-       expires_in integer,  -- annoying...
-       token_scope text
+       lifetime_seconds integer
 );
 
 CREATE TABLE user_emails(
@@ -215,7 +215,7 @@ CREATE TABLE emails_validating(
        -- TODO consider using something like pg_cron to periodically cull these
        user_id integer NOT NULL,
        email text NOT NULL,
-       token bytea NOT NULL,
+       token bytea UNIQUE NOT NULL,
        created_datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
        -- delays seconds is time until can validate, helps with 2
        -- things, a slight rate limit on new accounts, and more
@@ -223,9 +223,41 @@ CREATE TABLE emails_validating(
        -- nonsense cannot accidentally trigger the link, adjust accordingly
        delay_seconds integer NOT NULL DEFAULT 60,
        lifetime_seconds integer NOT NULL DEFAULT 900, -- default to 15 minutes
+       CHECK (delay_seconds <= lifetime_seconds),
        PRIMARY KEY (user_id, email),
        FOREIGN KEY (user_id, email) REFERENCES user_emails (user_id, email)
 );
+
+CREATE OR REPLACE FUNCTION email_verify_complete(token bytea) RETURNS void AS $email_verify_complete$
+DECLARE
+BEGIN
+    IF EXISTS (
+       SELECT * FROM emails_validating AS ev
+       WHERE ev.token = email_verify_complete.token
+       AND CURRENT_TIMESTAMP > ev.created_datetime + make_interval(secs := ev.delay_seconds)
+       AND CURRENT_TIMESTAMP < ev.created_datetime + make_interval(secs := ev.lifetime_seconds)) THEN
+           WITH evs AS (SELECT * FROM emails_validating AS ev WHERE ev.token = email_verify_complete.token)
+           UPDATE user_emails AS ue SET email_validated = CURRENT_TIMESTAMP FROM evs WHERE ue.email = evs.email AND ue.user_id = evs.user_id;
+           DELETE FROM emails_validating AS ev WHERE ev.token = email_verify_complete.token;
+    ELSIF EXISTS (
+    SELECT * FROM emails_validating AS ev
+    WHERE ev.token = email_verify_complete.token
+    AND CURRENT_TIMESTAMP <= ev.created_datetime + make_interval(secs := ev.delay_seconds)) THEN
+        -- <= to ensure that attempts to start and complete in the same transaction fail for an explicable reason
+        -- also because the token is only valid AFTER time, not at the same moment
+        RAISE EXCEPTION 'too early, verification link not active';
+    ELSIF EXISTS (
+    SELECT * FROM emails_validating AS ev
+    WHERE ev.token = email_verify_complete.token
+    AND CURRENT_TIMESTAMP > ev.created_datetime + make_interval(secs := ev.lifetime_seconds)) THEN
+        RAISE EXCEPTION 'too late, verification link has expired';
+    ELSIF NOT EXISTS (SELECT * FROM emails_validating AS ev WHERE ev.token = email_verify_complete.token) THEN
+        RAISE EXCEPTION 'unknown email verification token';
+    ELSE
+        RAISE EXCEPTION 'how did you get here?';
+    END IF;
+END;
+$email_verify_complete$ language plpgsql;
 
 CREATE TABLE orgs(
        id integer PRIMARY KEY,
@@ -287,6 +319,7 @@ CREATE TABLE user_permissions(
        -- TODO need a way to check that the users are validated ... which is why I did it the old way... (ah well)
        group_id integer NOT NULL,  -- user or org, initially only granted curator in their user group
        user_id integer NOT NULL,  -- the fkey prevents groups from having any permissions which is important since can't log in as group
+       CHECK (group_id != user_id),  -- that's what own_role is for
        user_role group_role NOT NULL,
        CHECK ((user_role > 'admin' AND user_role <= 'view') OR user_role = 'admin' AND group_id = 0),
        -- TODO references users vs references new_users due to need to erase users?
@@ -334,6 +367,28 @@ CREATE TABLE api_keys(
        revoked_datetime TIMESTAMP WITH TIME ZONE
 );
 
+
+CREATE OR REPLACE FUNCTION api_keys_ensure_invars() RETURNS trigger AS $api_keys_ensure_owner$
+BEGIN
+    -- ensure user is owner
+    IF NOT EXISTS (SELECT * FROM users AS u JOIN groups AS g ON u.id = g.id AND g.own_role = 'owner' WHERE u.id = NEW.user_id) THEN
+       RAISE EXCEPTION 'User lacks sufficient privileges to create an api key. User own_role is %.', (SELECT own_role FROM groups WHERE id = NEW.user_id);
+    END IF;
+
+    -- ensure user has admin role in empty group before granting them a key with scope admin
+    IF NEW.key_scope = 'admin' AND NOT EXISTS (SELECT * FROM user_permissions AS up WHERE up.user_id = NEW.user_id AND up.group_id = 0 AND up.user_role = 'admin') THEN
+       RAISE EXCEPTION 'User lacks sufficient privileges to create an api key with admin scope.';
+    END IF;
+
+    -- XXX NOTE that admin scope on a key only applies if admin still has empty group user role admin
+    -- we already check own_role < pending for normal users, but admin hasn't been handled yet
+    -- TODO ensure that admin's can't accidentally revoke admin status, for now revoking admin requires db access
+END;
+$api_keys_ensure_owner$ language plpgsql;
+
+CREATE TRIGGER api_keys_ensure_invars BEFORE INSERT ON api_keys FOR EACH STATEMENT EXECUTE PROCEDURE api_keys_ensure_invars();
+-- TODO trigger for post user role changes to revoke any keys beyond our scope/role checks
+
 CREATE TABLE expiration_intervals(
        thing text PRIMARY KEY,
        duration interval
@@ -345,7 +400,7 @@ INSERT INTO expiration_intervals (thing, duration) VALUES
        ('user', '1 week'),
         -- 2 days may seem short, but we auto un-expire if needed
        ('email', '2 days'),
-       ('orcid', '2 days'),
+       --('orcid', '2 days'),
        ('email-token', '30 mins') -- we probably don't run cull every 30 mins, but the point stands
 ;
 
@@ -353,14 +408,14 @@ CREATE OR REPLACE FUNCTION cullExpiredThings() RETURNS void AS $cullExpiredThing
 DECLARE
 api_key_done_expire_dur interval;
 user_email_unverified_expire_dur interval;
-user_orcid_unverified_expire_dur interval;
+--user_orcid_unverified_expire_dur interval;
 user_account_unverified_expire_dur interval;
 email_token_unverified_expire_dur interval;
 BEGIN
        select duration into api_key_done_expire_dur from expiration_intervals where thing = 'api_key';
        select duration into user_account_unverified_expire_dur from expiration_intervals where thing = 'user';
        select duration into user_email_unverified_expire_dur from expiration_intervals where thing = 'email';
-       select duration into user_orcid_unverified_expire_dur from expiration_intervals where thing = 'orcid';
+       --select duration into user_orcid_unverified_expire_dur from expiration_intervals where thing = 'orcid';
        select duration into email_token_unverified_expire_dur from expiration_intervals where thing = 'email-token';
        -- 2 days may seem short, but users can add back if they need in the extremely rare case where
        -- they somehow can't verify their account but have managed to remember their password
@@ -380,8 +435,8 @@ BEGIN
        SELECT * FROM user_emails
        WHERE email_verified IS NULL AND created_datetime + user_email_unverivied_expire_dur >= CURRENT_TIMESTAMP;
 
-       SELECT * FROM users
-       WHERE orcid_verified IS NULL AND created_datetime + user_orcid_unverified_expire_dur >= CURRENT_TIMESTAMP;
+       --SELECT * FROM users
+       --WHERE orcid_verified IS NULL AND created_datetime + user_orcid_unverified_expire_dur >= CURRENT_TIMESTAMP;
 
        SELECT * FROM users AS u JOIN groups AS g ON g.id = u.id
        WHERE g.own_role = 'pending'

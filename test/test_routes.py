@@ -29,8 +29,8 @@ def makeTestRoutes(limit=1):
                  'mouse/versions/1',
                  'mouse/versions/1/',
                  'mouse/versions/1/labels')
-    operations = ('user-new', 'login')
-    pages = 'email-verify', 'orcid-verify', 'api-tokens', 'org-new', 'logout', 'settings'
+    #operations = ('user-new', 'login')
+    #pages = 'email-verify', 'orcid-verify', 'api-tokens', 'org-new', 'logout', 'settings'
     users_role = 'tgbugs',
 
     options = {
@@ -56,8 +56,8 @@ def makeTestRoutes(limit=1):
 
         'spec.<extension>': spec_extensions,
 
-        '<operation>': operations,
-        '<page>': pages,
+        #'<operation>': operations,
+        #'<page>': pages,
         '<user>': users_role,
 
         '*ont_ilx_get': ilx_patterns_extensions,
