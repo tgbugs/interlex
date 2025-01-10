@@ -170,6 +170,8 @@ ALTER TABLE groups ENABLE TRIGGER groupname_length_check;
 -- SELECT id INTO STRICT tgbugs_id FROM idFromGroupname('tgbugs');
 -- tgbugs_id := idFromGroupname('tgbugs');
 
+INSERT INTO orcid_metadata (orcid, token_access) VALUES ('https://orcid.org/0000-0002-7509-4801', gen_random_uuid());
+
 INSERT INTO users (id, orcid) VALUES
        (idFromGroupname('tgbugs'), 'https://orcid.org/0000-0002-7509-4801');
 
@@ -178,7 +180,7 @@ INSERT INTO user_emails (user_id, email, email_primary) VALUES
 
 UPDATE user_emails SET email_validated = CURRENT_TIMESTAMP WHERE user_id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
 -- correct, interlex-user only has insert and select access, so these need to be populated via trigger on insert
-UPDATE users SET orcid_validated = CURRENT_TIMESTAMP WHERE id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
+--UPDATE users SET orcid_validated = CURRENT_TIMESTAMP WHERE id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
 
 INSERT INTO user_permissions VALUES (0, idFromGroupname('tgbugs'), 'admin');
 

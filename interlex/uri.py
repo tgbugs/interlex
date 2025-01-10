@@ -1,6 +1,6 @@
 from pathlib import Path
 from collections import OrderedDict as od
-from flask import Flask, url_for
+from flask import Flask, url_for, abort
 from flask_restx import Api, Resource, apidoc
 from flask_restx.api import SwaggerView
 from flask_sqlalchemy import SQLAlchemy
@@ -58,6 +58,7 @@ def uriStructure():
     path_names = {
         # dissociate the node names which must be unique
         # from the name the will have in the resolver structure
+        '*priv': 'priv',
         '*uris_ont': 'uris',
         '*uris_version': 'version',
         '*<uris_filename>': '<filename>',
@@ -85,9 +86,21 @@ def uriStructure():
     # reminder: None is used to mark branches that are also terminals
     parent_child = {
         '<group>':             basic + ['*ilx_get', 'lexical'] + branches + compare + [
-            'ops', 'priv', 'contributions', 'prov', 'external',],
-        'u':                   ['ops'],
-        'ops':                 ['user-new', 'user-recover', 'email-verify', 'ever', 'login'],
+            'priv', 'contributions', 'prov', 'external',],
+        'u':                   ['ops', '*priv'],
+        'ops':                 ['user-new',
+                                'user-recover',
+                                'email-verify', 'ever',
+                                'login',
+                                'orcid-new',
+                                'orcid-login',
+                                'orcid-land-new',
+                                'orcid-land-login',
+                                ],
+        '*priv':               ['user-new',
+                                'orcid-land-assoc',  # currently null case
+                                'orcid-land-change',  # currently not null case
+                                ],
         'priv':                ['role',
                                 'upload',
                                 'request-ingest',
@@ -102,8 +115,9 @@ def uriStructure():
                                 # XXX TODO see if we really need this also probably want /<group>/priv/settings/<sub>
                                 'settings',
                                 'password-change',
+
                                 'orcid-change',
-                                'orcid-verify',
+
                                 'email-add',
                                 'email-del',
                                 'email-verify',
@@ -216,7 +230,7 @@ def add_leafbranches(nodes):
 
 def build_endpoints(db, rules_req_auth):
     from interlex.endpoints import Endpoints, Versions, Own, OwnVersions, Diff, DiffVersions
-    from interlex.endpoints import Ontologies, Ops, Priv
+    from interlex.endpoints import Ontologies, Ops, Privu, Priv
 
     endpoints = Endpoints(db, rules_req_auth)
     ontologies = Ontologies(db, rules_req_auth)
@@ -226,6 +240,7 @@ def build_endpoints(db, rules_req_auth):
     diff = Diff(db, rules_req_auth)
     diffversions = DiffVersions(db, rules_req_auth)
     ops = Ops(db, rules_req_auth)
+    privu = Privu(db, rules_req_auth)
     priv = Priv(db, rules_req_auth)
 
     # build the route -> endpoint mapping function
@@ -238,6 +253,7 @@ def build_endpoints(db, rules_req_auth):
                 'versions': {'': versions},
                 'ontologies': {'': ontologies},
                 'priv': {'': priv},
+                '*priv': {'': privu},
                 'ops': {'': ops},
                 '': endpoints,
                 #'': {'ontologies': {'': ontologies}, '': endpoints}
@@ -274,6 +290,13 @@ _known_default = (
     '<filename_terminal>.<extension>',
     '<word>',
     'contributions',
+
+    'ever',
+    'orcid-land-new',
+    'orcid-land-login',
+    'orcid-land-assoc',
+    'orcid-land-change',
+
 )
 
 
@@ -409,9 +432,41 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
 
     @lm.user_loader                                                         # give login manager access to db
     def load_user(user_id):
-        if not isinstance(user_id, integer):
-            # FIXME TODO handle orcids coming in as user ids
-            breakpoint()
+        if not isinstance(user_id, int):
+            if isinstance(user_id, str):
+                orcid = 'https://orcid.org/' + user_id
+                cr = endpoints.session_execute(
+                    'SELECT * FROM orcid_metadata AS om LEFT JOIN users AS u ON u.orcid = om.orcid WHERE om.orcid = :orcid',
+                    dict(orcid=orcid))
+                rows = list(cr)
+                if not rows:
+                    return None
+
+                orcid_row = rows[0]
+                if orcid_row.id is not None:
+                    # FIXME do we send the user a header to tell the user agent
+                    # to clear cookies or something along with the new cookie?
+                    msg = ('attempt to connect with orcid only session cookie '
+                           'when a orcid + user is present on the system, you '
+                           'probably want to replace the session cookie?')
+                    abort(401, msg)
+
+                class tuser:
+                    is_active = True  # maybe we set this to False?
+                    is_anonymous = False
+                    is_authenticated = True
+                    orcid = orcid_row.orcid
+                    id = None
+                    own_role = None
+                    groupname = None
+                    def get_id(self):
+                        return self.id
+
+                #breakpoint()
+                return tuser()
+            else:
+                msg = f'{user_id!r} is a {type(user_id)}'
+                raise TypeError(msg)
 
         cr = endpoints.session_execute(  # have to allow login for pending users so they can fix broken email and orcid
             "SELECT * FROM groups AS g JOIN users AS u ON g.id = u.id WHERE g.own_role <= 'pending' AND u.id = :user_id",
@@ -422,8 +477,10 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
         else:
             class tuser:
                 is_active = True
+                # is_anonymous and is_authenticated are exact opposites due to
+                # some lingering history inherited from django or something
                 is_anonymous = False
-                is_authenticated = True  # FIXME but is it true?
+                is_authenticated = True
                 id = rows[0].id
                 own_role = rows[0].own_role
                 groupname = rows[0].groupname
@@ -435,8 +492,8 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
     api, doc_namespaces = build_api(app)                     # api init
     add_api_rule = api_rule_maker(api, doc_namespaces)       # api binding
 
-    parent_child, node_methods, path_to_route, path_names = structure() # uri path nodes
-    paths = list(make_paths(parent_child))                  # paths
+    parent_child, node_methods, path_to_route, path_names = structure()  # uri path nodes
+    paths = list(make_paths(parent_child))                               # paths
     routes = ['/'.join(remove_terminals([path_to_route(node) for node in path])) for path in paths]
 
     @app.route('/favicon.ico')
@@ -458,7 +515,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
         function = endpoint_type.get_func(nodes)
         methods = route_methods(nodes, node_methods, path_names)
 
-        if 'uris' in nodes or '*uris_ont' in nodes or 'priv' in nodes:
+        if 'uris' in nodes or '*uris_ont' in nodes or 'priv' in nodes or '*priv' in nodes:
             # FIXME TODO there are others
             rules_req_auth.add(route)
 

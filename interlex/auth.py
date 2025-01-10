@@ -3,6 +3,7 @@ import argon2
 import secrets
 import binascii
 import flask_login as fl
+from flask import abort
 from idlib.utils import makeEnc
 from interlex.utils import log
 from sqlalchemy.sql import text as sql_text
@@ -19,20 +20,20 @@ ph = argon2.PasswordHasher(
 
 def hash_password(password):
     try:
-        log.debug('beg')
+        log.log(9, 'beg')
         return ph.hash(password)
     finally:
-        log.debug('end')
+        log.log(9, 'end')
 
 
 def validate_password(argon2_string, password):
     try:
-        log.debug('beg')
+        log.log(9, 'beg')
         return ph.verify(argon2_string, password)
     except argon2.exceptions.VerifyMismatchError as e:
         return False
     finally:
-        log.debug('end')
+        log.log(9, 'end')
 
 # https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/
 # https://stackoverflow.com/questions/30092226/calculate-crc32-correctly-with-python
@@ -236,10 +237,17 @@ class Auth:
         request_needs_auth_or_auth_user = write_requires_auth or read_requires_auth or read_might_require_auth
 
         logged_in_user = fl.current_user
-        if logged_in_user is not None and not logged_in_user.is_anonymous:
-            li_user = logged_in_user.groupname
+        if logged_in_user is not None and logged_in_user.is_authenticated:
+            if hasattr(logged_in_user, 'groupname') and logged_in_user.groupname is not None:
+                li_user = logged_in_user.groupname
+                orcid_user = None
+            else:
+                # orcid only users do not have a groupname but are technically authed
+                li_user = None
+                orcid_user = logged_in_user
         else:
             li_user = None
+            orcid_user = None
 
         def no_token_ok(r):
             _notok = [
@@ -272,6 +280,13 @@ class Auth:
 
             # TODO fresh_login_required
             auth_value = None
+        elif li_user is not None and request.url_rule.rule == '/u/priv/user-new':
+            # FIXME does this logic go here ? i put it here to avoid producing
+            # confusing error mesages if we hit write_requires_auth ...
+            abort(409, 'cannot create a new user when already logged in')
+        elif orcid_user is not None and request.url_rule.rule == '/u/priv/user-new':
+            scope = 'user-only'
+            return None, None, scope, None, None
         elif write_requires_auth:
             if li_user:
                 msg = f'{request.method} requires token authorization, but login was provided'

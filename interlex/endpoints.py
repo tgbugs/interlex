@@ -55,12 +55,12 @@ def getBasicDB(self, group, request):
         # particular methods or well known endpoints, never for scratch space
         # urls, also ok for invalid scope because the result doesn't check whether
         # the target group exists, only that it does not match
-        return abort(401, {'message': e.extra_info})
+        abort(401, {'message': e.extra_info})
     except (self.auth.MalformedRequestHeader, self.auth.MangledTokenError) as e:
-        return abort(400, {'message': e.extra_info})
+        abort(400, {'message': e.extra_info})
     except self.auth.AuthError as e:
         log.exception(e)
-        return abort(400, {'message': 'something went wrong on your end'})
+        abort(400, {'message': 'something went wrong on your end'})
 
     if request.method in ('HEAD', 'GET', 'OPTIONS'):
         # FIXME there are some pages we need to reject at this point?
@@ -118,6 +118,18 @@ def basic(function):
     return basic_checks
 
 
+def basic0(function):
+    """ only use this u/priv because it only exists to abort if anything other
+        than an orcid only token is set """
+    @wraps(function)
+    def basic0_checks(self, *args, **kwargs):
+        group = None
+        _, _, read_private = getBasicDB(self, group, request)
+        return function(self, *args, **kwargs)
+
+    return basic0_checks
+
+
 def basic2(function):
     @wraps(function)
     def basic2_checks(self, *args, **kwargs):
@@ -163,7 +175,8 @@ def basic2(function):
     return basic2_checks
 
 
-class Endpoints:
+class EndBase:
+
     def __init__(self, db, rules_req_auth):
         self.db = db
         self.session = self.db.session
@@ -174,16 +187,21 @@ class Endpoints:
         self.BasicDB = BasicDBFactory(self.session)
         self.UnsafeBasicDB = UnsafeBasicDBFactory(self.session)
 
+    def get_func(self, nodes, mapping=None):
+        #ilx_get = ilx_pattern + '.<extension>'  # FIXME TODO where did we need this again?
+        if mapping is None:
+            mapping = {}
+
+        for node in nodes[::-1]:
+            if node in mapping:
+                return mapping[node]
+        else:
+            breakpoint()
+            raise KeyError(f'could not find any value for {nodes}')
+
+
     def session_execute(self, sql, params=None):
         return self.session.execute(sql_text(sql), params=params)
-
-    @property
-    def reference_host(self):
-        return self.queries.reference_host
-
-    @property
-    def link_to_new_token(self):
-        return 'TODO url_for', 501
 
     def getBasicInfo(self, group, auth_user):
         try:
@@ -204,6 +222,54 @@ class Endpoints:
         except exc.NotGroup:
             log.debug(f'not group? {group}')
             return None
+
+
+
+class Endpoints(EndBase):
+
+    def get_func(self, nodes):
+        mapping = {
+            'ilx': self.ilx,
+            'other': self.other,
+            '*versions': self.versions,
+            #ilx_get: self.ilx_get,
+            '*ilx_get': self.ilx_get,
+
+            'lexical': self.lexical,
+            'readable': self.readable,
+            'uris': self.uris,
+            'curies_': self.curies_,
+            'curies': self.curies,
+
+            # FIXME how to deal with own/other for ontologies/uris ?
+            # FIXME ontologies are weird with need to be here ...
+            # but eithe you duplicate functions or you duplicate diff and own classes
+            'ontologies_': self.ontologies_,
+            'ontologies': self.ontologies,
+            'version': self.ontologies_version,  # FIXME collision prone?
+
+            '*ont_ilx_get': self.ontologies_ilx,
+            '*uris_ont': self.ontologies_uris,
+            '*<path:uris_ont_path>': self.ontologies_uris,
+            '*uris_version': self.ontologies_uris_version,
+
+            'contributions_': self.contributions_,
+            'contributions': self.contributions,
+            '*contributions_ont': self.ontologies_contributions,
+
+            'prov': self.prov,
+
+            'mapped': self.mapped,
+        }
+        return super().get_func(nodes, mapping)
+
+    @property
+    def reference_host(self):
+        return self.queries.reference_host
+
+    @property
+    def link_to_new_token(self):
+        return 'TODO url_for', 501
 
     def getGroupCuries(self, group, epoch_verstr=None,
                        default=default_prefixes):
@@ -231,49 +297,6 @@ class Endpoints:
                 pass
         else:
             return f'Unknown prefix {prefix}', 404
-
-    def get_func(self, nodes, mapping=None):
-        #ilx_get = ilx_pattern + '.<extension>'  # FIXME TODO where did we need this again?
-        if mapping is None:
-            mapping = {
-                'ilx': self.ilx,
-                'other': self.other,
-                '*versions': self.versions,
-                #ilx_get: self.ilx_get,
-                '*ilx_get': self.ilx_get,
-
-                'lexical': self.lexical,
-                'readable': self.readable,
-                'uris': self.uris,
-                'curies_': self.curies_,
-                'curies': self.curies,
-
-                # FIXME how to deal with own/other for ontologies/uris ?
-                # FIXME ontologies are weird with need to be here ...
-                # but eithe you duplicate functions or you duplicate diff and own classes
-                'ontologies_': self.ontologies_,
-                'ontologies': self.ontologies,
-                'version': self.ontologies_version,  # FIXME collision prone?
-
-                '*ont_ilx_get': self.ontologies_ilx,
-                '*uris_ont': self.ontologies_uris,
-                '*<path:uris_ont_path>': self.ontologies_uris,
-                '*uris_version': self.ontologies_uris_version,
-
-                'contributions_': self.contributions_,
-                'contributions': self.contributions,
-                '*contributions_ont': self.ontologies_contributions,
-
-                'prov': self.prov,
-
-                'mapped': self.mapped,
-            }
-
-        for node in nodes[::-1]:
-            if node in mapping:
-                return mapping[node]
-        else:
-            raise KeyError(f'could not find any value for {nodes}')
 
     def mapped(self, group):
         # see the alt implementation of external/mapped for use case
@@ -652,7 +675,38 @@ class Endpoints:
         raise NotImplementedError('should not be hitting this')
 
 
-class Ops(Endpoints):
+def _sigh_insert_orcid_meta(session, orcid_meta, user=None):
+    dbstuff = Stuff(session)
+    orcid = idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri,
+    dbstuff.insertOrcidMetadata(
+        orcid,
+        orcid_meta['name'],
+        orcid_meta['token_type'],
+        orcid_meta['scope'],
+        orcid_meta['access_token'],
+        orcid_meta['refresh_token'],
+        orcid_meta['expires_in'],
+        user=user,
+    )
+
+
+def _sigh_orcid_login_user_temp(orcid_meta):
+    # TODO give them a session cookie but use the orcid
+    # as the user id, they will have no groupname so we
+    # use /u/ but it needs to be priv because they do have
+    # to have their session cookie
+    class tuser:
+        is_active = True
+        is_anonymous = True
+        is_authenticated = True
+        id = orcid_meta['orcid']
+        def get_id(self):
+            return self.id
+
+    fl.login_user(tuser())
+
+
+class Ops(EndBase):
 
     def get_func(self, nodes):
         mapping = {
@@ -661,28 +715,69 @@ class Ops(Endpoints):
             'login': self.login,
             'email-verify': self.email_verify,
             'ever': self.email_verify,
+            'orcid-new': self.orcid_new,
+            'orcid-login': self.orcid_login,
+            'orcid-land-new': self.orcid_landing_new,
+            'orcid-land-login': self.orcid_landing_login,
         }
         return super().get_func(nodes, mapping=mapping)
 
     def orcid_new(self):
         # TODO make sure to register all landing variants in the orcid app
-        url_orcid_land = url_for('Ops.orcid_landing /u/ops/orcid-land-new')
+        url_orcid_land = url_for('Ops.orcid_landing_new /u/ops/orcid-land-new')
         return self._orcid(url_orcid_land)
 
-    def _orcid(self, url_orcid_land)
+    def _orcid(self, url_orcid_land):
+        if self._orcid_mock:
+            code = self._orcid_mock  # heh
+            return redirect(url_orcid_land + f'?code={code}', code=302)
+
         # sign_up_with_orcid
         scope = 'openid'  # /read-limited
         reiri = (f'https://sandbox.orcid.org/oauth/authorize?client_id={config.orcid_client_id}&'
                  f'response_type=code&scope={scope}&redirect_uri={url_orcid_land}',)
-        return redirect(reiri, 302)
+        return redirect(reiri, code=302)
 
     def orcid_login(self):
         # so apparently we get an access code every time they log in or something?
         # TODO make sure to register all landing variants in the orcid app
-        url_orcid_land = url_for('Ops.orcid_landing /u/ops/orcid-land-login')
+        url_orcid_land = url_for('Ops.orcid_landing_login /u/ops/orcid-land-login')
         return self._orcid(url_orcid_land)
 
-    def _orcid_landing(self, code):
+    _orcid_mock = True
+    _orcid_mock_codes = {}
+    @staticmethod
+    def _make_orcid_code():
+        return base64.urlsafe_b64encode(secrets.token_bytes(4))[:-2].decode()
+    @staticmethod
+    def _make_orcid_meta():
+        import uuid
+        return dict(
+            orcid=idlib.systems.orcid.genorcid(),
+            name='Test Person',
+            token_type='bearer',
+            scope='openid',
+            access_token=uuid.uuid4(),
+            refresh_token=uuid.uuid4(),
+            expires_in=631138518)
+
+    def _orcid_landing(self):
+        if 'code' not in request.args:
+            abort(400, 'missing required parameter ?code=')
+
+        code = request.args['code']
+        orcid_meta = self._orcid_landing_exchange(code)
+        return orcid_meta
+
+    def _orcid_landing_exchange(self, code):
+        # FIXME TODO we will want to flag endpoints that make external network
+        # calls or possibly literally sandbox it in another process
+        if self._orcid_mock:
+            if code in self._orcid_mock_codes:
+                return self._orcid_mock_codes[code]
+            else:
+                abort(401, f'orcid did not recognize code {code}')
+
         data = {
             'client_id': config.orcid_client_id,
             'client_secret': config.orcid_client_secret,
@@ -692,9 +787,10 @@ class Ops(Endpoints):
         }
         headers = {'Accept': 'application/json',
                    'Content-Type': 'application/x-www-form-urlencoded',}
-        resp = requests.post('https://sandbox.orcid.org/oauth/token',
-                     headers=headers,
-                     data=data)
+        resp = requests.post(
+            'https://sandbox.orcid.org/oauth/token',
+            headers=headers,
+            data=data)
 
         if not resp.ok:
             # FIXME TODO need to tell the user that login failed
@@ -703,62 +799,50 @@ class Ops(Endpoints):
         orcid_meta = resp.json
         return orcid_meta
 
+    _insert_orcid_meta = staticmethod(_sigh_insert_orcid_meta)
+    _orcid_login_user_temp = staticmethod(_sigh_orcid_login_user_temp)
+
     def orcid_landing_login(self):
-        code = request.data['code']
-        orcid_meta = self._orcid_landing(code)
+        orcid_meta = self._orcid_landing()
         orcid = idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
         dbstuff = Stuff(self.session)
-        user_row = dbstuff.getUserByOrcid(orcid)
-        if not user_row:
+        group_resp = dbstuff.getUserByOrcid(orcid)
+        if not group_resp:
             # TODO options
             # create new account
             # link existing account
             self._orcid_login_user_temp(orcid_meta)
             # TODO get email for autofill if we can
-            reiri = url_for('Priv.user_new /u/priv/user-new') + '?from=orcid-login'
+            reiri = url_for('Privu.user_new /u/priv/user-new') + '?from=orcid-login'
+            return redirect(reiri, code=302)
 
-        return abort(501)
+        else:
+            group_row = group_resp[0]
 
-    def _insert_orcid_meta(self, orcid_meta):
-        dbstuff = Stuff(self.session)
-        dbstuff.insertOrcidMetadata(
-            idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri,
-            orcid_meta['name'],
-            orcid_meta['token_type'],
-            orcid_meta['token_scope'],
-            orcid_meta['access_token'],
-            orcid_meta['refresh_token'],
-            orcid_meta['expires_in'],
-        )
+            class tuser:
+                is_active = True  # TODO translate from the permission model
+                is_anonymous = False
+                is_authenticated = True
+                own_role = group_row.own_role
+                groupname = group_row.groupname
+                def get_id(self, __id=group_row.id):
+                    return __id
 
-    def _orcid_login_user_temp(self, orcid_meta):
-        # TODO give them a session cookie but use the orcid
-        # as the user id, they will have no groupname so we
-        # use /u/ but it needs to be priv because they do have
-        # to have their session cookie
-        class tuser:
-            is_active = True
-            is_anonymous = True
-            is_authenticated = True
-            id = orcid_meta['orcid']
-            def get_id(self):
-                return self.id
-
-        fl.login_user(tuser())
+            fl.login_user(tuser())
+            return 'orcid-login successful, check your cookies (use requests.Session)'
 
     def orcid_landing_new(self):
         # read from auth at start and isolate somewhere outside this class
-        code = request.data['code']
-        orcid_meta = self._orcid_landing(code)
-        self._insert_orcid_meta(code)
+        orcid_meta = self._orcid_landing()
+        self._insert_orcid_meta(self.session, orcid_meta)
         self._orcid_login_user_temp(orcid_meta)
 
         #reiri = url_for('Ops.user_new /u/ops/user-new')
-        reiri = url_for('Priv.user_new /u/priv/user-new') + '?from=orcid-new'
+        reiri = url_for('Privu.user_new /u/priv/user-new') + '?from=orcid-new'
 
-        return redirect(reiri, 302)
+        return redirect(reiri, code=302)
 
-    def user_new(self, group):
+    def user_new(self):
         ''' updated flow theory
 
         user can create a new account or sign up using orcid
@@ -786,9 +870,6 @@ class Ops(Endpoints):
         # TODO email
         # password
         # TODO only orcid
-        if group != 'u':  # u for utility or something
-            return abort(404)
-
         if request.method == 'GET':
             # fine we'll send you a form to fill out
             user_new_form = '''
@@ -828,6 +909,9 @@ class Ops(Endpoints):
         if request.method != 'POST':
             return abort(404)
 
+        breakpoint()
+        has_orcid = fl.current_user is not None and fl.current_user.is_orcid
+
         errors = {}
         if 'username' not in request.form:
             username = None
@@ -854,7 +938,11 @@ class Ops(Endpoints):
 
         if 'password' not in request.form:
             password = None
-            errors['password'] = ['required']
+            if fl.current_user.is_orcid:
+                # FIXME TODO orcid case
+                breakpoint()
+            else:
+                errors['password'] = ['required']
         else:
             password = request.form['password']
             def password_check(p, lr=10):
@@ -932,7 +1020,7 @@ class Ops(Endpoints):
         argon2_string = iauth.hash_password(password)
         dbstuff = Stuff(self.session)
         try:
-            user_id = dbstuff.user_new(username, argon2string, orcid, email)
+            user_id = dbstuff.user_new(username, email, argon2string, orcid)
             self.session.commit()
         except Exception as e:
             # username format
@@ -1017,7 +1105,7 @@ class Ops(Endpoints):
         scheme = 'https'  # FIXME ...
         reference_host = self.reference_host  # FIXME vs actual host for testing
         #verification_link = f'{scheme}://{reference_host}/{username}/ops/email-verify?{token}'
-        verification_link = f'{scheme}://{reference_host}/u/ops/ever?{token_str}'
+        verification_link = f'{scheme}://{reference_host}/u/ops/ever?t={token_str}'
         reverify_link = f'{scheme}://{reference_host}/{username}/priv/email-verify'  # FIXME obviously wrong link
         msg = msg_email_verify(
             email, nowish, startish, resp.delay_seconds, minutes, thenish,
@@ -1025,28 +1113,28 @@ class Ops(Endpoints):
 
         send_message(msg, get_smtp_spec())
 
-    def user_recover(self, group):
-        if group != 'u':
-            return abort(404)
-
+    def user_recover(self):
         return abort(501)
 
-    def email_verify(self, group):
-        if group != 'u':
-            return abort(404)
+    def email_verify(self):
+        """ callback point for email with token not to be confused with priv/email-verify """
+        if 't' not in request.args:
+            return abort(400, 'missing verification token t=')
 
+        token_str = request.args['t']
+        token = token_str.encode()
+        dbstuff = Stuff(self.session)
+        dbstuff.email_verify_complete(token)
         breakpoint()
         return abort(501)
 
-    def login(self, group):
+    def login(self):
         # FIXME this needs to be able to detect whether a user is already
         # logged in as the same or another user
 
         # XXX NOTE this is pretty much only for development
         # because in production login is going to go directly
         # to orcid and /<group>/ops/login should pretty much never be used
-        if group != 'u':
-            return abort(404)
 
         if False and request.method in ('GET', 'HEAD'):
             # only accept post with password on this endpoint
@@ -1128,18 +1216,58 @@ class Ops(Endpoints):
 
                 fl.login_user(tuser())
                 return 'login successful, check your cookies (use requests.Session)'
+
             else:
                 return abort(401)  # FIXME hrm what would the return code be here ...
 
         else:
             return abort(405)
 
-    def ops(self, group, operation):
-        # unsupported operation
-        return abort(404)
+
+class Privu(EndBase):
 
 
-class Priv(Endpoints):
+    def get_func(self, nodes):
+        mapping = {
+            'user-new': self.user_new,  # for orcid
+
+            'orcid-land-change': self.orcid_landing_change,
+            'orcid-land-assoc': self.orcid_landing_assoc,
+        }
+        return super().get_func(nodes, mapping=mapping)
+
+    _user_new = Ops.user_new
+    @basic0
+    def user_new(self):
+        # for the start from orcid workflow
+        if 'from' in request.args:
+            frm = request.args['from']
+        else:
+            # FIXME do we error in this case?
+            frm = None
+
+        return self._user_new()
+
+    _insert_orcid_meta = staticmethod(_sigh_insert_orcid_meta)
+    _orcid_login_user_temp = staticmethod(_sigh_orcid_login_user_temp)
+
+    _oricd_landing = Ops._orcid_landing
+    _oricd_landing_exchange = Ops._orcid_landing_exchange
+
+    @basic
+    def orcid_landing_change(self, db=None):
+        orcid_meta = self._orcid_landing()
+        breakpoint()
+        pass
+
+    @basic
+    def orcid_landing_assoc(self, db=None):
+        orcid_meta = self._orcid_landing()
+        breakpoint()
+        pass
+
+
+class Priv(EndBase):
 
     def get_func(self, nodes):
         mapping = {
@@ -1155,8 +1283,10 @@ class Priv(Endpoints):
             'org-new': self.org_new,
 
             'password-change': self.password_change,
+
             'orcid-change': self.orcid_change,
-            'orcid-verify': self.orcid_verify,
+            'orcid-assoc': self.orcid_associate,
+
             'email-add': self.email_add,
             'email-del': self.email_del,
             'email-verify': self.email_verify,
@@ -1344,7 +1474,17 @@ class Priv(Endpoints):
         if request.method == 'GET':
             # check if logged in?
             # then log out
-            fl.logout_user()
+            if fl.current_user:
+                # FIXME what do we do if the user is using an api key without a
+                # session or even with a session? how to expire web tokens etc.
+                # all the other lovely stuff about connecting web tokens to
+                # specific computers etc.
+                fl.logout_user()
+            else:
+                # TODO
+                breakpoint()
+                pass
+
             return 'logged out'
         else:
             return abort(405)
@@ -1353,22 +1493,19 @@ class Priv(Endpoints):
     def password_change(self, group, db=None):
         return 'TODO', 501
 
+    _orcid = Ops._orcid
     @basic
     def orcid_change(self, group, db=None):
-        # XXX cannot change a validated orcid
-        # can only change an unvalidated orcid
-        return 'XXX DO NOT USE', 501
+        # can change as long as you can log into the other one and it isn't
+        # already associated with another account, that is, you can't swap
+        # orcids on two accounts you would need a third
+        url_orcid_land = url_for('Privu.orcid_landing_change /u/priv/orcid-land-change')
+        return self._orcid(url_orcid_land)
 
-    @basic
-    def orcid_verify(self, group, db=None):
-        # start orcid verification workflow if something went wrong
-        return 'XXX DO NOT USE', 501
-
-    _orcid = Ops._orcid
     @basic
     def orcid_associate(self, group, db=None):
         # TODO make sure to register all landing variants in the orcid app
-        url_orcid_land = url_for('Ops.orcid_landing /u/ops/orcid-land-assoc')
+        url_orcid_land = url_for('Privu.orcid_landing_assoc /u/priv/orcid-land-assoc')
         return self._orcid(url_orcid_land)
 
     @basic

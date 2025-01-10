@@ -1,3 +1,19 @@
+"""
+
+example db cleanup in the event that our finallys fail
+
+
+#+begin_src bash
+psql -U postgres -h localhost -p 5432
+#+end_src
+
+#+begin_src sql
+select 'DROP DATABASE ' || quote_ident(datname) || ';' FROM pg_database WHERE datname LIKE 'interlex_test_flow%' AND datistemplate = FALSE;
+\gexec
+#+end_src
+
+"""
+
 import unittest
 import os
 import base64
@@ -5,8 +21,11 @@ import secrets
 import idlib
 from sqlalchemy import create_engine
 from sqlalchemy.sql import text as sql_text
+from interlex import endpoints
 from interlex.uri import make_paths, uriStructure, route_methods, run_uri
-from interlex.core import dbUri, getScopedSession
+from interlex.auth import hash_password
+from interlex.core import dbUri, getScopedSession, remove_terminals
+from interlex.utils import log
 from interlex.config import auth
 from interlex.ingest import run_cmd
 from interlex.dbstuff import Stuff
@@ -48,6 +67,7 @@ def cleanup_dbs(dbs):
 
 def combinatorics():
     #session = getSession(echo=False)
+    _session = None
     user = 'tgbugs-test-1', 'tgbugs-test-2'
     own_role = 'pending', 'owner', 'banned', 'admin'
     group = '<group>', # 'org-test-1', 'org-test-2', *user
@@ -56,12 +76,21 @@ def combinatorics():
 
     test_user = 'tgbugs-test-1'
     test_org = 'org-test-1'
-    _success = object()
-    _fail = object()
+    class StatusSuccess: pass
+    _success = StatusSuccess()
+    class StatusError: pass
+    _error = StatusError()
+    class StatusFail: pass
+    _fail = StatusFail()
 
-    def impossible(r): raise Exception('sigh, apparently not')
+    def impossible(r):
+        breakpoint()
+        raise Exception('sigh, apparently not')
     def success(r): return r is _success
+    def error(r): return r is _error
     def fail(r): return r is _fail
+
+    def not_error(r): return r is _error
 
     def sw_apitok(nodes):
         for n in nodes:
@@ -70,6 +99,10 @@ def combinatorics():
 
     def priv(nodes): return 'priv' in nodes
     def role(nodes): return 'role' in nodes
+    def privu_un(nodes): return '*priv' in nodes and 'user-new' in nodes
+    def ops_un(nodes): return 'ops' in nodes and 'user-new' in nodes
+    def user_new(nodes): return 'user-new' in nodes
+
     def GET(m): return m == 'GET'
 
     def owner(r): return r == 'owner'
@@ -82,18 +115,24 @@ def combinatorics():
     def not_null(v): return v is not None
     def true(v): return True
 
+    def orcid_user(g):
+        # FIXME this is a hack that isn't actually correct
+        # closer to maybe orcid user ...
+        return not_group(g)
+
     current_auth_user = None
     def is_user(g):
         nonlocal current_auth_user
-        user = list(session.execute('select * from users where id = idFromGroupname(:g)', params=dict(g=g)))
+        user = list(_session.execute(sql_text('select * from users as u join groups as g on u.id = g.id where g.groupname = :g'), params=dict(g=g)))
         current_auth_user = g if user else None
         return current_auth_user
 
     def same_user(g): return is_user(g) and g == current_auth_user
     def diff_user(g): return is_user(g) and g != current_auth_user
     def is_org(g):
-        return list(session.execute('select * from orgs where id = idFromGroupname(:g)', params=dict(g=g)))
-    def not_group(g): return not list(session.execute('select * from groups where groupname = :g', params=dict(g=g)))
+        return list(_session.execute(sql_text('select * from orgs as o join groups as g on o.id = g.id where g.groupname = :g'), params=dict(g=g)))
+    def not_group(g):
+        return not list(_session.execute(sql_text('select * from groups where groupname = :g'), params=dict(g=g)))
 
     #dict(node=, auth_user=, own_role=, group=, user_role=, method=, scope=, outcome=)
 
@@ -105,6 +144,10 @@ def combinatorics():
     # priv/role -> auth_user own_role != owner -> fail
 
     invars = [
+        dict(nodes=privu_un,  auth_user=orcid_user,                                                                                      outcome=success),  # orcid only users can start a privu new user proc
+        dict(nodes=ops_un,    auth_user=orcid_user,                                                                                      outcome=fail),     # orcid only users can't start an ops new user proc
+        dict(nodes=user_new,  auth_user=is_user,                                                                                         outcome=fail),     # existing users can't start any new user proc
+
         dict(nodes=priv,      auth_user=null,                                                                                            outcome=fail),
         dict(nodes=priv,      auth_user=is_user, own_role=admin,     group=diff_user, user_role=true,      method=true, scope=admin,     outcome=success),
         dict(nodes=priv,      auth_user=is_user, own_role=admin,     group=diff_user, user_role=true,      method=true, scope=not_admin, outcome=fail),
@@ -124,11 +167,11 @@ def combinatorics():
         dict(                 auth_user=is_org,                                                                                         outcome=impossible),  # should be impossible to have auth_user=is_org
     ]
 
-    keys = 'node', 'method', 'auth_user', 'own_role', 'group', 'user_role', 'scope'
+    keys = 'nodes', 'method', 'auth_user', 'own_role', 'group', 'user_role', 'scope'
     def check_invariants(scenario):
         bads = []
         for inv in invars:
-            do_check = [k for k in keys if k in inv and inv[k](scenario[k])]
+            do_check = all([inv[k](scenario[k]) for k in keys if k in inv])
             if do_check:
                 if not inv['outcome'](scenario['outcome']):
                     bads.append(inv)
@@ -136,24 +179,99 @@ def combinatorics():
         return bads
 
     test_password = base64.b64encode(secrets.token_bytes(15)).decode()
-    test_orcid = 'https://orcid.org/' + idlib.systems.orcid.genorcid()
-    test_email = 'test-user@example.org'
+    #test_orcid = 'https://orcid.org/' + idlib.systems.orcid.genorcid()
+    test_email_f = 'test-user-{n}@example.org'
 
-    scenarios = [
-        dict(nodes=('', 'priv', 'api-tokens'), auth_user=test_user, own_role='owner',   group=test_user, user_role=None, method='GET', scope='user-only', auth=None),
-        dict(nodes=('', 'priv', 'api-tokens'), auth_user=test_user, own_role='pending', group=test_user, user_role=None, method='GET', scope='user-only', auth=None),
+    def mtest_org(scen):
+        return 'org-test-' + base64.b64encode(secrets.token_bytes(6)).decode()  # FIXME shouldn't we disallow org.* ? and group. for groupnames ?? nah i think those are ok, blocking user and test still relevant though
+
+    def mtest_user(scen):
+        return 'tgbugs-test-' + base64.urlsafe_b64encode(secrets.token_bytes(6)).decode()
+
+    def msame_user(scen):
+        return scen['auth_user']
+
+    scen_reg = [
+        dict(auth_user=mtest_user, register='orcid-first',      missing=set()),
+        dict(auth_user=mtest_user, register='orcid-second',     missing=set()),
+
+        dict(auth_user=mtest_user, register='orcid-first',      missing={'user', 'email'}),
+        dict(auth_user=mtest_user, register='orcid-first',      missing={'email',}),
+
+        dict(auth_user=mtest_user, register='orcid-first-pass', missing={'user', 'email'}),
+        dict(auth_user=mtest_user, register='orcid-first-pass', missing={'email'}),
+
+        dict(auth_user=mtest_user, register='orcid-second',     missing={'orcid', 'email'}),  # TODO both orders orcid -> email email -> orcid
+        dict(auth_user=mtest_user, register='orcid-second',     missing={'orcid',}),
+        dict(auth_user=mtest_user, register='orcid-second',     missing={'email',}),
+
     ]
 
-    scnid = iter(range(len(scenarios) * 2))
+    scen_log = [
+        # i.e. successful login with orcid by someone, and then someone tries to log in to their account and fails
+        dict(auth_user=mtest_user, register='orcid-first', auth='orcid-fail', missing={'user', 'email'})
+    ]
+
+    _group = '<group>'
+    scen_auth = [
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner',   group=msame_user, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-first',      missing=set()),
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner',   group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-first-pass', missing=set()),
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner',   group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second',     missing=set()),
+        dict(nodes=('', 'u', '*priv', 'user-new'),     auth_user=mtest_user, own_role='owner',   group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second',     missing=set()),
+
+        dict(nodes=('', 'u', '*priv', 'user-new'),     auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-first',      missing={'user', 'email'}),
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-first',      missing={'user', 'email'}),
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-first',      missing={'email'}),
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-first-pass', missing={'email'}),
+
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second',     missing={'orcid', 'email'}),
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second',     missing={'orcid'}),
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second',     missing={'email'}),
+        ]
+    more = [
+
+
+
+    ]
+
+    scnid = iter(range(len(scen_auth) * 2))
     def scen_sql(scen):
         user = scen['auth_user']
         yield None, None
 
-    def prepare_scen(scen):
+    # prepare single db
+    if True:
         database = f'interlex_test_flows_{os.getpid()}_{next(scnid)}'
         test_databases.append(database)  # for teardown
         argv = '/bin/sh', 'bin/interlex-dbsetup', str(test_db_port), database
         run_cmd(argv, working_dir, '/dev/stderr')
+
+    def prepare_scen(scen, scen_type):
+        this_scen_id = next(scnid)
+        # validate scen
+        if 'scope' in scen and scen['scope'] and auth is None:
+            # FIXME other stuff can slip by this e.g. scopes that cannot be achieved via login
+            raise TypeError('scope provided without auth method to achieve it')
+        if 'auth' in scen and scen['auth'] == 'login' and 'register' in scen and scen['register'] not in ('orcid-second', 'orcid-first-pass'):
+            if scen['register'] == 'orcid-first':
+                msg = 'auth=login requires password OR change to auth=orcid'
+            else:
+                msg = 'auth=login requires password'
+
+            raise TypeError(msg)
+
+        if 'auth_user' in scen:
+            scen['auth_user'] = scen['auth_user'](scen)
+
+        if 'group' in scen:
+            scen['group'] = scen['group'](scen)
+
+        # prepare fresh db for each scenario (now overkill)
+        if False:
+            #database = f'interlex_test_flows_{os.getpid()}_{this_scen_id}'
+            test_databases.append(database)  # for teardown
+            argv = '/bin/sh', 'bin/interlex-dbsetup', str(test_db_port), database
+            run_cmd(argv, working_dir, '/dev/stderr')
 
         db_kwargs = dict(dbuser='interlex-admin', host=test_db_host, port=test_db_port, database=database)
         try:
@@ -161,13 +279,86 @@ def combinatorics():
             dbstuff = Stuff(session)
 
             # create user
-            dbstuff.user_new(scen['auth_user'], test_password, test_orcid, test_email)
-            # get various auth things
-            if scen['own_role'] == 'pending':
+            user = None
+            test_email = test_email_f.format(n=this_scen_id)
+            test_argon = hash_password(test_password)
+            orcid_meta = endpoints.Ops._make_orcid_meta()
+            if scen_type in 'reg':
+                return database, orcid_meta, this_scen_id
+
+            orcid = idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
+            if scen['register'].startswith('orcid-first'):
+                # this tests partially completely workflows in the database
+                # we also want to run scen_reg through the app as well
+                endpoints.Ops._insert_orcid_meta(session, orcid_meta)
+                session.commit()
+            elif scen['register'] == 'orcid-second':
+                user = scen['auth_user']
+                dbstuff.user_new(user, test_email, test_argon)  # orcid=orcid here should error on fk constraint
+                session.commit()
+            else:
+                msg = f'unknown register workflow {scen["register"]}'
+                raise NotImplementedError(msg)
+
+            # execute database only steps to get to the desired state for the scenario
+            missing = scen['missing']
+            if 'own_role' not in scen:
+                # FIXME logic bad upstairs ...
                 pass
+            elif scen['own_role'] == 'pending':
+                if not missing:
+                    msg = 'pending must specify what is missing'
+                    raise ValueError(msg)
+
+                if 'user' in missing:
+                    if 'email' not in missing:
+                        msg = 'if user is missing then email must be missing'
+                        raise ValueError(msg)
+                    elif scen['register'] == 'orcid-second':
+                        msg = 'pending orcid-second already has user'
+                        raise ValueError(msg)
+                elif scen['register'].startswith('orcid-first'):
+                    user = scen['auth_user']
+                    # XXX how we get the orcid in the route handler is left as an exercise for the reader ... (session)
+                    if scen['register'] == 'orcid-first-pass':
+                        dbstuff.user_new(user, test_email, test_argon, orcid)
+                    else:
+                        dbstuff.user_new(user, test_email, None, orcid)
+
+                    session.commit()
+
+                if 'orcid' in missing:
+                    if scen['register'].startswith('orcid-first'):
+                        msg = 'pending orcid-first already has orcid'
+                        raise ValueError(msg)
+
+                    orcid_meta = None
+                elif scen['register'] == 'orcid-second':
+                    # XXX how we get user in route handler is likewise left as an exercies, likely from session
+                    endpoints.Ops._insert_orcid_meta(session, orcid_meta, user=user)
+                    session.commit()
+
             elif scen['own_role'] == 'owner':
+                # FIXME sigh code duplication
+                if scen['register'] == 'orcid-second':
+                    # XXX how we get user in route handler is likewise left as an exercies, likely from session
+                    endpoints.Ops._insert_orcid_meta(session, orcid_meta, user=user)
+                    session.commit()
+                else:
+                    user = scen['auth_user']
+                    # XXX how we get the orcid in the route handler is left as an exercise for the reader ... (session)
+                    if scen['register'] == 'orcid-first-pass':
+                        dbstuff.user_new(user, test_email, test_argon, orcid)
+                    else:
+                        dbstuff.user_new(user, test_email, None, orcid)
+            else:
+                raise NotImplementedError(scen['own_role'])
+
+            if ('own_role' in scen and scen['own_role'] == 'owner') or ('email' not in missing and 'user' not in missing):
                 test_token = base64.urlsafe_b64encode(secrets.token_bytes(24))
-                dbstuff.email_verify_start(test_user, test_email, test_token, delay_seconds=0)
+                if user is None:
+                    breakpoint()
+                dbstuff.email_verify_start(user, test_email, test_token, delay_seconds=0)
                 session.commit()  # must commit so that verify time is > start time, otherwise equal timestamps will prevent completion
                 dbstuff.email_verify_complete(test_token)
                 session.commit()
@@ -175,7 +366,7 @@ def combinatorics():
                 #dbstuff.orcid_associate('uh no idea what goes here')
                 #dbstuff.user_new
 
-            breakpoint()
+            #breakpoint()
             #for sql, params in scen_sql(scen):
                 #if sql is not None:
                     #session.execute(sql_text(sql), params=params)
@@ -189,33 +380,176 @@ def combinatorics():
             conn.close()
             conn.engine.dispose()
 
-        return database
+        return database, orcid_meta, this_scen_id
 
-    scendbs = [(scen, prepare_scen(scen)) for scen in scenarios]
+    # FIXME probably better to do each test sequentially and not make all dbs first ...
+    scendbs = [(scen, prepare_scen(scen, 'reg'), 'reg') for scen in scen_reg] + [(scen, prepare_scen(scen, 'log'), 'log') for scen in scen_log] + [(scen, prepare_scen(scen, 'auth'), 'auth') for scen in scen_auth]
 
     # FIXME source appropriately
+    parent_child, node_methods, path_to_route, path_names = uriStructure()
+
+    def fixresp(resp):
+        # match the things we need from requests response object
+        resp.ok = resp.status_code < 400
+        resp.url = resp.request.url
+        resp.content = resp.data
+        return resp
+
     scheme = 'http'
     host = 'localhost'
     port = ':8505'
     url_prefix = f'{scheme}://{host}{port}'
-    def run_scen(scen, db):
-        route = remove_terminals([path_to_route(n) for n in scen['nodes']])
-        filled = route.replace('<group>', scen['group'])
-        url = url_prefix + route
+    def run_scen(scen, scen_type, sid, db, orcid_meta):
+        nonlocal _session
+        if 'nodes' in scen:
+            route = '/'.join(remove_terminals([path_to_route(n) for n in scen['nodes']]))
+            filled = route.replace('<group>', scen['group'])
+            url = url_prefix + filled
 
         app = run_uri(db_kwargs=dict(dbuser='interlex-user', host=test_db_host, port=test_db_port, database=db))
-        client = app.test_client()
+        app.testing = True
+        session = app.extensions['sqlalchemy'].session
+        try:
+            client = app.test_client()
 
-        method = getattr(client, scen['method'].lower())
-        headers = {''}
-        resp = method(url, headers=headers)
-        scen['outcome'] = _success if resp.ok else _fail  # FIXME
+            if 'method' in scen:
+                method = getattr(client, scen['method'].lower())
+
+            headers = {}
+            if scen_type == 'reg' and scen['register'] is not None:
+                # FIXME this isn't quite set up correctly for testing these
+                if scen['register'].startswith('orcid-first'):
+                    # 1
+                    url = url_prefix + '/u/ops/orcid-new'
+                    code = endpoints.Ops._make_orcid_code()
+                    endpoints.Ops._orcid_mock = code
+                    endpoints.Ops._orcid_mock_codes[code] = orcid_meta
+                    resp1 = client.get(url)
+                    # FIXME have to process all redirects ourselves
+
+                    # 2
+                    url = url_prefix + '/u/priv/user-new'
+                    user = scen['auth_user']
+                    email = test_email_f.format(n=sid)
+                    headers = {}
+                    breakpoint()
+                    headers['Cookie'] = resp1.headers['Set-Cookie']
+                    data = {'username': user, 'email': email}
+                    if scen['register'] == 'orcid-first-pass':
+                        data['password'] = test_password
+                    resp2 = client.post(url, data=data, headers=headers)
+
+                    # 3
+                    token = endpoints.Ops._email_mock_tokens[email]
+                    url = url_prefix + '/u/ops/email-verify?t=' + token
+                    resp3 = client.get(url)
+
+                    # 4
+                    url = url_prefix + f'/{user}/priv/api-token-new'  # FIXME TODO api-token-web-new ?
+                    data = {'type': 'personal', 'scope': 'user-all', 'note': 'testing token'}
+                    resp4 = client.post(url, data=data, headers=headers)
+
+
+                if scen['register'] == 'orcid-second':
+                    # 1
+                    url = url_prefix + '/u/ops/user-new'
+                    user = scen['auth_user']
+                    data = {'username': user, 'email': test_email_f.format(n=sid), 'password': test_password}
+                    resp1 = client.post(url, data=data)
+
+                    # 2
+                    url = url_prefix + f'/{user}/priv/orcid-assoc'
+                    headers = {}
+                    headers['Cookie'] = resp1.headers['Set-Cookie']
+                    code = endpoints.Ops._make_orcid_code()
+                    endpoints.Ops._orcid_mock = code
+                    endpoints.Ops._orcid_mock_codes[code] = orcid_meta
+                    resp2 = client.get(url, headers=headers)
+                    # 3
+
+                breakpoint()
+                return
+
+            if scen_type == 'log':
+                # TODO
+                breakpoint()
+                return
+
+            if scen['auth'] is not None:
+                if scen['auth'] == 'login':
+                    lheaders = {'Authorization': 'Basic ' + base64.b64encode((scen['auth_user'] + ':' + test_password).encode()).decode()}
+                    lurl = url_prefix + '/u/ops/login'
+                    lresp = fixresp(client.get(lurl, headers=lheaders))
+                    headers['Cookie'] = lresp.headers['Set-Cookie']
+                elif scen['auth'] == 'orcid':
+                    code = endpoints.Ops._make_orcid_code()
+                    endpoints.Ops._orcid_mock = code
+                    endpoints.Ops._orcid_mock_codes[code] = orcid_meta
+                    lurl = url_prefix + '/u/ops/orcid-login'
+                    lresps = []
+                    lheaders = {}
+                    lresp = fixresp(client.get(lurl, headers=lheaders))
+                    # XXX have to manually resolve location
+                    lresps.append(lresp)
+                    while lresp.status_code == 302:
+                        lurl = url_prefix + lresp.headers['Location']
+                        lresp = fixresp(client.get(lurl))
+                        if 'Set-Cookie' in lresp.headers:
+                            lheaders['Cookie'] = lresp.headers['Set-Cookie']
+                        lresps.append(lresp)
+
+                    if 'Cookie' in lheaders:
+                        headers['Cookie'] = lheaders['Cookie']
+
+                    #breakpoint()
+
+                elif scen['auth'] == 'orcid-fail':  # XXX not quite the right place to test this, it is more in the scen_log set ?
+                    pass
+
+                #breakpoint()
+
+            resp = fixresp(method(url, headers=headers))
+            scen['outcome'] = _success if resp.ok else _fail  # FIXME
+            with app.app_context():
+                _session = session
+                # FIXME have to check invariants in here because we need the session for some of our predicates
+                bad = check_invariants(scen)
+                if bad:
+                    breakpoint()
+
+                return bad
+
+            _session = None
+
+        except Exception as e:
+            # rollbacks should all happen internally
+            log.exception(e)
+            breakpoint()
+            return [dict(outcome=not_error)]
+        finally:
+            endpoints.Ops._orcid_mock = True
+            with app.app_context():
+                session.close()
+                conn = session.connection()
+                conn.close()
+                conn.engine.dispose()
+
+    # run_scen mutates scen in place to add outcomes outcomes
+    bads = []
+    for scen, (db, orcid_meta, sid), scen_type in scendbs:
+        bad = run_scen(scen, scen_type, sid, db, orcid_meta)
+        if bad:
+            bads.append((scen, bad, db))
+
+    if bads:
+        breakpoint()
+
+    assert not bads
 
     options = {
         #'<group>': group,
     }
 
-    parent_child, node_methods, path_to_route, path_names = uriStructure()
     paths = list(make_paths(parent_child, options=options, limit=10))
     tpaths = [p for p in paths if 'priv' in p]
     tmethods = [route_methods(n, node_methods, path_names) for n in tpaths]

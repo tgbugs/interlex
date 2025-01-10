@@ -393,55 +393,58 @@ def remove_terminals(route):
     return route
 
 
-def make_paths(parent_child, parent='<group>', options=tuple(), limit=9999, depth=0, path_names=tuple()):
+def make_paths(parent_child, parents=tuple(), roots=('u', '<group>'), options=tuple(), limit=9999, depth=0, path_names=tuple()):
     """ path_names is actually a dict, but hey mutable defaults """
+    if not parents:
+        parents = roots
 
     def inner(child, parent, idepth):
-        for path in make_paths(parent_child, child, options=options, limit=limit, depth=idepth,
+        for path in make_paths(parent_child, (child,), roots=roots, options=options, limit=limit, depth=idepth,
                                path_names=path_names):
             #printD('PATH:', path)
             if parent in options:
                 for option in options[parent][:limit]:
-                    if parent == '<group>':
+                    if parent in roots:
                         prefix = '', option
                     else:
                         prefix = option,
 
                     yield prefix + path
 
-            elif parent == '<group>':
+            elif parent in roots:
                 yield ('', parent) + path
             else:
                 yield (parent,) + path
 
 
-    if parent in parent_child:
-        for child in parent_child[parent]:
-            #printD('CHILD:', child)
-            if child in options:
-                todo = options[child][:limit]
-                if child in parent_child:  # only branches need to go again
-                    todo += child,
-                for option in todo:
-                    yield from inner(option, parent, depth + 1)
-            else:
-                yield from inner(child, parent, depth + 1)
-    else:
-        if parent in options:
-            for option in options[parent][:limit]:
-                path += option,
-                yield path
-        elif parent is None:  # branches that are also terminals
-            yield TERMINAL,
-        elif parent == depth:
-            # branchers that are also terminals at a given depth
-            # where the depth should be considered as the zero indexed
-            # depth of the empty string following the slash
-            yield TERMINAL,
-        elif isinstance(parent, int):
-            pass  # skip other depths
+    for parent in parents:
+        if parent in parent_child:
+            for child in parent_child[parent]:
+                #printD('CHILD:', child)
+                if child in options:
+                    todo = options[child][:limit]
+                    if child in parent_child:  # only branches need to go again
+                        todo += child,
+                    for option in todo:
+                        yield from inner(option, parent, depth + 1)
+                else:
+                    yield from inner(child, parent, depth + 1)
         else:
-            yield parent,
+            if parent in options:
+                for option in options[parent][:limit]:
+                    path += option,
+                    yield path
+            elif parent is None:  # branches that are also terminals
+                yield TERMINAL,
+            elif parent == depth:
+                # branchers that are also terminals at a given depth
+                # where the depth should be considered as the zero indexed
+                # depth of the empty string following the slash
+                yield TERMINAL,
+            elif isinstance(parent, int):
+                pass  # skip other depths
+            else:
+                yield parent,
 
 
 class RegexConverter(BaseConverter):
