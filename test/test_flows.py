@@ -19,6 +19,7 @@ import os
 import base64
 import secrets
 import idlib
+from urllib.parse import quote as url_quote
 from sqlalchemy import create_engine
 from sqlalchemy.sql import text as sql_text
 from interlex import endpoints
@@ -399,6 +400,39 @@ def combinatorics():
     host = 'localhost'
     port = ':8505'
     url_prefix = f'{scheme}://{host}{port}'
+
+    def do_get(client,url, headers=None):
+        resps = []
+
+        if headers is None:
+            headers = {}
+
+        resp = fixresp(client.get(url, headers=headers))
+        if 'Set-Cookie' in resp.headers:
+            headers['Cookie'] = resp.headers['Set-Cookie']
+
+        resps.append(resp)
+        while resp.status_code == 302:
+            loc = resp.headers['Location']
+            if loc.startswith('/'):
+                url = url_prefix + loc
+            else:
+                url = loc
+
+            try:
+                resp = fixresp(client.get(url, headers=headers))
+            except Exception as e:
+                breakpoint()
+                raise e
+
+            if 'Set-Cookie' in resp.headers:
+                headers['Cookie'] = resp.headers['Set-Cookie']
+
+            resp.history = list(resps)
+            resps.append(resp)
+
+        return resp
+
     def run_scen(scen, scen_type, sid, db, orcid_meta):
         nonlocal _session
         if 'nodes' in scen:
@@ -420,54 +454,116 @@ def combinatorics():
                 # FIXME this isn't quite set up correctly for testing these
                 if scen['register'].startswith('orcid-first'):
                     # 1
-                    url = url_prefix + '/u/ops/orcid-new'
+                    #start = url_quote(f'{scheme}://{host}{port}/base/ilx_0101431')
+                    start = url_quote(f'{scheme}://{host}{port}/{scen["auth_user"]}/priv/settings')  # XXX hack since brain doesn't exist atm
+                    url = url_prefix + '/u/ops/orcid-new' + '?freiri=' + start
                     code = endpoints.Ops._make_orcid_code()
-                    endpoints.Ops._orcid_mock = code
-                    endpoints.Ops._orcid_mock_codes[code] = orcid_meta
-                    resp1 = client.get(url)
-                    # FIXME have to process all redirects ourselves
+                    endpoints._orcid_mock = code
+                    endpoints._orcid_mock_codes[code] = orcid_meta
+                    # somehow the cookie isn't being read or something?
+                    # checking flask.session it is clear that the cookie is present and has what we need
+                    # XXX because we were missing a call to session.commit() (duh)
+                    resp1 = do_get(client, url)
+                    if resp1.status_code == 302:
+                        url_next = url_prefix + resp1.headers['Location']
+                    elif resp1.status_code == 200:
+                        # have to post to the endpoint the redirect sent us to
+                        # though I'm not 100% sure if there is a way to know
+                        # that from the html that comes back
+                        url_next = resp1.url
+                    else:
+                        url_next = None
+
+                    if not resp1.ok:
+                        with app.app_context():
+                            breakpoint()
+                            ''
 
                     # 2
-                    url = url_prefix + '/u/priv/user-new'
+                    url = (url_prefix + f'/u/priv/user-new') if url_next is None else url_next  # resp1 is the get to this endpoint, now we post
                     user = scen['auth_user']
                     email = test_email_f.format(n=sid)
-                    headers = {}
-                    breakpoint()
-                    headers['Cookie'] = resp1.headers['Set-Cookie']
+                    # ok, don't need to pass headers because the client does maintain the session
+                    # but that means we need a new client when we want to potentially separate
+                    # browser, computer, etc.
+                    #headers = {}
+                    # due to the extra redirect to
+                    #headers['Cookie'] = resp1.request.headers['Cookie']
                     data = {'username': user, 'email': email}
                     if scen['register'] == 'orcid-first-pass':
                         data['password'] = test_password
-                    resp2 = client.post(url, data=data, headers=headers)
+                    resp2 = fixresp(client.post(url, data=data, headers=headers))
+                    if resp1.status_code == 303:
+                        url_next = url_prefix + resp1.headers['Location']
+                    else:
+                        url_next = None
+
+                    if not resp2.ok:
+                        with app.app_context():
+                            breakpoint()
+                            ''
 
                     # 3
-                    token = endpoints.Ops._email_mock_tokens[email]
+                    ever_same = True
+                    client2 = client if ever_same else app.test_client()
+                    token = endpoints._email_mock_tokens[email]
                     url = url_prefix + '/u/ops/email-verify?t=' + token
-                    resp3 = client.get(url)
+                    resp3 = do_get(client2, url)
+                    if not resp3.ok:
+                        with app.app_context():
+                            breakpoint()
+                            ''
 
                     # 4
                     url = url_prefix + f'/{user}/priv/api-token-new'  # FIXME TODO api-token-web-new ?
-                    data = {'type': 'personal', 'scope': 'user-all', 'note': 'testing token'}
-                    resp4 = client.post(url, data=data, headers=headers)
+                    data = {'token-type': 'personal', 'scope': 'user-all', 'note': 'testing token'}
+                    resp4 = fixresp(client.post(url, data=data, headers=headers))
+                    if not resp4.ok:
+                        with app.app_context():
+                            breakpoint()
+                            ''
 
-
+                    with app.app_context():
+                        #breakpoint()
+                        ''
                 if scen['register'] == 'orcid-second':
                     # 1
-                    url = url_prefix + '/u/ops/user-new'
+                    #start = url_quote(f'{scheme}://{host}{port}/base/ilx_0101431')
+                    start = url_quote(f'{scheme}://{host}{port}/{scen["auth_user"]}/priv/settings')  # XXX hack since brain doesn't exist atm
+                    url = url_prefix + '/u/ops/user-new' + '?freiri=' + start
                     user = scen['auth_user']
                     data = {'username': user, 'email': test_email_f.format(n=sid), 'password': test_password}
-                    resp1 = client.post(url, data=data)
+                    resp1 = fixresp(client.post(url, data=data))
+                    if resp1.status_code == 303:
+                        url_next = url_prefix + resp1.headers['Location']
+                    else:
+                        url_next = None
+
+                    if not resp1.ok:
+                        with app.app_context():
+                            breakpoint()
+                            ''
 
                     # 2
-                    url = url_prefix + f'/{user}/priv/orcid-assoc'
-                    headers = {}
-                    headers['Cookie'] = resp1.headers['Set-Cookie']
+                    url = (url_prefix + f'/{user}/priv/orcid-assoc') if url_next is None else url_next
+                    #headers = {}
+                    #headers['Cookie'] = resp1.headers['Set-Cookie']
                     code = endpoints.Ops._make_orcid_code()
-                    endpoints.Ops._orcid_mock = code
-                    endpoints.Ops._orcid_mock_codes[code] = orcid_meta
-                    resp2 = client.get(url, headers=headers)
+                    endpoints._orcid_mock = code
+                    endpoints._orcid_mock_codes[code] = orcid_meta
+                    resp2 = do_get(client, url)
+
+                    if not resp2.ok:
+                        with app.app_context():
+                            breakpoint()
+                            ''
+
                     # 3
 
-                breakpoint()
+                    with app.app_context():
+                        #breakpoint()
+                        ''
+
                 return
 
             if scen_type == 'log':
@@ -483,8 +579,8 @@ def combinatorics():
                     headers['Cookie'] = lresp.headers['Set-Cookie']
                 elif scen['auth'] == 'orcid':
                     code = endpoints.Ops._make_orcid_code()
-                    endpoints.Ops._orcid_mock = code
-                    endpoints.Ops._orcid_mock_codes[code] = orcid_meta
+                    endpoints._orcid_mock = code
+                    endpoints._orcid_mock_codes[code] = orcid_meta
                     lurl = url_prefix + '/u/ops/orcid-login'
                     lresps = []
                     lheaders = {}
@@ -492,7 +588,12 @@ def combinatorics():
                     # XXX have to manually resolve location
                     lresps.append(lresp)
                     while lresp.status_code == 302:
-                        lurl = url_prefix + lresp.headers['Location']
+                        loc = lresp.headers['Location']
+                        if loc.startswith('/'):
+                            lurl = url_prefix + loc
+                        else:
+                            lurl = loc
+
                         lresp = fixresp(client.get(lurl))
                         if 'Set-Cookie' in lresp.headers:
                             lheaders['Cookie'] = lresp.headers['Set-Cookie']
@@ -524,10 +625,13 @@ def combinatorics():
         except Exception as e:
             # rollbacks should all happen internally
             log.exception(e)
-            breakpoint()
+            with app.app_context():
+                breakpoint()
+                'derp'
+
             return [dict(outcome=not_error)]
         finally:
-            endpoints.Ops._orcid_mock = True
+            endpoints._orcid_mock = True
             with app.app_context():
                 session.close()
                 conn = session.connection()

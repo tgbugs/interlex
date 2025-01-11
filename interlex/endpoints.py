@@ -5,6 +5,7 @@ import base64
 import secrets
 from datetime import timedelta
 from functools import wraps
+from urllib.parse import urlparse
 import sqlalchemy as sa
 import flask_login as fl
 from flask import request, redirect, url_for, abort, Response
@@ -20,7 +21,7 @@ from interlex import auth as iauth
 from interlex import tasks
 from interlex import config
 from interlex import exceptions as exc
-from interlex.auth import Auth
+from interlex.auth import Auth, gen_key
 from interlex.core import diffCuries, makeParamsValues, default_prefixes
 from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
@@ -35,6 +36,12 @@ log = _log.getChild('endpoints')
 ctaj = {'Content-Type': 'application/json'}
 
 tripleRender = TripleRender()
+
+_email_mock = True
+_email_mock_tokens = {}
+
+_orcid_mock = True
+_orcid_mock_codes = {}
 
 
 def getBasicDB(self, group, request):
@@ -175,6 +182,14 @@ def basic2(function):
     return basic2_checks
 
 
+def check_reiri(reiri):
+    reurl = urlparse(reiri)
+    if reurl.scheme != request.scheme or reurl.netloc != request.host:  # FIXME uri.interlex.org vs interlex.org
+        log.info(f'possibly malicious redirect? {reiri}')
+    else:
+        return reiri
+
+
 class EndBase:
 
     def __init__(self, db, rules_req_auth):
@@ -199,6 +214,9 @@ class EndBase:
             breakpoint()
             raise KeyError(f'could not find any value for {nodes}')
 
+    @property
+    def reference_host(self):
+        return self.queries.reference_host
 
     def session_execute(self, sql, params=None):
         return self.session.execute(sql_text(sql), params=params)
@@ -262,10 +280,6 @@ class Endpoints(EndBase):
             'mapped': self.mapped,
         }
         return super().get_func(nodes, mapping)
-
-    @property
-    def reference_host(self):
-        return self.queries.reference_host
 
     @property
     def link_to_new_token(self):
@@ -688,6 +702,7 @@ def _sigh_insert_orcid_meta(session, orcid_meta, user=None):
         orcid_meta['expires_in'],
         user=user,
     )
+    session.commit()
 
 
 def _sigh_orcid_login_user_temp(orcid_meta):
@@ -697,9 +712,18 @@ def _sigh_orcid_login_user_temp(orcid_meta):
     # to have their session cookie
     class tuser:
         is_active = True
-        is_anonymous = True
+        # reminder anon and auth are exact opposites
+        is_anonymous = False
         is_authenticated = True
-        id = orcid_meta['orcid']
+        via_auth = 'orcid'
+        orcid = 'https://orcid.org/' + orcid_meta['orcid']
+        id = orcid_meta['orcid']  # XXX NOTE THE ASYMMETRY
+        # we put the orcid as an id on issue but when we load
+        # it we move it to orcid and set id = None
+        # however at this point if id = None then the token
+        # will be for a user id None which is bad
+        own_role = None
+        groupname = None
         def get_id(self):
             return self.id
 
@@ -723,29 +747,39 @@ class Ops(EndBase):
         return super().get_func(nodes, mapping=mapping)
 
     def orcid_new(self):
-        # TODO make sure to register all landing variants in the orcid app
         url_orcid_land = url_for('Ops.orcid_landing_new /u/ops/orcid-land-new')
         return self._orcid(url_orcid_land)
 
-    def _orcid(self, url_orcid_land):
-        if self._orcid_mock:
-            code = self._orcid_mock  # heh
-            return redirect(url_orcid_land + f'?code={code}', code=302)
+    def _orcid(self, url_orcid_land, refresh=False):
+        if 'from' in request.args:
+            c = '&' if '?' in url_orcid_land else '?'  # XXX I'm sure this is a bad assumption ...
+            url_orcid_land += ('?from=' + request.args['from'])
 
-        # sign_up_with_orcid
+        if 'freiri' in request.args:
+            freiri = check_reiri(request.args['freiri'])
+            if freiri:
+                c = '&' if '?' in url_orcid_land else '?'  # XXX I'm sure this is a bad assumption ...
+                url_orcid_land += (c + 'freiri=' + freiri)
+
+        if _orcid_mock:
+            code = _orcid_mock  # heh
+            c = '&' if '?' in url_orcid_land else '?'  # XXX I'm sure this is a bad assumption ...
+            return redirect(url_orcid_land + f'{c}code={code}', code=302)
+
+        prompt = '&prompt=login' if refresh else ''
         scope = 'openid'  # /read-limited
         reiri = (f'https://sandbox.orcid.org/oauth/authorize?client_id={config.orcid_client_id}&'
-                 f'response_type=code&scope={scope}&redirect_uri={url_orcid_land}',)
+                 f'response_type=code&scope={scope}{prompt}&redirect_uri={url_orcid_land}',)
         return redirect(reiri, code=302)
 
     def orcid_login(self):
         # so apparently we get an access code every time they log in or something?
-        # TODO make sure to register all landing variants in the orcid app
         url_orcid_land = url_for('Ops.orcid_landing_login /u/ops/orcid-land-login')
-        return self._orcid(url_orcid_land)
+        refresh = 'from' in request.args and request.args['from'] == 'refresh'
+        if refresh:
+            request.args.pop('from')
+        return self._orcid(url_orcid_land, refresh)
 
-    _orcid_mock = True
-    _orcid_mock_codes = {}
     @staticmethod
     def _make_orcid_code():
         return base64.urlsafe_b64encode(secrets.token_bytes(4))[:-2].decode()
@@ -772,9 +806,9 @@ class Ops(EndBase):
     def _orcid_landing_exchange(self, code):
         # FIXME TODO we will want to flag endpoints that make external network
         # calls or possibly literally sandbox it in another process
-        if self._orcid_mock:
-            if code in self._orcid_mock_codes:
-                return self._orcid_mock_codes[code]
+        if _orcid_mock:
+            if code in _orcid_mock_codes:
+                return _orcid_mock_codes[code]
             else:
                 abort(401, f'orcid did not recognize code {code}')
 
@@ -814,21 +848,30 @@ class Ops(EndBase):
             self._orcid_login_user_temp(orcid_meta)
             # TODO get email for autofill if we can
             reiri = url_for('Privu.user_new /u/priv/user-new') + '?from=orcid-login'
+            if 'freiri' in request.args:
+                freiri = check_reiri(request.args['freiri'])
+                if freiri:
+                    reiri += '&freiri=' + freiri
+
             return redirect(reiri, code=302)
 
         else:
             group_row = group_resp[0]
 
+            _orcid = orcid
             class tuser:
                 is_active = True  # TODO translate from the permission model
                 is_anonymous = False
                 is_authenticated = True
+                via_auth = 'orcid'
+                orcid = _orcid
+                id = group_row.id
                 own_role = group_row.own_role
                 groupname = group_row.groupname
                 def get_id(self, __id=group_row.id):
                     return __id
 
-            fl.login_user(tuser())
+            fl.login_user(tuser())  # TODO I don't think there is an easy way to remember this stuff
             return 'orcid-login successful, check your cookies (use requests.Session)'
 
     def orcid_landing_new(self):
@@ -839,8 +882,12 @@ class Ops(EndBase):
 
         #reiri = url_for('Ops.user_new /u/ops/user-new')
         reiri = url_for('Privu.user_new /u/priv/user-new') + '?from=orcid-new'
+        if 'freiri' in request.args:
+            freiri = check_reiri(request.args['freiri'])
+            if freiri:
+                reiri += ('&freiri=' + freiri)
 
-        return redirect(reiri, code=302)
+        return redirect(reiri, code=302)  # 302 more compat when responding to a get
 
     def user_new(self):
         ''' updated flow theory
@@ -870,31 +917,69 @@ class Ops(EndBase):
         # TODO email
         # password
         # TODO only orcid
+
+        _orcid = fl.current_user is not None and hasattr(fl.current_user, 'orcid') and fl.current_user.orcid
+        orcid = _orcid if _orcid else None  # adjust types, sql doesn't like nulls being passed as false ...
+
         if request.method == 'GET':
             # fine we'll send you a form to fill out
-            user_new_form = '''
+            if orcid is None:
+                orcid_not = ' not'
+                not_orcid_not = 'this is you'
+            else:
+                orcid_not = ''
+                not_orcid_not = 'not you'
+
+            message = f'''
+<a href="/u/ops/orcid-new">Sign up with ORCiD</a> <br>
+
+Required: username <br>
+Required: email <br>
+Required: password OR already associated ORCiD account <br>
+Required: eventually associated ORCiD account <br>
+Required: eventually verified email <br>
+
+If you chose to sign up with ORCiD (you have{orcid_not}) the password is optional but encouraged. <br>
+If you did not sign up with ORCiD (not_orcid_not) then a password is required so that you can resume your registration in case something goes wrong. <br>
+If you did not sign up with ORCiD (not_orcid_not) then you will be directed to ORCiD after completion of this form. <br>
+
+We suggest that you use a developer email account that can be disclosed
+publicly since the email will be associated with your contributions (similar to
+git) and if you sign up for notifications about terms and ontologies you may
+receive quite a few during periods of active development.
+<br>
+'''
+
+            password_required = '' if orcid else 'required '
+            user_new_form = f'''
 <form action="" method="post" class="user-new">
+
   <div class="user-new">
     <label for="username">Username: </label>
     <input type="text" name="username" id="username" size="40" required />
   </div>
+
   <div class="user-new">
     <label for="password">Password: </label>
-    <input type="password" name="password" id="password" size="40" required />
+    <input type="password" name="password" id="password" size="40" {password_required}/>
   </div>
+
   <div class="user-new">
-    <label for="email">Email:       </label>
+    <label for="email">Email: </label>
     <input type="email" name="email" id="email" size="40" required />
   </div>
+
   <!--
   <div class="user-new">
-    <label for="orcid">ORCiD:       </label>
+    <label for="orcid">ORCiD: </label>
     <input type="url" name="orcid" id="orcid" size="37" required />
   </div>
   -->
+
   <div class="user-new">
     <input type="submit" value="Register" />
   </div>
+
 </form>
 '''
             return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
@@ -903,14 +988,12 @@ class Ops(EndBase):
 <head><title>InterLex login</title></head>
 <body>
 {user_new_form}
+{message}
 </body>
 </html>'''
 
         if request.method != 'POST':
             return abort(404)
-
-        breakpoint()
-        has_orcid = fl.current_user is not None and fl.current_user.is_orcid
 
         errors = {}
         if 'username' not in request.form:
@@ -938,10 +1021,8 @@ class Ops(EndBase):
 
         if 'password' not in request.form:
             password = None
-            if fl.current_user.is_orcid:
-                # FIXME TODO orcid case
-                breakpoint()
-            else:
+            if not orcid:
+                # password is optional in the orcid case
                 errors['password'] = ['required']
         else:
             password = request.form['password']
@@ -959,9 +1040,15 @@ class Ops(EndBase):
 
                 errs = []
                 for crit, err in ((lp, f'shorter than {lr}'),
-                                    (d, 'no digit'),
-                                    (u, 'no upper'),
-                                    (l, 'no lower')):
+                                  # aside from a min length requirement we
+                                  # don't put restrictions, better ux on the
+                                  # frontend showing estimated password
+                                  # strength probably
+
+                                  #(d, 'no digit'),
+                                  #(u, 'no upper'),
+                                  #(l, 'no lower'),
+                                  ):
                     if not crit:
                         errs.append(err)
                 if errs:
@@ -986,6 +1073,7 @@ class Ops(EndBase):
             if not email_ok:
                 errors['email'] = ['malformed']
 
+        '''
         if 'orcid' not in request.form:
             # FIXME this is not the right way to do this, the right way to do
             # this according to orcid is to have user log in with orcid so they
@@ -1013,14 +1101,16 @@ class Ops(EndBase):
                 return oid
 
             orcid_ok = orcid_check(orcid)
+        '''
 
         if errors:
             return json.dumps({'errors': errors}), 422, {'Content-Type': 'application/json'}
 
-        argon2_string = iauth.hash_password(password)
+
+        argon2_string = None if password is None else iauth.hash_password(password)
         dbstuff = Stuff(self.session)
         try:
-            user_id = dbstuff.user_new(username, email, argon2string, orcid)
+            user_id = dbstuff.user_new(username, email, argon2_string, orcid)
             self.session.commit()
         except Exception as e:
             # username format
@@ -1054,21 +1144,48 @@ class Ops(EndBase):
 
             return 'something went wrong TODO better messages', 422
 
-        # TODO login user
+        _orcid = orcid
         class tuser:
             is_active = True  # TODO translate from the permission model
             is_anonymous = False
-            is_authenticated = True  # FIXME but is it true?
+            is_authenticated = True
+            via_auth = 'orcid' if password is None else 'interlex'
+            orcid = _orcid
+            id = user_id[0].user_id
             own_role = 'pending'
             groupname = username
             def get_id(self, __id=user_id[0].user_id):
                 return __id
 
+        # FIXME do we need to call logout on the orcid only user?
         fl.login_user(tuser())
 
         self._start_email_verify(username, email)
-        # TODO send email
-        return f'a verification email has been sent to {email}, now starting orcid auth flow', 201
+
+        if orcid is None:
+            url_next = url_for('Priv.orcid_associate /<group>/priv/orcid-assoc', group=username) + '?from=user-new'
+            if 'freiri' in request.args:
+                freiri = check_reiri(request.args['freiri'])
+                if freiri:
+                    # FIXME likely want a way to show account creation successful or something after redirect
+                    url_next += '&freiri=' + freiri
+
+            return redirect(url_next, 303)
+        else:
+            if 'application/json' in request.accept_mimetypes:  # FIXME not the best way i think
+                out = {'message': ('Account creation and association with orcid successful. '
+                                   f'Confirmation email sent to {email}'),
+                       'email': email}
+                return json.dumps(out), 201, ctaj
+            else:
+                if 'freiri' in request.args:
+                    freiri = check_reiri(request.args['freiri'])
+                    if freiri:
+                        # FIXME likely want a way to show account creation successful or something after redirect
+                        return redirect(freiri, 303)
+
+                return ('Account creation and association with orcid successful. '
+                        f'As a final step a verification email has been sent to {email}'), 201
 
     def _start_email_verify(self, username, email):
         # this is usually a priv operation, but we call it
@@ -1088,7 +1205,14 @@ class Ops(EndBase):
             token = base64.urlsafe_b64encode(secrets.token_bytes(24))
             token_str = token.decode()
             try:
-                resp = dbstuff.email_verify_start(username, email, token)
+                if _email_mock:
+                    # well if you put lifetime seconds to 0 the logic is correct, but can never be verified (heh)
+                    resp = dbstuff.email_verify_start(username, email, token, 0, 10)
+                else:
+                    resp = dbstuff.email_verify_start(username, email, token)
+
+                self.session.commit()
+                row = resp[0]
                 break
             except Exception as e:
                 # there is an infinitesimal chance that there could be a token
@@ -1097,21 +1221,24 @@ class Ops(EndBase):
                 breakpoint()
                 continue
 
-        minutes = resp.lifetime_seconds // 60
-
-        nowish = resp.created_datetime
-        startish = nowish + timedelta(seconds=resp.delay_seconds)
-        thenish = nowish + timedelta(seconds=resp.lifetime_seconds)
+        minutes = row.lifetime_seconds // 60
+        nowish = row.created_datetime
+        startish = nowish + timedelta(seconds=row.delay_seconds)
+        thenish = nowish + timedelta(seconds=row.lifetime_seconds)
         scheme = 'https'  # FIXME ...
         reference_host = self.reference_host  # FIXME vs actual host for testing
         #verification_link = f'{scheme}://{reference_host}/{username}/ops/email-verify?{token}'
         verification_link = f'{scheme}://{reference_host}/u/ops/ever?t={token_str}'
         reverify_link = f'{scheme}://{reference_host}/{username}/priv/email-verify'  # FIXME obviously wrong link
         msg = msg_email_verify(
-            email, nowish, startish, resp.delay_seconds, minutes, thenish,
+            email, nowish, startish, row.delay_seconds, minutes, thenish,
             verification_link, reverify_link)
 
-        send_message(msg, get_smtp_spec())
+        if _email_mock:
+            _email_mock_tokens[email] = token_str
+        else:
+            # FIXME TODO figure out how to sub this out for testing too
+            send_message(msg, get_smtp_spec())
 
     def user_recover(self):
         return abort(501)
@@ -1124,9 +1251,16 @@ class Ops(EndBase):
         token_str = request.args['t']
         token = token_str.encode()
         dbstuff = Stuff(self.session)
-        dbstuff.email_verify_complete(token)
-        breakpoint()
-        return abort(501)
+        resp = dbstuff.email_verify_complete(token)
+        if resp:
+            self.session.commit()
+            group = resp[0][0]
+            return f'email verification complete for {group}'
+        else:
+            # failure should look like an error not a null value on return so
+            # we really should never get here
+            breakpoint()
+            abort(404)
 
     def login(self):
         # FIXME this needs to be able to detect whether a user is already
@@ -1146,19 +1280,25 @@ class Ops(EndBase):
         if request.method == 'GET' and 'Authorization' not in request.headers:
             # need simple login for testing so provide one
             login_form = ''
+            # XXX we don't use a form for login, basic and then return a session
+            # the react frontend can deal with it as it sees fit
             _login_form = '''
 <form action="" method="post" class="login">
+
   <div class="login">
     <label for="username">Username: </label>
     <input type="text" name="username" id="username" required />
   </div>
+
   <div class="login">
     <label for="password">Password: </label>
     <input type="password" name="password" id="password" required />
   </div>
+
   <div class="login">
     <input type="submit" value="Login" />
   </div>
+
 </form>
 '''
             return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
@@ -1209,12 +1349,21 @@ class Ops(EndBase):
                     is_active = True  # TODO translate from the permission model
                     is_anonymous = False
                     is_authenticated = True  # FIXME but is it true?
+                    via_auth = 'interlex'
+                    orcid = group_row.orcid
+                    id = group_row.id
                     own_role = group_row.own_role  # FIXME could change ?
                     groupname = group_row.groupname
                     def get_id(self, __id=group_row.id):
                         return __id
 
-                fl.login_user(tuser())
+                remember = 'remember' in request.args and request.args['remember'].lower() == 'true'
+                fl.login_user(tuser(), remember=remember)
+                if 'freiri' in request.args:
+                    freiri = check_reiri(request.args['freiri'])
+                    if freiri:
+                        return redirect(freiri, 302)  # 302 seems preferred over 303 for compat reasons?
+
                 return 'login successful, check your cookies (use requests.Session)'
 
             else:
@@ -1236,7 +1385,9 @@ class Privu(EndBase):
         }
         return super().get_func(nodes, mapping=mapping)
 
+    _start_email_verify = Ops._start_email_verify
     _user_new = Ops.user_new
+
     @basic0
     def user_new(self):
         # for the start from orcid workflow
@@ -1251,29 +1402,39 @@ class Privu(EndBase):
     _insert_orcid_meta = staticmethod(_sigh_insert_orcid_meta)
     _orcid_login_user_temp = staticmethod(_sigh_orcid_login_user_temp)
 
-    _oricd_landing = Ops._orcid_landing
-    _oricd_landing_exchange = Ops._orcid_landing_exchange
+    _orcid_landing = Ops._orcid_landing
+    _orcid_landing_exchange = Ops._orcid_landing_exchange
 
-    @basic
+    @basic0
+    @fl.fresh_login_required  # there should always already be an existing session here, but just in case
     def orcid_landing_change(self, db=None):
         orcid_meta = self._orcid_landing()
         breakpoint()
         pass
 
-    @basic
+    @basic0
+    @fl.fresh_login_required  # there should always already be an existing session here, but just in case
     def orcid_landing_assoc(self, db=None):
         orcid_meta = self._orcid_landing()
-        breakpoint()
-        pass
+        user = fl.current_user.groupname
+        self._insert_orcid_meta(self.session, orcid_meta, user=user)
+        if 'freiri' in request.args:  # FIXME arg naming
+            # FIXME TODO need a full return_user_to=url_encode_thing for all of
+            # the login workflows maybe call it logged_in_from or something? if
+            # it isn't set then don't return a final redirect
+            freiri = check_reiri(request.args['freiri'])  # FIXME may need to un-urlencode it?
+            if freiri:
+                return redirect(freiri, 302)  # 302 seems more standard than 303 for get
+
+        orcid = 'https://orcid.org/' + orcid_meta['orcid']
+        # FIXME vs 303 -> interlex.org ...
+        return f'orcid {orcid} successfully associated with user account {user}', 200
 
 
 class Priv(EndBase):
 
     def get_func(self, nodes):
         mapping = {
-            'settings': self.settings,
-
-            '<user>': self.user_role,
             'upload': self.upload,
             'request-ingest': self.request_ingest,
             'entity-new': self.entity_new,
@@ -1282,24 +1443,35 @@ class Priv(EndBase):
 
             'org-new': self.org_new,
 
-            'password-change': self.password_change,
+            'settings': self.settings,
 
-            'orcid-change': self.orcid_change,
+            # all below except noted require fresh login
+            '<user>': self.user_role,
+
+            'password-change': self.password_change,  # tokens cannot be used for this one
+
             'orcid-assoc': self.orcid_associate,
+            'orcid-change': self.orcid_change,
 
             'email-add': self.email_add,
             'email-del': self.email_del,
-            'email-verify': self.email_verify,
+            '*email-verify': self.email_verify,  # fresh not required
             'email-primary': self.email_primary,
 
-            'api-tokens': self.api_tokens,
+            'api-tokens': self.api_tokens,  # TODO elide fresh with refresh token ??? not quite sure here
             'api-token-new': self.api_token_new,
             'api-token-revoke': self.api_token_revoke,
+            # revoke one is tricky, because an attacker try to exploit either scenario
+            # but under the stolen cookie threat model rather than the got phished model
+            # you don't want to give an attacker the ability to revoke tokens because that
+            # can make it easier for them to complete an account takeover or generally mess
+            # something up
 
         }
         return super().get_func(nodes, mapping=mapping)
 
     @basic
+    @fl.fresh_login_required
     def user_role(self, group, user, db=None):
         if request.method == 'GET':
             pass
@@ -1425,17 +1597,6 @@ class Priv(EndBase):
                 return json.dumps(names), 200, {'Content-Type':'application/json'}
 
     @basic
-    def priv(self, group, page, db=None):
-        # separate privilidged pages from ops which technically don't require privs
-
-        # TODO check user first
-
-        # XXX NOTE almost all of these need to work before the user has been verified
-        # which means that they need to work without an api token because api tokens
-        # are only issued once a user completes orcid and email
-        pass
-
-    @basic
     def settings(self, group, db=None):
         # TODO can handle logged in user x group membership and role in a similar way
         recs = self.queries.getUserSettings(group)
@@ -1458,12 +1619,13 @@ class Priv(EndBase):
             (f';\nkey:revoked {k.revoked_datetime} ' if k.revoked_datetime else '') + '.'
             for k in keys])) if keys else ''
 
+        orcid_line = '' if user.orcid is None else f'settings:orcid <{user.orcid}> ;\n'
         return (
             f'ilx:{group}/priv/settings a ilxtr:interlex-settings ;\n'
             'skos:comment "completely fake ttlish representation of settings" ;\n'
             f'settings:groupname "{group}" ;\n'
             f'settings:email [ <mailto:{ep.email}> {ep.email_validated} ] ;\n'  # implicitly primary email
-            f'settings:orcid [ <{user.orcid}> {user.orcid_validated} ] ;\n'
+            f'{orcid_line}'
             'settings:notification-prefs "email" ;\n'
             f'settings:own-role "{user.own_role}" .'
         ) + emails_str + keys_str + '\n', 200, {'Content-Type': 'text/turtle'}
@@ -1490,11 +1652,19 @@ class Priv(EndBase):
             return abort(405)
 
     @basic
+    @fl.fresh_login_required
     def password_change(self, group, db=None):
         return 'TODO', 501
 
     _orcid = Ops._orcid
     @basic
+    @fl.fresh_login_required  # FIXME should not be possible to remember login before orcid assoc or no?
+    def orcid_associate(self, group, db=None):
+        url_orcid_land = url_for('Privu.orcid_landing_assoc /u/priv/orcid-land-assoc')
+        return self._orcid(url_orcid_land)
+
+    @basic
+    @fl.fresh_login_required
     def orcid_change(self, group, db=None):
         # can change as long as you can log into the other one and it isn't
         # already associated with another account, that is, you can't swap
@@ -1503,16 +1673,12 @@ class Priv(EndBase):
         return self._orcid(url_orcid_land)
 
     @basic
-    def orcid_associate(self, group, db=None):
-        # TODO make sure to register all landing variants in the orcid app
-        url_orcid_land = url_for('Privu.orcid_landing_assoc /u/priv/orcid-land-assoc')
-        return self._orcid(url_orcid_land)
-
-    @basic
+    @fl.fresh_login_required
     def email_add(self, group, db=None):
         return 'TODO', 501
 
     @basic
+    @fl.fresh_login_required
     def email_del(self, group, db=None):
         # TODO must have at least one primary verified email
         return 'TODO', 501
@@ -1523,20 +1689,138 @@ class Priv(EndBase):
         return 'TODO', 501
 
     @basic
+    @fl.fresh_login_required
     def email_primary(self, group, db=None):
         # set email address as primary
         return 'TODO', 501
 
     @basic
+    @fl.fresh_login_required
     def api_tokens(self, group, db=None):
-        resp = [{'token': 'TODO-lol-token', 'note': ''}]
-        return json.dumps(resp)
+        dbstuff = Stuff(self.session)
+        keys = dbstuff.getGroupApiKeys(group)
+        out = [{'key': r.key} for r in keys]
+        return json.dumps(out), 200, ctaj
 
     @basic
+    @fl.fresh_login_required
     def api_token_new(self, group, db=None):
-        return abort(501)
+        # FIXME may need to cache these
+        enum_types = [a for a, *_ in self.session.execute(sql_text('select unnest(enum_range(NULL::key_types))'))]
+        enum_types.remove('refresh')
+        enum_scopes = [a for a, *_ in self.session.execute(sql_text('select unnest(enum_range(NULL::key_scopes))'))]
+        enum_scopes.remove('admin')  # iykyk let the db sort them out
+        if request.method == 'GET':
+            # have a form
+            if 'application/json' in request.accept_mimetypes:  # FIXME not the best way i think
+                data = {
+                    '$schema': 'https://json-schema.org/draft/2020-12/schema',
+                    '$id': 'https://uri.interlex.org/schema/1/<group>/priv/api-token-new', # FIXME figure out what to do about this ...
+                    'title': 'new api token request',
+                    'type': 'object',
+                    'required': ['token-type', 'scope'],
+                    'properties': {
+                        'token-type': {'type': 'string',
+                                       'enum': enum_types,},
+                        'scope': {'type': 'string',
+                                  'enum': enum_scopes,},
+                        'lifetime-seconds': {'type': 'integer',},
+                        'note': {'type': 'string',}}}
+                return data, 200, ctaj
+            else:
+                type_options = '\n      '.join([f'<opiton value="{t}">{t}</option>' for t in enum_types])
+                scope_options = '\n      '.join([f'<opiton value="{t}">{t}</option>' for t in enum_scopes])
+                api_token_new_form = f'''
+<form action="" method="post" class="api-token-new">
+
+  <div class="api-token-new">
+    <label for="token-type">Type: </label>
+    <select name="token-type" id="token-type">
+      {type_options}
+    </select>
+  </div>
+
+  <div class="api-token-new">
+    <label for="scope">Scope: </label>
+    <select name="scope" id="scope">
+      {scope_options}
+    </select>
+  </div>
+
+  <div class="api-token-new">
+    <label for="lifetime-seconds">Lifetime seconds: </label>
+    <input type="text" name="lifetime-seconds" id="lifetime-seconds" size="40" />
+  </div>
+
+  <div class="api-token-new">
+    <label for="note">Note: </label>
+    <input type="text" name="note" id="note" size="40" />
+  </div>
+
+  <div class="api-token-new">
+    <input type="submit" value="Register" />
+  </div>
+
+</form>
+'''
+            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex login</title></head>
+<body>
+{api_token_new_form}
+</body>
+</html>'''
+
+        enum_types = set(enum_types)
+        enum_scopes = set(enum_scopes)
+        thing = request.form if True else request.json  # FIXME TODO
+        errors = {}
+        if 'token-type' in thing:
+            token_type = thing['token-type']
+            if token_type not in enum_types:
+                # XXX tecnically the db will take care of this but reduces calls to db
+                errors['token-type'] = [f'unknown type {token_type}']
+        else:
+            errors['token-type'] = ['required']
+
+        if 'scope' in thing:
+            scope = thing['scope']
+            if scope not in enum_scopes:
+                # XXX tecnically the db will take care of this but reduces calls to db
+                errors['token-type'] = [f'unknown type {token_type}']
+        else:
+            errors['scope'] = ['required']
+
+        if errors:
+            return json.dumps({'errors': errors}), 422, ctaj
+
+        if 'lifetime-seconds' in thing:
+            lifetime_seconds = thing['lifetime-seconds']
+        else:
+            lifetime_seconds = None
+
+        if 'note' in thing:
+            _note = thing['note']
+            _note = _note.strip()
+            note = _note if _note else None
+        else:
+            note = None
+
+        key_type = token_type[0]
+        key = gen_key(key_type=key_type)
+        dbstuff = Stuff(self.session)
+        # FIXME TODO this defeinitely needs to be restricted to fresh logins (orcid ?prompt=login)
+        # XXX FIXME for double insurance we likely want to use fl.current_user not group
+        # even though it should be impossible to get through the @basic checks with the
+        # auth_user not matching the group, making doubly sure is probably a good idea
+        # HOWEVER that means we need to set fl.current_user on api key auth as well
+        dbstuff.insertApiKey(group, key, token_type, scope, lifetime_seconds, note)
+        self.session.commit()
+        return {'key': key}, 201, ctaj
 
     @basic
+    @fl.fresh_login_required
     def api_token_revoke(self, group, db=None):
         return abort(501)
 

@@ -240,17 +240,25 @@ CREATE TABLE emails_validating(
        FOREIGN KEY (user_id, email) REFERENCES user_emails (user_id, email)
 );
 
-CREATE OR REPLACE FUNCTION email_verify_complete(token bytea) RETURNS void AS $email_verify_complete$
+CREATE OR REPLACE FUNCTION email_verify_complete(token bytea) RETURNS text AS $email_verify_complete$
 DECLARE
+out_groupname text;
 BEGIN
     IF EXISTS (
        SELECT * FROM emails_validating AS ev
        WHERE ev.token = email_verify_complete.token
        AND CURRENT_TIMESTAMP > ev.created_datetime + make_interval(secs := ev.delay_seconds)
        AND CURRENT_TIMESTAMP < ev.created_datetime + make_interval(secs := ev.lifetime_seconds)) THEN
+           SELECT g.groupname INTO out_groupname
+           FROM groups AS g
+           JOIN users AS u ON u.id = g.id
+           JOIN emails_validating AS ev ON ev.user_id = u.id AND ev.token = email_verify_complete.token;
+
            WITH evs AS (SELECT * FROM emails_validating AS ev WHERE ev.token = email_verify_complete.token)
            UPDATE user_emails AS ue SET email_validated = CURRENT_TIMESTAMP FROM evs WHERE ue.email = evs.email AND ue.user_id = evs.user_id;
            DELETE FROM emails_validating AS ev WHERE ev.token = email_verify_complete.token;
+
+           RETURN out_groupname;
     ELSIF EXISTS (
     SELECT * FROM emails_validating AS ev
     WHERE ev.token = email_verify_complete.token
@@ -285,7 +293,7 @@ CREATE TABLE orgs(
 
 CREATE FUNCTION org_validated() RETURNS trigger AS $$
        BEGIN
-           UPDATE groups as g SET own_role = 'org' WHERE g.id = NEW.id;
+           UPDATE groups AS g SET own_role = 'org' WHERE g.id = NEW.id;
            -- that was easy
            RETURN NULL;
        END;
@@ -295,12 +303,12 @@ CREATE TRIGGER org_validated AFTER INSERT ON orgs FOR EACH ROW EXECUTE PROCEDURE
 CREATE FUNCTION org_deleted() RETURNS trigger AS $$
        -- the interface will never allow an actual group deletion
        BEGIN
-           UPDATE groups as g SET own_role = 'deleted' WHERE g.id = OLD.id;
+           UPDATE groups AS g SET own_role = 'deleted' WHERE g.id = OLD.id;
            -- that was easy
            RETURN NULL;
        END;
 $$ language plpgsql;
-CREATE TRIGGER org_deleted AFTER DELETE ON orgs FOR EACH ROW EXECUTE PROCEDURE org_deleted();
+CREATE TRIGGER org_deleted AFTER DELETE ON orgs FOR EACH ROW EXECUTE PROCEDURE org_deleted(); -- FIXME I don't think we actually delete orgs ???
 
 -- CREATE materialized view org_user_view AS SELECT id, username FROM users UNION SELECT id, orgname FROM orgs;
 
@@ -352,7 +360,7 @@ CREATE FUNCTION check_valid_user_user_role() RETURNS trigger AS $$
        END;
 $$ language plpgsql;
 
-CREATE TRIGGER check_valid_user_user_role BEFORE INSERT ON user_permissions FOR EACH STATEMENT EXECUTE PROCEDURE check_valid_user_user_role();
+CREATE TRIGGER check_valid_user_user_role BEFORE INSERT ON user_permissions FOR EACH ROW EXECUTE PROCEDURE check_valid_user_user_role();
 
 CREATE TYPE key_types AS ENUM (
 'personal', -- standard
@@ -362,6 +370,8 @@ CREATE TYPE key_types AS ENUM (
 
 CREATE TYPE key_scopes AS ENUM (
 'admin', -- no checks, just audit
+'settings-all',  -- allow modification of settings and group settings
+'settings-only',  -- allow modification of only user settings
 'user-all', -- no checks within user, but must check user's permissions within a group for everything else (constant time side channel issues here on 404)
 'user-only', -- issued user only, any mismatch 404s cannot be used for operations on other groups
 'read-all', -- like user-all but only read operations are allowed, permissions to view other groups scratch space work this way, useful for e.g. dashboards
@@ -370,17 +380,27 @@ CREATE TYPE key_scopes AS ENUM (
 );
 
 CREATE TABLE api_keys(
-       key bytea PRIMARY KEY,
-       key_type key_types NOT NULL,
+       --key bytea PRIMARY KEY, -- FIXME this should probably actually be text because we aren't storing as bytes?
        user_id integer NOT NULL references users (id), -- only users can have api keys
+       key text PRIMARY KEY,
+       CHECK (key ~* '^ilx[prw]_[0-9A-Za-z]+$'),
+       key_type key_types NOT NULL,
+       CHECK (substring(key_type::text, 0, 1) = substring(key, 3, 1)),
        key_scope key_scopes NOT NULL,
        created_datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-       lifetime_seconds integer, -- null means never expires
-       revoked_datetime TIMESTAMP WITH TIME ZONE
+       lifetime_seconds integer, -- null means never expires FIXME likely want a constraint on max lifetimes for web tokens
+       CHECK (lifetime_seconds > 60), -- minimum 1 mintue to avoid accidentally minting api keys the expire immediately
+       revoked_datetime TIMESTAMP WITH TIME ZONE,
+       note text,
+       CHECK ((note ~* '^\S+') AND (note ~* '\S+$')) -- no leading and no trailing whitespace
 );
 
+CREATE INDEX api_keys_user_id_index ON api_keys (user_id);
 
 CREATE OR REPLACE FUNCTION api_keys_ensure_invars() RETURNS trigger AS $api_keys_ensure_owner$
+DECLARE
+max_total integer;
+max_active integer;
 BEGIN
     -- ensure user is owner
     IF NOT EXISTS (SELECT * FROM users AS u JOIN groups AS g ON u.id = g.id AND g.own_role = 'owner' WHERE u.id = NEW.user_id) THEN
@@ -392,13 +412,36 @@ BEGIN
        RAISE EXCEPTION 'User lacks sufficient privileges to create an api key with admin scope.';
     END IF;
 
+    -- FIXME web keys might rotate on a shorter time, need to check with frontend on that
+    -- ensure that non-admin users don't have more than quota total keys
+    SELECT greatest(uq.maxv, q.maxv) INTO max_total
+    FROM quotas AS q
+    LEFT JOIN user_quotas AS uq ON uq.qtype = q.qtype AND uq.user_id = NEW.user_id
+    WHERE q.qtype = 'api-key-total';
+
+    IF ((SELECT count(*) FROM api_keys WHERE user_id = NEW.user_id) >= max_total) THEN
+       RAISE EXCEPTION 'User has max total api_keys = %.', max_total;
+    END IF;
+
+    -- ensure that non-admin users don't have more than quota active keys
+    SELECT greatest(uq.maxv, q.maxv) INTO max_active
+    FROM quotas AS q
+    LEFT JOIN user_quotas AS uq ON uq.qtype = q.qtype AND uq.user_id = NEW.user_id
+    WHERE q.qtype = 'api-key-active';
+
+    IF ((SELECT count(*) FROM api_keys WHERE user_id = NEW.user_id) >= max_active) THEN
+       RAISE EXCEPTION 'User has max active api_keys = %.', max_active;
+    END IF;
+
     -- XXX NOTE that admin scope on a key only applies if admin still has empty group user role admin
     -- we already check own_role < pending for normal users, but admin hasn't been handled yet
     -- TODO ensure that admin's can't accidentally revoke admin status, for now revoking admin requires db access
+    RETURN NULL;
+
 END;
 $api_keys_ensure_owner$ language plpgsql;
 
-CREATE TRIGGER api_keys_ensure_invars BEFORE INSERT ON api_keys FOR EACH STATEMENT EXECUTE PROCEDURE api_keys_ensure_invars();
+CREATE TRIGGER api_keys_ensure_invars BEFORE INSERT ON api_keys FOR EACH ROW EXECUTE PROCEDURE api_keys_ensure_invars();
 -- TODO trigger for post user role changes to revoke any keys beyond our scope/role checks
 
 CREATE TABLE expiration_intervals(
@@ -435,7 +478,12 @@ BEGIN
        -- and it will prevent a user from squatting on the wrong email, easy for them to change later and
        -- if they reverify we can auto reset within the 1 week
        -- for orcids we expire by appending -EXPIRED to the end of the url
+
        SELECT * FROM api_keys
+       -- FIXME TODO i think it is ok to cull expired api keys because
+       -- they aren't going to be showing up in logs anyway and we
+       -- have formal prov systems for everything else, but need to
+       -- review to make sure
        WHERE ((revoked_datetime                           IS NOT NULL
                AND
                revoked_datetime + api_key_done_expire_dur >= CURRENT_TIMESTAMP)
@@ -508,6 +556,34 @@ CREATE TABLE user_passwords(
        --salt bytea NOT NULL,
        --salted_passworld bytea NOT NULL,
        CONSTRAINT fk__user_passwords__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
+);
+
+-- some overly simplified abuse control mechanisms
+
+CREATE TYPE quota_types AS ENUM (
+-- FIXME TODO may need to differentiate personal and web api keys?
+'api-key-active',
+'api-key-total',
+'email-total'
+);
+
+CREATE TABLE quotas( -- default quota values
+       qtype quota_types PRIMARY KEY,
+       minv integer NOT NULL DEFAULT 0,
+       maxv integer NOT NULL
+);
+
+INSERT INTO quotas (qtype, maxv) VALUES
+       ('api-key-active', 20),
+       ('api-key-total', 100),
+       ('email-total', 10); -- really even 5 is is probably overkill
+
+CREATE TABLE user_quotas(
+       user_id integer references users (id),
+       qtype quota_types,
+       PRIMARY KEY (user_id, qtype),
+       minv integer NOT NULL DEFAULT 0,
+       maxv integer NOT NULL
 );
 
 /*

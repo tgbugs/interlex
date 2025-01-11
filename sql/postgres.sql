@@ -9,6 +9,7 @@ BEGIN
         CREATE ROLE "interlex-user" LOGIN
         NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE;
     END IF;
+
     IF NOT EXISTS ( SELECT * FROM pg_catalog.pg_user
         WHERE usename = 'interlex-admin') THEN
         CREATE ROLE "interlex-admin" LOGIN

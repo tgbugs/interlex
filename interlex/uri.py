@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import timedelta
 from collections import OrderedDict as od
 from flask import Flask, url_for, abort
 from flask_restx import Api, Resource, apidoc
@@ -59,6 +60,7 @@ def uriStructure():
         # dissociate the node names which must be unique
         # from the name the will have in the resolver structure
         '*priv': 'priv',
+        '*email-verify': 'email-verify',
         '*uris_ont': 'uris',
         '*uris_version': 'version',
         '*<uris_filename>': '<filename>',
@@ -116,11 +118,12 @@ def uriStructure():
                                 'settings',
                                 'password-change',
 
+                                'orcid-assoc',
                                 'orcid-change',
 
                                 'email-add',
                                 'email-del',
-                                'email-verify',
+                                '*email-verify',
                                 'email-primary',
 
                                 'api-tokens',
@@ -200,12 +203,12 @@ def uriStructure():
                     'orcid-verify': ['POST'],
                     'email-add': ['POST'],
                     'email-del': ['POST'],
-                    'email-verify': ['POST'],
+                    '*email-verify': ['POST'],
                     'email-primary': ['POST'],
 
                     'api-tokens': ['GET'],
-                    'api-token-new': ['POST'],
-                    'api-token-revoke': ['POST'],
+                    'api-token-new': ['GET', 'POST'],
+                    'api-token-revoke': ['GET', 'POST'],
     }
     return parent_child, node_methods, path_to_route, path_names
 
@@ -292,6 +295,7 @@ _known_default = (
     'contributions',
 
     'ever',
+    'email-verify',
     'orcid-land-new',
     'orcid-land-login',
     'orcid-land-assoc',
@@ -417,6 +421,9 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
     app.config['CELERY_BROKER_URL'] = config.broker_url
     app.config['CELERY_RESULT_BACKEND'] = config.broker_backend
     app.config['CELERY_ACCEPT_CONTENT'] = config.accept_content
+    app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=180)
+    app.config['REMEMBER_COOKIE_SECURE'] = True
+    app.config['REMEMBER_COOKIE_HTTPONLY'] = True  # XXX see how this interacts with the frontend
     app.url_map.converters['regex'] = RegexConverter
 
     db.init_app(app)
@@ -430,64 +437,8 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
     route_endpoint_mapper, endpoints = build_endpoints(db, rules_req_auth)  # endpoints
     runonce = setup_runonce(app, endpoints, echo)                           # runonce
 
-    @lm.user_loader                                                         # give login manager access to db
-    def load_user(user_id):
-        if not isinstance(user_id, int):
-            if isinstance(user_id, str):
-                orcid = 'https://orcid.org/' + user_id
-                cr = endpoints.session_execute(
-                    'SELECT * FROM orcid_metadata AS om LEFT JOIN users AS u ON u.orcid = om.orcid WHERE om.orcid = :orcid',
-                    dict(orcid=orcid))
-                rows = list(cr)
-                if not rows:
-                    return None
-
-                orcid_row = rows[0]
-                if orcid_row.id is not None:
-                    # FIXME do we send the user a header to tell the user agent
-                    # to clear cookies or something along with the new cookie?
-                    msg = ('attempt to connect with orcid only session cookie '
-                           'when a orcid + user is present on the system, you '
-                           'probably want to replace the session cookie?')
-                    abort(401, msg)
-
-                class tuser:
-                    is_active = True  # maybe we set this to False?
-                    is_anonymous = False
-                    is_authenticated = True
-                    orcid = orcid_row.orcid
-                    id = None
-                    own_role = None
-                    groupname = None
-                    def get_id(self):
-                        return self.id
-
-                #breakpoint()
-                return tuser()
-            else:
-                msg = f'{user_id!r} is a {type(user_id)}'
-                raise TypeError(msg)
-
-        cr = endpoints.session_execute(  # have to allow login for pending users so they can fix broken email and orcid
-            "SELECT * FROM groups AS g JOIN users AS u ON g.id = u.id WHERE g.own_role <= 'pending' AND u.id = :user_id",
-            dict(user_id=user_id),)
-        rows = list(cr)
-        if not rows:
-            return None
-        else:
-            class tuser:
-                is_active = True
-                # is_anonymous and is_authenticated are exact opposites due to
-                # some lingering history inherited from django or something
-                is_anonymous = False
-                is_authenticated = True
-                id = rows[0].id
-                own_role = rows[0].own_role
-                groupname = rows[0].groupname
-                def get_id(self):
-                    return self.id
-
-            return tuser()
+    lm.user_loader(endpoints.auth.load_user)                 # give login manager access to db
+    lm.needs_refresh_handler(endpoints.auth.refresh_login)   # tell login manager what to use to handle refresh
 
     api, doc_namespaces = build_api(app)                     # api init
     add_api_rule = api_rule_maker(api, doc_namespaces)       # api binding

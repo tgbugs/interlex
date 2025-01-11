@@ -4,6 +4,26 @@ from pyontutils.config import auth as pauth
 
 auth = oa.configure_here('auth-config.py', __name__, include=pauth)
 
+
+class QuietString(str):
+    # confirmed that this works with requests headers, data, and json
+    # when the value goes out on the wire, it looks like concat works
+    # but string formatting via f'{s}', '{}'.format(s), '%s' % s does
+    # not likely because they use str() internally, by concat i mean
+    # ''.join((s,)), s + s, etc. s.encode() also works
+
+    def __repr__(self):
+        return '[redacted]'
+
+    def __str__(self):
+        # str(qs) does not work, but str.__str__(qs) does
+        # this means that the caste has to be made when it
+        # passes out of our scope unfortunately or we have
+        # to see whether other callers do things like use
+        # format strings, or log etc.
+        return '[redacted]'
+
+
 # basics
 debug = auth.get('debug')
 ilx_pattern = auth.get('ilx-pattern')
@@ -42,5 +62,5 @@ broker_backend = auth.get('mq-broker-backend')
 accept_content = auth.get('mq-accept-content')
 
 # orcid
-orcid_client_id = auth.get('orcid-client-id')
-orcid_client_secret = auth.get('orcid-client-secret')
+orcid_client_id = QuietString(auth.get('orcid-client-id'))
+orcid_client_secret = QuietString(auth.get('orcid-client-secret'))

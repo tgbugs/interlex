@@ -28,9 +28,9 @@ class TestAuth(unittest.TestCase):
             actual_key = int.to_bytes(int_key, 23, byteorder='big')
             k = _gen_key(actual_key)
             av = f'Bearer: {k}'
-            rk_bytes = key_from_auth_value(av)
+            rk = key_from_auth_value(av)
             key, crc = _decompose_key(k, fail=False)
-            row = (actual_key, k, av, rk_bytes, key, crc)
+            row = (actual_key, k, av, rk, key, crc)
             if key != actual_key or len(k) != 40:
                 bads.append(row)
 
@@ -44,7 +44,7 @@ class TestAuth(unittest.TestCase):
         for i in range(99999):
             k = gen_key()
             av = f'Bearer: {k}'
-            rk_bytes = key_from_auth_value(av)
+            rk = key_from_auth_value(av)
             if len(k) != 40:
                 bads.append(row)
 

@@ -734,19 +734,19 @@ class Queries:
         pass
 
     def getUserSettings(self, group):
+        # FIXME move to dbstuff
         args = dict(group=group)
         sql = '''
 SELECT 'u' as rec_type,
 g.groupname,
 g.own_role,
 u.orcid,
-u.orcid_validated,
 
 null as email,
 null as email_primary,
 null as email_validated,
 
-null::bytea as key,
+null::text as key,
 null::key_types as key_type,
 null::key_scopes as key_scope,
 null::TIMESTAMP as created_datetime,
@@ -762,13 +762,12 @@ SELECT 'e' as rec_type,
 null,
 null,
 null,
-null,
 
 ue.email,
 ue.email_primary,
 ue.email_validated,
 
-null::bytea,
+null::text,
 null::key_types,
 null::key_scopes,
 null::TIMESTAMP,
@@ -781,7 +780,6 @@ WHERE ue.user_id = idFromGroupname(:group)
 UNION
 
 SELECT 'k' as rec_type,
-null,
 null,
 null,
 null,

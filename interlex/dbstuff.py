@@ -5,6 +5,9 @@ stuff beyond dump and load
 
 from sqlalchemy.sql import text as sql_text
 from interlex.core import makeParamsValues
+from interlex.utils import log
+
+log = log.getChild('dbstuff')
 
 
 class Stuff:
@@ -98,7 +101,7 @@ RETURNING created_datetime, delay_seconds, lifetime_seconds
     def email_verify_complete(self, token):
         args = dict(token=token)
         sql = 'SELECT email_verify_complete(:token)'
-        return self.session_execute(sql, args)
+        return list(self.session_execute(sql, args))  # FIXME this can and will error on token ver failure
 
     def getUserPassword(self, group):
         sql = '''
@@ -140,7 +143,72 @@ VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh,
         sql = 'UPDATE users SET orcid = :orcid WHERE id = idFromGroupname(:group)'
         list(self.session_execute(sql, args))
 
+    def getOrcidMetadataUserByOrcid(self, orcid):
+        args = dict(orcid=orcid)
+        sql = ('SELECT om.*, u.id, u.orcid as user_orcid '
+               'FROM orcid_metadata AS om LEFT JOIN users AS u ON u.orcid = om.orcid WHERE om.orcid = :orcid')
+        return list(self.session_execute(sql, args))
+
     def getUserByOrcid(self, orcid):
         args = dict(orcid=orcid)
         sql = "SELECT * FROM users AS u JOIN groups AS g ON g.id = u.id WHERE u.orcid = :orcid AND g.own_role <= 'pending'"
+        return list(self.session_execute(sql, args))
+
+    def getUserById(self, user_id):
+        # have to allow login for pending users so they can fix broken email and orcid
+        args = dict(user_id=user_id)
+        sql = "SELECT * FROM groups AS g JOIN users AS u ON g.id = u.id WHERE g.own_role <= 'pending' AND u.id = :user_id"
+        return list(self.session_execute(sql, args))
+
+    def insertApiKey(self, group, key, token_type, scope, lifetime_seconds=None, note=None):
+        nnopts = {k: v for k, v in dict(lifetime_seconds=lifetime_seconds, note=note).items() if v is not None}
+        args = dict(group=group, key=key, key_type=token_type, scope=scope, **nnopts)
+        if nnopts:
+            optionals = ', ' + ', '.join(k for k, v in nnopts.items())
+            optionalvs = ', ' + ', '.join(':' + k for k, v in nnopts.items())
+        else:
+            optionals = ''
+            optionalvs = ''
+
+        sql = (f'INSERT INTO api_keys (user_id, key, key_type, key_scope{optionals}) VALUES '
+               f'(idFromGroupname(:group), :key, :key_type, :scope{optionalvs})')
+        return self.session_execute(sql, args)
+
+    def getGroupApiKeys(self, group):
+        args = dict(group=group)
+        sql = 'SELECT * FROM api_keys WHERE user_id = idFromGroupname(:group)'
+        # FIXME TODO do we return revoked an expried here as long as they have not been culled?
+        return list(self.session_execute(sql, args))
+
+    def getUserRoleForGroups(self, user, groups):
+        args = dict(user=user, groups=groups)
+        sql = '''
+select g.groupname, g.own_role, p.user_role
+from user_permissions as p
+join groups as g on g.id = p.group_id
+where g.groupname in :groups and p.user_id = idFromGroupname(:user)
+'''
+        return list(self.session_execute(sql, args))
+
+    def getUserAndMetaByApiKey(self, api_key):
+        # XXX for consideration, this function is intended to be used ONLY
+        # in a context where key validity logic is run immediately after
+        # there is similar logic in sql cullExpiredThings and it might
+        # make sense to keep all the logic for retrieving api keys in
+        # a single stored procedure and always use that instead of the
+        # python logic MUST follow as implemented in Auth.authenticate_request
+        args = dict(api_key=api_key)
+        sql = (
+            'select a.key_scope, a.created_datetime, a.lifetime_seconds, '
+            'a.revoked_datetime, g.groupname '
+            'from api_keys as a '
+            'join groups as g on g.id = a.user_id '
+            'where a.key = :api_key '
+            # note that you won't be able to get api keys at all
+            # until email and orcid workflows are done
+
+            # if a user is deactivated, deleted, banned, erased,
+            # etc. then this becomes an unknown token error while
+            # we clean up the tokens from the database
+            "and g.own_role < 'pending'")
         return list(self.session_execute(sql, args))

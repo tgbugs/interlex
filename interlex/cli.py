@@ -290,7 +290,8 @@ class Post(clif.Dispatcher):
     def login(self):
         from getpass import getpass
         scheme, host, group, headers = self._post()
-        url = f'{scheme}://{host}/ops/ops/login'  # https duh
+        remember = '?remember=true' if self.options.remember else ''
+        url = f'{scheme}://{host}/u/ops/login{remember}'  # https duh
         # TODO ORCID on the front end
         s = requests.Session()  # use session to auto handle cookies
         group_pass = base64.b64encode((group + ':' + getpass()).encode()).decode()

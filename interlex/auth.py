@@ -3,10 +3,10 @@ import argon2
 import secrets
 import binascii
 import flask_login as fl
-from flask import abort
+from flask import abort, url_for
 from idlib.utils import makeEnc
 from interlex.utils import log
-from sqlalchemy.sql import text as sql_text
+from interlex.dbstuff import Stuff
 
 ph = argon2.PasswordHasher(
     # want this to run a bit slower than default
@@ -84,7 +84,7 @@ def key_from_auth_value(auth_value):
     # FIXME TODO must test this, gh impl mentions zero padding which i don't have right now
     raw_key = auth_value[8:]  # strip 'Bearer '
     _decompose_key(raw_key)
-    return raw_key.encode()  # its a bytea in the database
+    return raw_key
 
 
 class Auth:
@@ -220,6 +220,79 @@ class Auth:
             # downstream logger will deal with this
             return None, None
 
+    def load_user(self, user_id):
+        dbstuff = Stuff(self.session)
+        if not isinstance(user_id, int):
+            if isinstance(user_id, str):
+                orcid = 'https://orcid.org/' + user_id
+                rows = dbstuff.getOrcidMetadataUserByOrcid(orcid)
+                if not rows:
+                    # somehow someone got a session cookie but we didn't record
+                    # their orcid, which either means we have a bug or our
+                    # flask session secret key got leaked
+                    log.critical(f'decoded cookie but no orcid_metadata for {orcid}')
+                    return
+
+                orcid_row = rows[0]
+                if orcid_row.id is not None:
+                    # FIXME do we send the user a header to tell the user agent
+                    # to clear cookies or something along with the new cookie?
+                    msg = ('attempt to connect with orcid only session cookie '
+                           'when a orcid + user is present on the system, you '
+                           'probably want to replace the session cookie?')
+                    abort(401, msg)
+
+                class tuser:
+                    is_active = True  # maybe we set this to False?
+                    is_anonymous = False
+                    is_authenticated = True
+                    via_auth = 'orcid'
+                    orcid = orcid_row.orcid
+                    id = None
+                    own_role = None
+                    groupname = None
+                    def get_id(self):
+                        return self.id
+
+                return tuser()
+            else:
+                msg = f'{user_id!r} is a {type(user_id)}'
+                raise TypeError(msg)
+
+        rows = dbstuff.getUserById(user_id)
+        if not rows:
+            # similar logic as with the orcid above, if we make it this far
+            # and there is a valid session cookie that we can decode that
+            # decodes to something that could be mistaken for a valid user
+            # id but that somehow does not exist then something is VERY wrong
+            log.critical(f'decoded cookie but no user for {user_id}')
+            return
+        else:
+            class tuser:
+                is_active = True
+                # is_anonymous and is_authenticated are exact opposites due to
+                # some lingering history inherited from django or something
+                is_anonymous = False
+                is_authenticated = True
+                via_auth = 'interlex'
+                orcid = rows[0].orcid
+                id = rows[0].id
+                own_role = rows[0].own_role
+                groupname = rows[0].groupname
+                def get_id(self):
+                    return self.id
+
+            return tuser()
+
+    def refresh_login(self):
+        if orcid_login:
+            base = url_for('Ops.login /u/ops/orcid-login')
+        else:
+            base = url_for('Ops.login /u/ops/login')
+
+        get_back_here = ''
+        return redirect(base + '?from=refresh' + '&next=' + get_back_here, 302)
+
     def authenticate_request(self, request):
         now = datetime.utcnow()
         # unauthed requests don't really need this
@@ -254,8 +327,15 @@ class Auth:
                 'logout',
                 'settings',
                 'password-change',  # TODO figure out what to do about accounts without email validation
-                'orcid-change',
-                'orcid-verify',
+                'orcid-assoc',  # only assoc, no point in changing if verification hasn't finished
+                # i do imagine that there might be some crazy scenario where a user has an orcid
+                # somehow loses access after creating the user account and never set a password
+                # and never verified the email address, and that means that they can't get back in
+                # to the account because they can't login with orcid and don't have a password set
+                # however if that happens I will happily point to this comment in my reply to the
+                # support ticket, we assume that the user can lose or not have two of the three
+                # things and still recover the account or complete the process, if they lose the
+                # third, well, problem, we could force password as insurace, but let's see
                 'email-add',
                 'email-del',
                 'email-verify',
@@ -270,22 +350,26 @@ class Auth:
 
         if 'Authorization' in request.headers:
             auth_value = request.headers['Authorization']
+            if request.url_rule.rule == '/<group>/priv/password-change':
+                # early abord, don't bother checking anything
+                msg = 'cannot use token to change password'
+                abort(401, msg)
         elif li_user is not None and no_token_ok(request):
             # we don't actually check for pending here, we only allow
             # specific resources and operations to be accessed if
             # password login is being used
-            if True:  # FIXME temp for dev obvs wrong
-                check_login = fl.fresh_login_required(lambda: None)
-                check_login()
-
-            # TODO fresh_login_required
             auth_value = None
         elif li_user is not None and request.url_rule.rule == '/u/priv/user-new':
             # FIXME does this logic go here ? i put it here to avoid producing
             # confusing error mesages if we hit write_requires_auth ...
             abort(409, 'cannot create a new user when already logged in')
+        elif li_user is not None and request.url_rule.rule == '/u/priv/orcid-land-assoc':
+            scope = 'settings-only'
+            return None, li_user, scope, None, None
         elif orcid_user is not None and request.url_rule.rule == '/u/priv/user-new':
-            scope = 'user-only'
+            # the only privilidged thing an orcid only user can do is go
+            # stright to user-new, register-only is not a scope in the db
+            scope = 'register-only'
             return None, None, scope, None, None
         elif write_requires_auth:
             if li_user:
@@ -294,7 +378,6 @@ class Auth:
                 msg = f'{request.method} requires authorization, but none was provided'
 
             raise self.MissingTokenError(request, msg)
-
         elif read_requires_auth:
             if li_user:
                 msg = f'{request.url_rule.rule} requires token authorization, but login was provided'
@@ -302,10 +385,10 @@ class Auth:
                 msg = f'{request.url_rule.rule} requires authorization, but none was provided'
 
             raise self.MissingTokenError(request, msg)
-
         else:
             return None, None, None, None, None
 
+        dbstuff = Stuff(self.session)
         if auth_value is not None:
             if not auth_value.startswith('Bearer '):
                 msg = 'Authorization header did not start with "Bearer "'
@@ -318,20 +401,7 @@ class Auth:
             except self.MangledTokenError as e:
                 raise self.MangledTokenError(request, e.extra_info)
 
-            resp = list(self.session.execute(
-                sql_text(('select a.key_scope, a.created_datetime, a.lifetime_seconds, '
-                          'a.revoked_datetime, g.groupname '
-                          'from api_keys as a '
-                          'join groups as g on g.id = a.user_id '
-                          'where a.key = :provided_key '
-                          # note that you won't be able to get api keys at all
-                          # until email and orcid workflows are done
-
-                          # if a user is deactivated, deleted, banned, erased,
-                          # etc. then this becomes an unknown token error while
-                          # we clean up the tokens from the database
-                          "and g.own_role < 'pending'")),
-                params=dict(provided_key=provided_key)))
+            resp = dbstuff.getUserAndMetaByApiKey(provided_key)
 
             if not resp:
                 msg = 'the provided token is not known to this system'
@@ -374,7 +444,7 @@ class Auth:
             auth_user = row.groupname
 
         elif li_user is not None:
-            scope = 'user-only'
+            scope = 'settings-only'  # note that settings- implies user-
             auth_user = li_user
             if logged_in_user.own_role != 'owner':  # pending user
                 if request.url_rule.rule.startswith('/<group>/priv/api-token'):
@@ -406,15 +476,7 @@ class Auth:
             # if auth_user == request_group then unless we aborted on scope
             # mismatch (i.e. we never get here), all requests are allowed
             # so we only have to check mismatched cases
-            resp = list(self.session.execute(sql_text(
-                ('''
-select g.groupname, g.own_role, p.user_role
-from user_permissions as p
-join groups as g on g.id = p.group_id
-where g.groupname in :groups and p.user_id = idFromGroupname(:user)
-''')
-            ), params=dict(groups=need_perms, user=auth_user)))
-
+            resp = dbstuff.getUserRoleForGroups(auth_user, need_perms)
             write_roles = {'owner', 'contributor'}
             read_roles = {'owner', 'contributor', 'curator', 'view'}
             if resp:
