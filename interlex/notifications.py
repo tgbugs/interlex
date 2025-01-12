@@ -10,6 +10,7 @@ log = log.getChild('notifi')
 
 __spec = None
 def get_smtp_spec():
+    global __spec
     if __spec is None:
         host = auth.get('smtp-host')
         port = int(auth.get('smtp-port'))

@@ -67,6 +67,8 @@ def cleanup_dbs(dbs):
 
 
 def combinatorics():
+    endpoints._email_mock = True
+    endpoints._orcid_mock = True
     #session = getSession(echo=False)
     _session = None
     user = 'tgbugs-test-1', 'tgbugs-test-2'
@@ -356,7 +358,7 @@ def combinatorics():
                 raise NotImplementedError(scen['own_role'])
 
             if ('own_role' in scen and scen['own_role'] == 'owner') or ('email' not in missing and 'user' not in missing):
-                test_token = base64.urlsafe_b64encode(secrets.token_bytes(24))
+                test_token = base64.urlsafe_b64encode(secrets.token_bytes(24)).decode()
                 if user is None:
                     breakpoint()
                 dbstuff.email_verify_start(user, test_email, test_token, delay_seconds=0)
@@ -514,25 +516,14 @@ def combinatorics():
                             breakpoint()
                             ''
 
-                    # 4
-                    url = url_prefix + f'/{user}/priv/api-token-new'  # FIXME TODO api-token-web-new ?
-                    data = {'token-type': 'personal', 'scope': 'user-all', 'note': 'testing token'}
-                    resp4 = fixresp(client.post(url, data=data, headers=headers))
-                    if not resp4.ok:
-                        with app.app_context():
-                            breakpoint()
-                            ''
-
-                    with app.app_context():
-                        #breakpoint()
-                        ''
                 if scen['register'] == 'orcid-second':
                     # 1
                     #start = url_quote(f'{scheme}://{host}{port}/base/ilx_0101431')
                     start = url_quote(f'{scheme}://{host}{port}/{scen["auth_user"]}/priv/settings')  # XXX hack since brain doesn't exist atm
                     url = url_prefix + '/u/ops/user-new' + '?freiri=' + start
                     user = scen['auth_user']
-                    data = {'username': user, 'email': test_email_f.format(n=sid), 'password': test_password}
+                    email = test_email_f.format(n=sid)
+                    data = {'username': user, 'email': email, 'password': test_password}
                     resp1 = fixresp(client.post(url, data=data))
                     if resp1.status_code == 303:
                         url_next = url_prefix + resp1.headers['Location']
@@ -559,10 +550,40 @@ def combinatorics():
                             ''
 
                     # 3
+                    ever_same = False
+                    client2 = client if ever_same else app.test_client()
+                    token = endpoints._email_mock_tokens[email]
+                    url = url_prefix + '/u/ops/email-verify?t=' + token
+                    # TODO inserting random delays between steps is fun if you
+                    # do it here the 10 second mock lifetime will trigger!
+                    resp3 = do_get(client2, url)
+                    if not resp3.ok:
+                        with app.app_context():
+                            breakpoint()
+                            ''
 
+                # start common flow
+
+                # 4
+                url = url_prefix + f'/{user}/priv/api-token-new'  # FIXME TODO api-token-web-new ?
+                data = {'token-type': 'personal', 'scope': 'settings-all', 'note': 'testing token'}
+                resp4 = fixresp(client.post(url, data=data, headers=headers))
+                if not resp4.ok:
                     with app.app_context():
-                        #breakpoint()
+                        breakpoint()
                         ''
+
+                # 5
+                url = url_prefix + f'/{user}/priv/settings'
+                resp5 = do_get(client, url)
+                if not resp5.ok:
+                    with app.app_context():
+                        breakpoint()
+                        ''
+
+                with app.app_context():
+                    #breakpoint()
+                    ''
 
                 return
 

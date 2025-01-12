@@ -62,5 +62,5 @@ broker_backend = auth.get('mq-broker-backend')
 accept_content = auth.get('mq-accept-content')
 
 # orcid
-orcid_client_id = QuietString(auth.get('orcid-client-id'))
+orcid_client_id = auth.get('orcid-client-id')  # isn't secret, gets passed in url visible to user
 orcid_client_secret = QuietString(auth.get('orcid-client-secret'))

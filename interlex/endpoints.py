@@ -6,6 +6,7 @@ import secrets
 from datetime import timedelta
 from functools import wraps
 from urllib.parse import urlparse
+import requests
 import sqlalchemy as sa
 import flask_login as fl
 from flask import request, redirect, url_for, abort, Response
@@ -13,7 +14,7 @@ from rdflib import URIRef  # FIXME grrrr
 from htmlfn import atag, btag, h2tag, htmldoc
 from htmlfn import table_style, render_table, redlink_style
 from pyontutils.core import makeGraph
-from pyontutils.utils import TermColors as tc
+from pyontutils.utils_fast import TermColors as tc, isoformat
 from pyontutils.namespaces import makePrefixes, definition
 from sqlalchemy.sql import text as sql_text
 import idlib
@@ -32,15 +33,16 @@ from interlex.render import TripleRender  # FIXME need to move the location of t
 from interlex.notifications import send_message, get_smtp_spec, msg_email_verify
 
 log = _log.getChild('endpoints')
+log_ver = _log.getChild('verification')
 
 ctaj = {'Content-Type': 'application/json'}
 
 tripleRender = TripleRender()
 
-_email_mock = True
+_email_mock = False
 _email_mock_tokens = {}
 
-_orcid_mock = True
+_orcid_mock = False
 _orcid_mock_codes = {}
 
 
@@ -700,6 +702,7 @@ def _sigh_insert_orcid_meta(session, orcid_meta, user=None):
         orcid_meta['access_token'],
         orcid_meta['refresh_token'],
         orcid_meta['expires_in'],
+        openid_token=orcid_meta['id_token'] if 'id_token' in orcid_meta else None,  # openid extra thing
         user=user,
     )
     session.commit()
@@ -768,8 +771,9 @@ class Ops(EndBase):
 
         prompt = '&prompt=login' if refresh else ''
         scope = 'openid'  # /read-limited
-        reiri = (f'https://sandbox.orcid.org/oauth/authorize?client_id={config.orcid_client_id}&'
-                 f'response_type=code&scope={scope}{prompt}&redirect_uri={url_orcid_land}',)
+        redirect_uri = f'{request.scheme}://{request.host}{url_orcid_land}'
+        reiri = (f'https://sandbox.orcid.org/oauth/authorize?client_id={config.orcid_client_id}'
+                 f'&response_type=code&scope={scope}{prompt}&redirect_uri={redirect_uri}')
         return redirect(reiri, code=302)
 
     def orcid_login(self):
@@ -812,12 +816,14 @@ class Ops(EndBase):
             else:
                 abort(401, f'orcid did not recognize code {code}')
 
+        _redirect_uri, _ = request.url.split('code=', 1)
+        redirect_uri = _redirect_uri[:-1]
         data = {
             'client_id': config.orcid_client_id,
             'client_secret': config.orcid_client_secret,
             'grant_type': 'authorization_code',
             'code': code,
-            'redirect_uri': request.url,  # FIXME not sure why we need this again here ???
+            'redirect_uri': redirect_uri,  # seems like they want to confirm the exact redirect uri ... which we just landed at?
         }
         headers = {'Accept': 'application/json',
                    'Content-Type': 'application/x-www-form-urlencoded',}
@@ -828,9 +834,14 @@ class Ops(EndBase):
 
         if not resp.ok:
             # FIXME TODO need to tell the user that login failed
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except Exception as e:
+                log.exception(e)
 
-        orcid_meta = resp.json
+            abort(401, 'orcid login failed')
+
+        orcid_meta = resp.json()
         return orcid_meta
 
     _insert_orcid_meta = staticmethod(_sigh_insert_orcid_meta)
@@ -985,7 +996,7 @@ receive quite a few during periods of active development.
             return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
-<head><title>InterLex login</title></head>
+<head><title>InterLex Registration</title></head>
 <body>
 {user_new_form}
 {message}
@@ -996,7 +1007,7 @@ receive quite a few during periods of active development.
             return abort(404)
 
         errors = {}
-        if 'username' not in request.form:
+        if 'username' not in request.form or not request.form['username']:
             username = None
             errors['username'] = ['required']
         else:
@@ -1019,7 +1030,7 @@ receive quite a few during periods of active development.
                 if existing:
                     errors['username'] = ['exists']
 
-        if 'password' not in request.form:
+        if 'password' not in request.form or not request.form['password']:
             password = None
             if not orcid:
                 # password is optional in the orcid case
@@ -1058,7 +1069,7 @@ receive quite a few during periods of active development.
             if pass_fail:
                 errors['password'] = pass_fail
 
-        if 'email' not in request.form:
+        if 'email' not in request.form or not request.form['email']:
             email = None
             errors['email'] = ['required']
         else:
@@ -1067,7 +1078,11 @@ receive quite a few during periods of active development.
                 # we do not validate email structure beyond making sure
                 # there is an @ in the middle somewhere all we care is that
                 # the user can receive mail and click the validation link
-                return e.count('@') == 1 and not e.startswith('@') and not e.endswith('@')
+                return (e.count('@') == 1 and
+                        not e.startswith('@') and
+                        not e.endswith('@') and
+                        len(e.split()) == 1  # FIXME hack to detect whitespace
+                        )
 
             email_ok = email_check(email)
             if not email_ok:
@@ -1144,6 +1159,15 @@ receive quite a few during periods of active development.
 
             return 'something went wrong TODO better messages', 422
 
+
+        try:
+            self._start_email_verify(username, email)
+        except Exception as e:
+            # it is very bad for the user if we error out here because they
+            # don't get their updated login token but their account exists on
+            # the system, so they can't even logout
+            log.exception(e)
+
         _orcid = orcid
         class tuser:
             is_active = True  # TODO translate from the permission model
@@ -1160,8 +1184,6 @@ receive quite a few during periods of active development.
         # FIXME do we need to call logout on the orcid only user?
         fl.login_user(tuser())
 
-        self._start_email_verify(username, email)
-
         if orcid is None:
             url_next = url_for('Priv.orcid_associate /<group>/priv/orcid-assoc', group=username) + '?from=user-new'
             if 'freiri' in request.args:
@@ -1172,7 +1194,7 @@ receive quite a few during periods of active development.
 
             return redirect(url_next, 303)
         else:
-            if 'application/json' in request.accept_mimetypes:  # FIXME not the best way i think
+            if 'application/json' in dict(request.accept_mimetypes):  # FIXME not the best way i think
                 out = {'message': ('Account creation and association with orcid successful. '
                                    f'Confirmation email sent to {email}'),
                        'email': email}
@@ -1207,9 +1229,9 @@ receive quite a few during periods of active development.
             try:
                 if _email_mock:
                     # well if you put lifetime seconds to 0 the logic is correct, but can never be verified (heh)
-                    resp = dbstuff.email_verify_start(username, email, token, 0, 10)
+                    resp = dbstuff.email_verify_start(username, email, token_str, 0, 10)
                 else:
-                    resp = dbstuff.email_verify_start(username, email, token)
+                    resp = dbstuff.email_verify_start(username, email, token_str)
 
                 self.session.commit()
                 row = resp[0]
@@ -1227,7 +1249,7 @@ receive quite a few during periods of active development.
         thenish = nowish + timedelta(seconds=row.lifetime_seconds)
         scheme = 'https'  # FIXME ...
         reference_host = self.reference_host  # FIXME vs actual host for testing
-        #verification_link = f'{scheme}://{reference_host}/{username}/ops/email-verify?{token}'
+        #verification_link = f'{scheme}://{reference_host}/u/ops/email-verify?{token}'
         verification_link = f'{scheme}://{reference_host}/u/ops/ever?t={token_str}'
         reverify_link = f'{scheme}://{reference_host}/{username}/priv/email-verify'  # FIXME obviously wrong link
         msg = msg_email_verify(
@@ -1249,12 +1271,31 @@ receive quite a few during periods of active development.
             return abort(400, 'missing verification token t=')
 
         token_str = request.args['t']
-        token = token_str.encode()
         dbstuff = Stuff(self.session)
-        resp = dbstuff.email_verify_complete(token)
+        resp = dbstuff.email_verify_complete(token_str)
         if resp:
             self.session.commit()
             group = resp[0][0]
+
+            _m_prefix = f':email verification-request :token-group {group}'
+            if fl.current_user is not None and fl.current_user.is_authenticated:
+               if not hasattr(fl.current_user, 'groupname'):
+                   # how did we manage this !?
+                   msg = f':session-group null :session-id {fl.current_user.get_id()}'
+                   if hasattr(fl.current_user, 'orcid'):
+                       msg += f' :session-orcid {fl.current_user.orcid}'
+
+                   log_ver.error(_m_prefix + msg)
+               elif fl.current_user.groupname != group:
+                   msg = f':session-group {fl.current_user.groupname} :reason group-mismatch'
+                   log_ver.critical(_m_prefix + msg)
+               else:  # fl.current_user.groupname == group:
+                   msg = f':session-group {fl.current_user.groupname}'
+                   log_ver.info(_m_prefix + msg)
+            else:
+                msg = ':session null'
+                log_ver.warning(_m_prefix + msg)
+
             return f'email verification complete for {group}'
         else:
             # failure should look like an error not a null value on return so
@@ -1304,7 +1345,7 @@ receive quite a few during periods of active development.
             return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
-<head><title>InterLex login</title></head>
+<head><title>InterLex Login</title></head>
 <body>
 {login_form}
 </body>
@@ -1604,31 +1645,36 @@ class Priv(EndBase):
         emails = [r for r in recs if r.rec_type == 'e']
         keys = [r for r in recs if r.rec_type == 'k']
         ep = [e for e in emails if e.email_primary][0]
+        def ev(dt):
+            return 'null' if dt is None else f'"{isoformat(dt)}"'
+
         emails_str = '\n\n' + '\n'.join([
             (f'<mailto:{e.email}> a ilxtr:interlex-email-record ;\n'
              f'email:primary {e.email_primary};\n'
-             f'email:verified {e.email_validated} .')
+             f'email:verified {ev(e.email_validated)} .')
                    for e in emails])
+
         keys_str = ('\n\n' + '\n'.join([
             ('[] a ilxtr:api-key-record ;\n'
-             f'key:key {k.key} ;\n'
-             f'key:type {k.key_type} ;\n'
-             f'key:scope {k.key_scope} ;\n'
-             f'key:created {k.created_datetime} ') +
-            (f';\nkey:lifetime-seconds {k.lifetime_seconds} ' if k.lifetime_seconds else '')
-            (f';\nkey:revoked {k.revoked_datetime} ' if k.revoked_datetime else '') + '.'
+             f'key:key "{k.key}" ;\n'
+             f'key:type "{k.key_type}" ;\n'
+             f'key:scope "{k.key_scope}" ;\n'
+             f'key:created "{isoformat(k.created_datetime)}" ') +
+            (f';\nkey:lifetime-seconds {k.lifetime_seconds} ' if k.lifetime_seconds else '') +
+            (f';\nkey:revoked "{isoformat(k.revoked_datetime)}" ' if k.revoked_datetime else '') + '.'
             for k in keys])) if keys else ''
 
         orcid_line = '' if user.orcid is None else f'settings:orcid <{user.orcid}> ;\n'
-        return (
+        out = (
             f'ilx:{group}/priv/settings a ilxtr:interlex-settings ;\n'
             'skos:comment "completely fake ttlish representation of settings" ;\n'
             f'settings:groupname "{group}" ;\n'
-            f'settings:email [ <mailto:{ep.email}> {ep.email_validated} ] ;\n'  # implicitly primary email
+            f'settings:email [ <mailto:{ep.email}> {ev(ep.email_validated)} ] ;\n'  # implicitly primary email
             f'{orcid_line}'
             'settings:notification-prefs "email" ;\n'
             f'settings:own-role "{user.own_role}" .'
-        ) + emails_str + keys_str + '\n', 200, {'Content-Type': 'text/turtle'}
+        ) + emails_str + keys_str + '\n'
+        return out, 200, {'Content-Type': 'text/turtle'}
 
     @basic
     def logout(self, group, db=None):
@@ -1712,7 +1758,7 @@ class Priv(EndBase):
         enum_scopes.remove('admin')  # iykyk let the db sort them out
         if request.method == 'GET':
             # have a form
-            if 'application/json' in request.accept_mimetypes:  # FIXME not the best way i think
+            if 'application/json' in dict(request.accept_mimetypes):  # FIXME not the best way i think
                 data = {
                     '$schema': 'https://json-schema.org/draft/2020-12/schema',
                     '$id': 'https://uri.interlex.org/schema/1/<group>/priv/api-token-new', # FIXME figure out what to do about this ...
@@ -1728,8 +1774,8 @@ class Priv(EndBase):
                         'note': {'type': 'string',}}}
                 return data, 200, ctaj
             else:
-                type_options = '\n      '.join([f'<opiton value="{t}">{t}</option>' for t in enum_types])
-                scope_options = '\n      '.join([f'<opiton value="{t}">{t}</option>' for t in enum_scopes])
+                type_options = '\n      '.join([f'<option value="{t}">{t}</option>' for t in enum_types])
+                scope_options = '\n      '.join([f'<option value="{t}">{t}</option>' for t in enum_scopes])
                 api_token_new_form = f'''
 <form action="" method="post" class="api-token-new">
 
@@ -1758,7 +1804,7 @@ class Priv(EndBase):
   </div>
 
   <div class="api-token-new">
-    <input type="submit" value="Register" />
+    <input type="submit" value="New Api Key" />
   </div>
 
 </form>
@@ -1766,7 +1812,7 @@ class Priv(EndBase):
             return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
-<head><title>InterLex login</title></head>
+<head><title>InterLex New Api Token</title></head>
 <body>
 {api_token_new_form}
 </body>
@@ -1795,8 +1841,12 @@ class Priv(EndBase):
         if errors:
             return json.dumps({'errors': errors}), 422, ctaj
 
-        if 'lifetime-seconds' in thing:
-            lifetime_seconds = thing['lifetime-seconds']
+        if 'lifetime-seconds' in thing and thing['lifetime-seconds']:
+            try:
+                lifetime_seconds = int(thing['lifetime-seconds'])
+            except ValueError as e:
+                als = thing['lifetime-seconds']
+                abort(422, f'lifetime-seconds was not an integer {als!r}?')
         else:
             lifetime_seconds = None
 
@@ -1817,7 +1867,16 @@ class Priv(EndBase):
         # HOWEVER that means we need to set fl.current_user on api key auth as well
         dbstuff.insertApiKey(group, key, token_type, scope, lifetime_seconds, note)
         self.session.commit()
-        return {'key': key}, 201, ctaj
+        # since this is a critical path, close the loop and make sure the key
+        # actually went in, because sometimes we for get that before insert
+        # tiggers need to return new not null (derp)
+        double_check = dbstuff.getGroupApiKeys(group)
+        if double_check and double_check[0].key == key:
+            return {'key': key}, 201, ctaj
+        else:
+            msg = f'{key} -/-> {double_check}'
+            log.critical(msg)
+            return abort(500, 'something went very wrong')
 
     @basic
     @fl.fresh_login_required

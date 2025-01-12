@@ -112,7 +112,7 @@ WHERE g.groupname = :groupname AND g.own_role <= 'pending'
 '''
         return list(self.session_execute(sql, dict(groupname=group)))
 
-    def insertOrcidMetadata(self, orcid, name, token_type, token_scope, token_access, token_refresh, lifetime_seconds, user=None):
+    def insertOrcidMetadata(self, orcid, name, token_type, token_scope, token_access, token_refresh, lifetime_seconds, openid_token=None, user=None):
         args = dict(
             orcid=orcid,
             name=name,
@@ -121,10 +121,17 @@ WHERE g.groupname = :groupname AND g.own_role <= 'pending'
             token_access=token_access,
             token_refresh=token_refresh,
             lifetime_seconds=lifetime_seconds)
-        sql = '''
-INSERT INTO orcid_metadata (orcid, name, token_type, token_scope, token_access, token_refresh, lifetime_seconds)
-VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh, :lifetime_seconds)
+
+        idt, idtv = ('', '') if openid_token is None else (', openid_token', ', :openid_token')
+
+        sql = f'''
+INSERT INTO orcid_metadata (orcid, name, token_type, token_scope, token_access, token_refresh, lifetime_seconds{idt})
+VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh, :lifetime_seconds{idtv})
 '''
+
+        if openid_token is not None:
+            args['openid_token'] = openid_token
+
         if user is not None:
             args['group'] = user
             sql += ';\nUPDATE users SET orcid = :orcid WHERE id = idFromGroupname(:group);\n'

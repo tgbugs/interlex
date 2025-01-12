@@ -52,11 +52,12 @@ CREATE TABLE groups(
        groupname text UNIQUE NOT NULL, -- note the groups lower unique index below
        created_datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
        CHECK (length(groupname) <= 40), -- only upper bound here because sometimes need to disable lower bound
-       CHECK (groupname ~* '^[a-zA-Z0-9_-]+$'),  -- no special chars in group names
-       CHECK (groupname !~* 'ilx_.*'),  -- FIXME cde pdf fde etc.
+       CHECK (groupname ~* '^[A-Za-z][A-Za-z0-9_-]*$'),  -- no special chars in group names
+       CHECK (groupname !~* '(ilx|cde|fde|pde)_.*'),
        CHECK (groupname !~* 'interlex.+'),
-       CHECK (groupname !~* '^user.+'),
-       CHECK (groupname !~* '^test.+'),
+       CHECK (groupname !~* '^group.*'),
+       CHECK (groupname !~* '^user.*'),
+       CHECK (groupname !~* '^test.*'),
        own_role group_role NOT NULL DEFAULT 'pending', -- TODO trigger preventing insert of anyting < pending to enforce data int
        CHECK (own_role > 'admin')
        -- TODO find a way to check that orgs roles >= 'org'
@@ -120,7 +121,8 @@ CREATE TABLE orcid_metadata(
        token_scope text,
        token_access uuid NOT NULL,  -- make sure we have at least this, even for testing
        token_refresh uuid,
-       lifetime_seconds integer
+       lifetime_seconds integer,
+       openid_token text
 );
 
 CREATE TABLE users(
@@ -227,7 +229,7 @@ CREATE TABLE emails_validating(
        -- TODO consider using something like pg_cron to periodically cull these
        user_id integer NOT NULL,
        email text NOT NULL,
-       token bytea UNIQUE NOT NULL,  -- FIXME this is a base64 encoded string ... not really a bytea
+       token text UNIQUE NOT NULL,
        created_datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
        -- delays seconds is time until can validate, helps with 2
        -- things, a slight rate limit on new accounts, and more
@@ -240,7 +242,7 @@ CREATE TABLE emails_validating(
        FOREIGN KEY (user_id, email) REFERENCES user_emails (user_id, email)
 );
 
-CREATE OR REPLACE FUNCTION email_verify_complete(token bytea) RETURNS text AS $email_verify_complete$
+CREATE OR REPLACE FUNCTION email_verify_complete(token text) RETURNS text AS $email_verify_complete$
 DECLARE
 out_groupname text;
 BEGIN
@@ -383,13 +385,13 @@ CREATE TABLE api_keys(
        --key bytea PRIMARY KEY, -- FIXME this should probably actually be text because we aren't storing as bytes?
        user_id integer NOT NULL references users (id), -- only users can have api keys
        key text PRIMARY KEY,
-       CHECK (key ~* '^ilx[prw]_[0-9A-Za-z]+$'),
+       CHECK (key ~* '^ix[prw]_[0-9A-Za-z]+$'),
        key_type key_types NOT NULL,
-       CHECK (substring(key_type::text, 0, 1) = substring(key, 3, 1)),
+       CHECK (substring(key_type::text, 1, 1) = substring(key, 3, 1)),
        key_scope key_scopes NOT NULL,
        created_datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
        lifetime_seconds integer, -- null means never expires FIXME likely want a constraint on max lifetimes for web tokens
-       CHECK (lifetime_seconds > 60), -- minimum 1 mintue to avoid accidentally minting api keys the expire immediately
+       CHECK (lifetime_seconds IS NULL OR lifetime_seconds > 60), -- minimum 1 mintue to avoid accidentally minting api keys the expire immediately
        revoked_datetime TIMESTAMP WITH TIME ZONE,
        note text,
        CHECK ((note ~* '^\S+') AND (note ~* '\S+$')) -- no leading and no trailing whitespace
@@ -436,7 +438,7 @@ BEGIN
     -- XXX NOTE that admin scope on a key only applies if admin still has empty group user role admin
     -- we already check own_role < pending for normal users, but admin hasn't been handled yet
     -- TODO ensure that admin's can't accidentally revoke admin status, for now revoking admin requires db access
-    RETURN NULL;
+    RETURN NEW;
 
 END;
 $api_keys_ensure_owner$ language plpgsql;

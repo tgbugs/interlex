@@ -125,8 +125,6 @@ games|blacklist
 gifts|blacklist
 github|blacklist
 graph|blacklist
-group|blacklist
-groups|blacklist
 guest|blacklist
 guests|blacklist
 homepage|blacklist
