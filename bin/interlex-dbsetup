@@ -41,6 +41,7 @@ psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/schemas
 psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/groups.sql" -v ON_ERROR_STOP=on
 psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/triples.sql" -v ON_ERROR_STOP=on
 psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/user-uris.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/pulls.sql" -v ON_ERROR_STOP=on
 psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/inserts.sql" -v ON_ERROR_STOP=on -v resources=${RESOURCES}
 psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/permissions.sql" -v ON_ERROR_STOP=on -v database=${DATABASE}
 

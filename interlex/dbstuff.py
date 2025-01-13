@@ -181,6 +181,14 @@ VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh,
                f'(idFromGroupname(:group), :key, :key_type, :scope{optionalvs})')
         return self.session_execute(sql, args)
 
+    def revokeApiKey(self, group, key):
+        # group is only here for a bit of insurace
+        args = dict(group=group, key=key)
+        sql = ('UPDATE api_keys SET revoked_datetime = CURRENT_TIMESTAMP '
+               'WHERE key = :key AND user_id = idFromGroupname(:group) AND revoked_datetime IS NULL; '
+               'SELECT key, revoked_datetime FROM api_keys WHERE key = :key;')
+        return list(self.session_execute(sql, args))
+
     def getGroupApiKeys(self, group):
         args = dict(group=group)
         sql = 'SELECT * FROM api_keys WHERE user_id = idFromGroupname(:group)'

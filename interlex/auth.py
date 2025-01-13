@@ -327,7 +327,10 @@ class Auth:
                 'logout',
                 'settings',
                 'password-change',  # TODO figure out what to do about accounts without email validation
-                'orcid-assoc',  # only assoc, no point in changing if verification hasn't finished
+                'user-deactivate',
+                'orcid-assoc',
+                'orcid-change',
+                'orcid-dissoc',
                 # i do imagine that there might be some crazy scenario where a user has an orcid
                 # somehow loses access after creating the user account and never set a password
                 # and never verified the email address, and that means that they can't get back in

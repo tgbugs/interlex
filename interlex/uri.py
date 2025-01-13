@@ -61,6 +61,7 @@ def uriStructure():
         # from the name the will have in the resolver structure
         '*priv': 'priv',
         '*email-verify': 'email-verify',
+        '*ops-pull': 'ops',
         '*uris_ont': 'uris',
         '*uris_version': 'version',
         '*<uris_filename>': '<filename>',
@@ -88,12 +89,13 @@ def uriStructure():
     # reminder: None is used to mark branches that are also terminals
     parent_child = {
         '<group>':             basic + ['*ilx_get', 'lexical'] + branches + compare + [
-            'priv', 'contributions', 'prov', 'external',],
+            'priv', 'pulls', 'contributions', 'prov', 'external',],
         'u':                   ['ops', '*priv'],
-        'ops':                 ['user-new',
+        'ops':                 ['login',
+                                'user-new',
+                                'user-login',
                                 'user-recover',
                                 'email-verify', 'ever',
-                                'login',
                                 'orcid-new',
                                 'orcid-login',
                                 'orcid-land-new',
@@ -108,18 +110,31 @@ def uriStructure():
                                 'request-ingest',
                                 #'ontology-new',  # not clear whether we actually need new-ontology on the api because all new ontologies should be POSTed to their desired uri, the frontend probably needs that though?
 
+                                'pull-new',
+
+                                #'ont-new',  # FIXME TODO still figuring out what to do about this one ...
+
                                 'entity-new',
                                 'modify-a-b',
                                 'modify-add-rem',
 
                                 'org-new',
+                                'reviewer-new',  # generate url to send to reviewer i think, obvs reviewers is a role so you can't just create a new one
+                                'committee-new',
+
+                                'curation',  # XXX pulls ? or everything in here at once?
+                                # FIXME TODO
+                                # pulls and pull actions need to be protected as well
+                                #'pull-create',
 
                                 # XXX TODO see if we really need this also probably want /<group>/priv/settings/<sub>
                                 'settings',
                                 'password-change',
+                                'user-deactivate',
 
                                 'orcid-assoc',
                                 'orcid-change',
+                                'orcid-dissoc',
 
                                 'email-add',
                                 'email-del',
@@ -131,6 +146,11 @@ def uriStructure():
                                 'api-token-revoke',
                                 ],
         'role':                ['<user>'],
+        'pulls':               [None, '<pull>'],
+        '<pull>':              [None, '*ops-pull', 'review'],
+        'reviews':             ['<review>'],
+        '<review>':            [None, 'vote'],
+        '*ops-pull':           ['merge', 'close', 'reopen', 'lock'],
         '*ilx_pattern':        [None, 'other', '*versions'],  # FIXME this is now doing a stupid redirect to ilx_pattern/ >_<
         '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
         '<other_group_diff>':  basic + ['lexical'] + branches,
@@ -182,9 +202,26 @@ def uriStructure():
                     '<filename_terminal>.<extension>':['GET', 'POST'],
                     'mapped':['GET', 'POST'],
 
+                    # pulls
+                    'pulls': ['GET'],
+                    '<pull>': ['GET'],  # I don't think we need to post to that?
+                    # pull ops all post only for now
+                    'merge': ['POST'],  # FIXME TODO how to implement the various review approval workflows e.g. multi voting
+                    'close': ['POST'],
+                    'reopen': ['POST'],
+                    'lock': ['POST'],
+                    # reviews
+                    'reviews': ['GET'],
+                    '<review>': ['GET'],
+                    'vote': ['POST'],  # approve deny present (possibly implicit present)
+
                     # ops
-                    'user-new': ['GET', 'POST'],  # FIXME do we need explicit OPTIONS?
                     'login': ['GET', 'POST'],
+                    'user-new': ['GET', 'POST'],  # FIXME why are tests trying head?
+                    'user-login': ['GET', 'POST'],
+                    'user-recover': ['GET', 'POST'],
+                    'orcid-new': ['GET'],
+                    'orcid-login': ['GET'],
 
                     # priv
                     '<user>': ['GET', 'PUT', 'DELETE'],  # for user roles
@@ -199,8 +236,11 @@ def uriStructure():
 
                     #'settings': ['GET'],  # TODO might allow PUT ?
                     'password-change': ['POST'],
+                    'user-deactivate': ['POST'],
+
+                    'orcid-assoc': ['GET'],
                     'orcid-change': ['POST'],
-                    'orcid-verify': ['POST'],
+                    'orcid-dissoc': ['POST'],
                     'email-add': ['POST'],
                     'email-del': ['POST'],
                     '*email-verify': ['POST'],
@@ -208,9 +248,38 @@ def uriStructure():
 
                     'api-tokens': ['GET'],
                     'api-token-new': ['GET', 'POST'],
-                    'api-token-revoke': ['GET', 'POST'],
+                    'api-token-revoke': ['GET', 'PUT'],  # can revoke as many times as you want only the first will do anything
     }
     return parent_child, node_methods, path_to_route, path_names
+
+
+_known_default = (
+    #'other',
+    #'*ilx_get'
+    #'',  # unhandled terminal case
+    #TERMINAL,  # unhandled terminal case FIXME these aren't unhandled ... it is a path/route mismatch
+    'other',
+    '*ilx_get',
+    '<label>',
+    '<path:uri_path>',
+    '<prefix_iri_curie>',  # FIXME maybe allow patch to change individual curie and post to create?
+    '<prefix_iri_curie>.<extension>',
+    '*ont_ilx_get',
+    '<filename_terminal>',
+    '<filename_terminal>.<extension>',
+    '<word>',
+    'contributions',
+
+    'settings',
+
+    'ever',
+    'email-verify',
+    'orcid-land-new',
+    'orcid-land-login',
+    'orcid-land-assoc',
+    'orcid-land-change',
+
+)
 
 
 def add_leafbranches(nodes):
@@ -233,7 +302,7 @@ def add_leafbranches(nodes):
 
 def build_endpoints(db, rules_req_auth):
     from interlex.endpoints import Endpoints, Versions, Own, OwnVersions, Diff, DiffVersions
-    from interlex.endpoints import Ontologies, Ops, Privu, Priv
+    from interlex.endpoints import Ontologies, Ops, Privu, Priv, Pulls
 
     endpoints = Endpoints(db, rules_req_auth)
     ontologies = Ontologies(db, rules_req_auth)
@@ -245,6 +314,7 @@ def build_endpoints(db, rules_req_auth):
     ops = Ops(db, rules_req_auth)
     privu = Privu(db, rules_req_auth)
     priv = Priv(db, rules_req_auth)
+    pulls = Pulls(db, rules_req_auth)
 
     # build the route -> endpoint mapping function
 
@@ -255,6 +325,7 @@ def build_endpoints(db, rules_req_auth):
                         '': own},
                 'versions': {'': versions},
                 'ontologies': {'': ontologies},
+                'pulls': {'': pulls}
                 'priv': {'': priv},
                 '*priv': {'': privu},
                 'ops': {'': ops},
@@ -275,33 +346,6 @@ def build_endpoints(db, rules_req_auth):
                 return route_endpoint_mapper(nodes, subdispatch)
 
     return route_endpoint_mapper, endpoints
-
-
-_known_default = (
-    #'other',
-    #'*ilx_get'
-    #'',  # unhandled terminal case
-    #TERMINAL,  # unhandled terminal case FIXME these aren't unhandled ... it is a path/route mismatch
-    'other',
-    '*ilx_get',
-    '<label>',
-    '<path:uri_path>',
-    '<prefix_iri_curie>',  # FIXME maybe allow patch to change individual curie and post to create?
-    '<prefix_iri_curie>.<extension>',
-    '*ont_ilx_get',
-    '<filename_terminal>',
-    '<filename_terminal>.<extension>',
-    '<word>',
-    'contributions',
-
-    'ever',
-    'email-verify',
-    'orcid-land-new',
-    'orcid-land-login',
-    'orcid-land-assoc',
-    'orcid-land-change',
-
-)
 
 
 def route_methods(nodes, node_methods, path_names):
@@ -333,6 +377,8 @@ def route_methods(nodes, node_methods, path_names):
         erms(' but was diff or version')
         methods = default_methods
 
+    if 'GET' in methods and 'HEAD' not in methods:
+        methods += ['HEAD']
 
     return methods
 

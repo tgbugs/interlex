@@ -20,8 +20,9 @@ CREATE type group_role AS enum (
 'admin',
 'owner',
 'contributor', -- contributors are users that have auto-pull rights when they either directly edit their perspective of a org term or merge their own user perspective to their view of the or org term manually
-'curator',
+'curator', -- can review, merge, and submit prs
 'view', -- really means view-scratch because all non-scratch is public
+--'review',  -- can review prs for a group but cannot merge -- TODO this is a less well formlized way from groups to create review committees, the issue is that each user can only have one role setting, and curators and reviewers should usually be separate
 'org',
 'pending',
 'deactivated',
@@ -350,6 +351,24 @@ CREATE TABLE user_permissions(
        CONSTRAINT fk__user_permissions__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
 );
 
+CREATE TYPE term_user_roles AS ENUM (
+'editor', -- final sign off can merge even if does not have group level permissions
+'reviewer' -- can't merge but always pulled in for review on a term XXX vs also having a committee for that
+);
+CREATE TABLE perspective_subject_user_permissions(
+       -- TODO see the extent to which we need this, but being able to delegate permissions down to the
+       -- term level instead of whole group/perspective level seems useful
+
+       -- use case where we want to be able to set the term editor for e.g. the curated
+       -- perspective to be e.g. the person who originally created the term or the maintainer
+       -- of that term in the upstream ontology that is the preferred id etc.
+       perspective integer references perspectives (id),
+       subject uri,  -- references triples (s) but that is not unique so can't do it that way, but can with a trigger
+       user_id integer references users (id),
+       primary key (perspective, subject, user_id),
+       user_role term_user_roles not null
+);
+
 CREATE FUNCTION check_valid_user_user_role() RETURNS trigger AS $$
        -- need to limit user to user roles to view
        BEGIN
@@ -486,6 +505,10 @@ BEGIN
        -- they aren't going to be showing up in logs anyway and we
        -- have formal prov systems for everything else, but need to
        -- review to make sure
+
+       -- HOWEVER for revoked keys, the question is how we ensure we never reissue a key that has already been
+       -- revoked? the answer is, that even with just the 30 base62/20 bytes/160bit we sit beyond even uuids
+       -- and who wants to draw without replacement from that pot?
        WHERE ((revoked_datetime                           IS NOT NULL
                AND
                revoked_datetime + api_key_done_expire_dur >= CURRENT_TIMESTAMP)

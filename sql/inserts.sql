@@ -228,3 +228,67 @@ INSERT INTO qualifiers (id, source_id, source_triples_hash, group_id, -- datetim
        previous_qualifier_id, equivalent_qualifier_id, load_process_id, source_serialization_hash)
        VALUES (0, 0, E'\\x00', 0, 0, 0, 0, E'\\x00');
 */
+
+-- pulls
+
+INSERT INTO voting_systems (description, default_vote, quorum_ratio, pass_exact) VALUES
+('pass if any reviewer approve',         'present',    1,            1); -- XXX this behavior is actually weird and bad because 4 deny 1 approve passes
+INSERT INTO voting_systems (description, default_vote, quorum_ratio, pass_ratio) VALUES
+('pass if all reviewer approve',         'absent',     1,            1); -- unanimity
+INSERT INTO voting_systems (description, default_vote, quorum_ratio, fail_exact) VALUES
+('pass if no reviewer deny',             'approve',    1,            1);
+INSERT INTO voting_systems (description, default_vote, quorum_ratio, pass_ratio) VALUES
+('pass if > 0.5 reviewer approve',       'absent',     1,            0.5);
+INSERT INTO voting_systems (description, default_vote, quorum_ratio, pass_ratio) VALUES
+('pass if > 0.66 reviewer approve',      'absent',     1,            0.66);
+
+-- note the subtle difference between this and the variant where pass_ratio := 1, a present vote would block in that case
+-- another way one might try to implement this would be as
+-- default_vote pass_exact fail_exact, accept 1 1, except that
+-- produces ambiguity that can lead to arguments if there is a 1:1 tie
+-- in the exact criteria because then there is no specification for
+-- what to do if the remaining accept outnumber the deny
+
+-- we made them as a joke, for completeness
+INSERT INTO voting_systems (description, default_vote, quorum_exact, pass_exact, fail_ratio) VALUES
+('pass if any reviewer present',         'absent',     1,            0,          1);
+-- does anybody object? yes! can I get a second? passed!
+INSERT INTO voting_systems (description, default_vote, quorum_exact, pass_exact, fail_exact) VALUES
+('pass if any reviewer deny',            'absent',     1,            0,          2);
+INSERT INTO voting_systems (description, default_vote, quorum_exact, pass_exact) VALUES
+('can i get a second',                   'absent',     1,            2); -- any 1 can bring motion but 2 required to pass, need some quorum_reached, duration or similar criteria, also works with default vote as present for committees of any size i think? quorum exact could be zero and pe 2? hrm.
+
+INSERT INTO review_process_specs (description, voting_system, duration, duration_dow_after)
+SELECT
+-- 'public review, pass if no reviewer deny before the first friday after 1 week',
+-- oh right, the reason this is confusing is because it is equivalent to one week from friday since addition is commutative and weeks is modular
+-- 'public review, will pass if no objection 1 week from friday',
+'public review, silent unanimous vote, until 1 week from friday', -- yep, silent votes must always have a duration
+vs.id, '1 week', 'friday'
+FROM voting_systems AS vs WHERE vs.description = 'pass if no reviewer deny';
+
+/* -- probably don't use this because deny votes are meaningless
+INSERT INTO review_process_specs (description, voting_system)
+SELECT 'public review, pass if any reviewer approve', vs.id
+FROM voting_systems AS vs WHERE vs.description = 'pass if any reviewer approve';
+*/
+
+INSERT INTO review_process_specs (description, voting_system) SELECT
+-- 'public review, pass if all reviewer approve',
+'public review, unanimous vote', vs.id
+FROM voting_systems AS vs WHERE vs.description = 'pass if all reviewer approve';
+
+INSERT INTO review_process_specs (description, voting_system) SELECT
+'public review, majority vote', vs.id
+FROM voting_systems AS vs WHERE vs.description = 'pass if > 0.5 reviewer approve';
+
+INSERT INTO review_process_specs (description, voting_system) SELECT
+'public review, super majority vote', vs.id
+FROM voting_systems AS vs WHERE vs.description = 'pass if > 0.66 reviewer approve';
+
+/* -- by default there is no formal review step so only role <= curator can merge
+INSERT INTO perspective_pull_settings (perspective_id, default_spec)
+SELECT 0, rps.id
+FROM review_process_specs AS rps WHERE rps.description = 'public review, pass if all reviewer approve';
+*/
+

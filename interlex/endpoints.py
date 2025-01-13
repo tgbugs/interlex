@@ -737,15 +737,16 @@ class Ops(EndBase):
 
     def get_func(self, nodes):
         mapping = {
-            'user-new': self.user_new,
-            'user-recover': self.user_recover,
             'login': self.login,
-            'email-verify': self.email_verify,
-            'ever': self.email_verify,
+            'user-new': self.user_new,
+            'user-login': self.user_login,
+            'user-recover': self.user_recover,
             'orcid-new': self.orcid_new,
             'orcid-login': self.orcid_login,
             'orcid-land-new': self.orcid_landing_new,
             'orcid-land-login': self.orcid_landing_login,
+            'ever': self.email_verify,
+            'email-verify': self.email_verify,
         }
         return super().get_func(nodes, mapping=mapping)
 
@@ -1304,25 +1305,6 @@ receive quite a few during periods of active development.
             abort(404)
 
     def login(self):
-        # FIXME this needs to be able to detect whether a user is already
-        # logged in as the same or another user
-
-        # XXX NOTE this is pretty much only for development
-        # because in production login is going to go directly
-        # to orcid and /<group>/ops/login should pretty much never be used
-
-        if False and request.method in ('GET', 'HEAD'):
-            # only accept post with password on this endpoint
-            # to prevent user name discovery, though obviously
-            # there are other legitimate way to discover this
-            # information in bulk
-            return abort(405)
-
-        if request.method == 'GET' and 'Authorization' not in request.headers:
-            # need simple login for testing so provide one
-            login_form = ''
-            # XXX we don't use a form for login, basic and then return a session
-            # the react frontend can deal with it as it sees fit
             _login_form = '''
 <form action="" method="post" class="login">
 
@@ -1342,12 +1324,53 @@ receive quite a few during periods of active development.
 
 </form>
 '''
+
+            body = '''
+InterLex Login <br>
+<a href="/u/ops/user-login">Login</a> <br>
+<a href="/u/ops/orcid-login">Login with ORCiD</a> <br>
+<a href="/u/ops/user-new">Signup</a> <br>
+<a href="/u/ops/orcid-new">Signup with ORCiD</a> <br>
+'''
+
             return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head><title>InterLex Login</title></head>
 <body>
-{login_form}
+{body}
+</body>
+</html>'''
+
+    def user_login(self):
+        # FIXME this needs to be able to detect whether a user is already
+        # logged in as the same or another user
+
+        # XXX NOTE this is pretty much only for development
+        # because in production login is going to go directly
+        # to orcid and /<group>/ops/login should pretty much never be used
+
+        if False and request.method in ('GET', 'HEAD'):
+            # only accept post with password on this endpoint
+            # to prevent user name discovery, though obviously
+            # there are other legitimate way to discover this
+            # information in bulk
+            return abort(405)
+
+        if request.method == 'GET' and 'Authorization' not in request.headers:
+            # need simple login for testing so provide one
+            # XXX we don't use a form for login, basic and then return a session
+            # the react frontend can deal with it as it sees fit
+            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex User Login</title></head>
+<body>
+To log in to InterLex use the basic auth dialog provided by your browser. <br>
+Alternately send an HTTP GET request with headers containing <br>
+<pre>
+{"Authorization": "Basic " + base64(username + ":" + password)}
+</pre>
 </body>
 </html>''', 401, {'WWW-Authenticate': 'Basic realm="InterLex"'}
 
@@ -1466,6 +1489,11 @@ class Privu(EndBase):
             freiri = check_reiri(request.args['freiri'])  # FIXME may need to un-urlencode it?
             if freiri:
                 return redirect(freiri, 302)  # 302 seems more standard than 303 for get
+        elif 'from' in request.args:
+            frm = request.args['from']
+            if frm == 'user-new':
+                # e.g. someone went to user-new directly without coming from anywhere else
+                return redirect(f'/{user}/priv/settings', 302)
 
         orcid = 'https://orcid.org/' + orcid_meta['orcid']
         # FIXME vs 303 -> interlex.org ...
@@ -1478,21 +1506,25 @@ class Priv(EndBase):
         mapping = {
             'upload': self.upload,
             'request-ingest': self.request_ingest,
+            'pull-new': self.pull_new,  # FIXME TODO may need pull-ont-new pull-ent-new pull-ext-new pull-uri-new
             'entity-new': self.entity_new,
             'modify-a-b': self.modify_a_b,
             'modify-add-rem': self.modify_add_rem,
 
             'org-new': self.org_new,
 
+            'curation': self.curation,
             'settings': self.settings,
 
             # all below except noted require fresh login
             '<user>': self.user_role,
 
             'password-change': self.password_change,  # tokens cannot be used for this one
+            'user-deactivate': self.user_deactivate,
 
             'orcid-assoc': self.orcid_associate,
             'orcid-change': self.orcid_change,
+            'orcid-dissoc': self.orcid_dissociate,
 
             'email-add': self.email_add,
             'email-del': self.email_del,
@@ -1638,6 +1670,11 @@ class Priv(EndBase):
                 return json.dumps(names), 200, {'Content-Type':'application/json'}
 
     @basic
+    def curation(self, group, db=None):
+        # curation dashboard view, overlaps a bit with pulls
+        return 'TODO', 501
+
+    @basic
     def settings(self, group, db=None):
         # TODO can handle logged in user x group membership and role in a similar way
         recs = self.queries.getUserSettings(group)
@@ -1702,6 +1739,17 @@ class Priv(EndBase):
     def password_change(self, group, db=None):
         return 'TODO', 501
 
+    @basic
+    @fl.fresh_login_required
+    def user_deactivate(self, group, db=None):
+        # contributions are public, much like stack overflow etc.
+
+        # you cannot delete past content or comments because they are part of
+        # the scholarly record, any edits will be tracked
+
+        # you can deactivate your account
+        return 'TODO', 501
+
     _orcid = Ops._orcid
     @basic
     @fl.fresh_login_required  # FIXME should not be possible to remember login before orcid assoc or no?
@@ -1715,8 +1763,17 @@ class Priv(EndBase):
         # can change as long as you can log into the other one and it isn't
         # already associated with another account, that is, you can't swap
         # orcids on two accounts you would need a third
+
+        # or we do it as a dissoc and it deactivates the account ... may not want that though
         url_orcid_land = url_for('Privu.orcid_landing_change /u/priv/orcid-land-change')
         return self._orcid(url_orcid_land)
+
+    @basic
+    @fl.fresh_login_required
+    def orcid_dissociate(self, group, db=None):
+        # if this is implemented the user must have password set it can't just
+        # be an orcid login
+        return 'maybe do?', 501
 
     @basic
     @fl.fresh_login_required
@@ -1876,12 +1933,24 @@ class Priv(EndBase):
         else:
             msg = f'{key} -/-> {double_check}'
             log.critical(msg)
-            return abort(500, 'something went very wrong')
+            abort(500, 'something went very wrong')
 
     @basic
     @fl.fresh_login_required
     def api_token_revoke(self, group, db=None):
-        return abort(501)
+        if not request.json or 'key' not in request.json:
+            abort(422, 'needs to be json {"key": key_to_revoke}')
+
+        key = request.json['key']
+        dbstuff = Stuff(self.session)
+        rows = dbstuff.revokeApiKey(key)
+        if rows:
+            row = rows[0]
+            out = {'key': row.key, 'revoked_datetime': row.revoked_datetime}
+            return json.dumps(out), 200, ctaj
+        else:
+            breakpoint()
+            abort(500, 'sigh')
 
     @basic
     def org_new(self, group, db=None):
@@ -1896,16 +1965,52 @@ class Priv(EndBase):
             'from which will become the owner of the new organization.'), 501
 
     @basic
+    def pull_new(self, group, db=None):
+        return 'TODO', 501
+
+    @basic
     def entity_new(self, group, db=None):
-        return 'NOT IMPLEMENTED\n', 400
+        return 'TODO', 501
 
     @basic
     def modify_a_b(self, group, db=None):
-        return 'NOT IMPLEMENTED\n', 400
+        return 'TODO', 501
 
     @basic
     def modify_add_rem(self, group, db=None):
-        return 'NOT IMPLEMENTED\n', 400
+        return 'TODO', 501
+
+
+class Pulls(EndBase):
+
+    def get_func(self, nodes):
+        mapping = {
+            'pulls': self.pulls,
+            '<pull>': self.pull,
+            'merge': self.merge,
+            'close': self.close,
+            'reopen': self.reopen,
+            'lock': self.lock,
+        }
+        return super().get_func(nodes, mapping=mapping)
+
+    def pulls(self, group, pull):
+        return 'TODO', 501
+
+    def pull(self, group, pull):
+        return 'TODO', 501
+
+    def merge(self, group, pull):
+        return 'TODO', 501
+
+    def close(self, group, pull):
+        return 'TODO', 501
+
+    def reopen(self, group, pull):
+        return 'TODO', 501
+
+    def lock(self, group, pull):
+        return 'TODO', 501
 
 
 class Ontologies(Endpoints):
