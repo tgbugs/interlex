@@ -185,6 +185,7 @@ def basic2(function):
 
 
 def check_reiri(reiri):
+    # seems like I'm not the only one https://github.com/lingthio/Flask-User/issues/119#issuecomment-610237001
     reurl = urlparse(reiri)
     if reurl.scheme != request.scheme or reurl.netloc != request.host:  # FIXME uri.interlex.org vs interlex.org
         log.info(f'possibly malicious redirect? {reiri}')
@@ -772,7 +773,7 @@ class Ops(EndBase):
 
         prompt = '&prompt=login' if refresh else ''
         scope = 'openid'  # /read-limited
-        redirect_uri = f'{request.scheme}://{request.host}{url_orcid_land}'
+        redirect_uri = f'{request.scheme}://{request.host}{url_orcid_land}'  # FIXME request.host can be spoofed ya? TODO figure out if it can be abused in combination with next= ...
         reiri = (f'https://sandbox.orcid.org/oauth/authorize?client_id={config.orcid_client_id}'
                  f'&response_type=code&scope={scope}{prompt}&redirect_uri={redirect_uri}')
         return redirect(reiri, code=302)
@@ -1225,26 +1226,16 @@ receive quite a few during periods of active development.
         # which because linewrap uses = which is the same as base64 padding
         dbstuff = Stuff(self.session)
 
-        retry_n = 10
-        for i in range(retry_n):
-            token = base64.urlsafe_b64encode(secrets.token_bytes(24))
-            token_str = token.decode()
-            try:
-                if _email_mock:
-                    # well if you put lifetime seconds to 0 the logic is correct, but can never be verified (heh)
-                    resp = dbstuff.email_verify_start(username, email, token_str, 0, 10)
-                else:
-                    resp = dbstuff.email_verify_start(username, email, token_str)
+        token = base64.urlsafe_b64encode(secrets.token_bytes(24))
+        token_str = token.decode()
+        if _email_mock:
+            # well if you put lifetime seconds to 0 the logic is correct, but can never be verified (heh)
+            resp = dbstuff.email_verify_start(username, email, token_str, 0, 10)
+        else:
+            resp = dbstuff.email_verify_start(username, email, token_str)
 
-                self.session.commit()
-                row = resp[0]
-                break
-            except Exception as e:
-                # there is an infinitesimal chance that there could be a token
-                # collision, so if that happens make sure we handle it
-                log.exception(e)
-                breakpoint()
-                continue
+        self.session.commit()
+        row = resp[0]
 
         minutes = row.lifetime_seconds // 60
         nowish = row.created_datetime
@@ -1253,8 +1244,10 @@ receive quite a few during periods of active development.
         scheme = 'https'  # FIXME ...
         reference_host = self.reference_host  # FIXME vs actual host for testing
         #verification_link = f'{scheme}://{reference_host}/u/ops/email-verify?{token}'
-        verification_link = f'{scheme}://{reference_host}/u/ops/ever?t={token_str}'
-        reverify_link = f'{scheme}://{reference_host}/{username}/priv/email-verify'  # FIXME obviously wrong link
+        #verification_link = f'{scheme}://{reference_host}/u/ops/ever?t={token_str}'
+        verification_link = f'{request.scheme}://{request.host}/u/ops/ever?t={token_str}'
+        # FIXME TODO is it safe to use request.host for this? is it safe?
+        reverify_link = f'{request.scheme}://{request.host}/{username}/priv/email-verify?email={email}'
         msg = msg_email_verify(
             email, nowish, startish, row.delay_seconds, minutes, thenish,
             verification_link, reverify_link)
@@ -1266,7 +1259,7 @@ receive quite a few during periods of active development.
             send_message(msg, get_smtp_spec())
 
     def user_recover(self):
-        return abort(501)
+        abort(501)
 
     def email_verify(self):
         """ callback point for email with token not to be confused with priv/email-verify """
@@ -1275,7 +1268,18 @@ receive quite a few during periods of active development.
 
         token_str = request.args['t']
         dbstuff = Stuff(self.session)
-        resp = dbstuff.email_verify_complete(token_str)
+        try:
+            resp = dbstuff.email_verify_complete(token_str)
+        except sa.exc.InternalError as e:
+            if (e.orig.diag.source_function == 'exec_stmt_raise'
+                and e.orig.diag.context is not None
+                and e.orig.diag.context.startswith('PL/pgSQL function email_verify_complete(text)')):
+                msg = e.orig.diag.message_primary
+                abort(404, msg)
+
+            log.exception(e)
+            abort(404)
+
         if resp:
             self.session.commit()
             group = resp[0][0]
@@ -1524,6 +1528,8 @@ class Privu(EndBase):
 
 
 class Priv(EndBase):
+
+    _start_email_verify = Ops._start_email_verify
 
     def get_func(self, nodes):
         mapping = {
@@ -1812,8 +1818,27 @@ class Priv(EndBase):
 
     @basic
     def email_verify(self, group, db=None):
-        # request to verify email address if something went wrong
-        return 'TODO', 501
+        # request to reverify email address if something went wrong, or token expired
+
+        # it is safe to do this as a get request because the user must be logged in
+        # and it is ok to pass the email as an arg because it must match one in the db
+        if 'email' not in request.args or not request.args['email']:
+            abort(400, 'missing ?email=')
+
+        email = request.args['email']
+
+        dbstuff = Stuff(self.session)
+        emet = dbstuff.getUserEmailMeta(group, email)
+        if not emet:
+            return f'unknown email {email}'
+
+        row = emet[0]
+
+        if row.email_validated:
+            return f'{email} already verified'
+        else:
+            self._start_email_verify(group, email)
+            return f'a new verification email has been sent to {email}'
 
     @basic
     @fl.fresh_login_required

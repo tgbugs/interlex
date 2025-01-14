@@ -180,8 +180,9 @@ CREATE TRIGGER orcid_complete AFTER UPDATE ON users FOR each row execute procedu
 
 CREATE TABLE user_emails(
        user_id integer NOT NULL,
-       email text UNIQUE NOT NULL,
+       email text NOT NULL,
        email_primary boolean NOT NULL,
+       -- FIXME email_validated should probably be an append only table to avoid update?
        email_validated TIMESTAMP WITH TIME ZONE DEFAULT NULL,  -- either they click the link or they paste it in somewhere
        created_datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
        -- email + user_id + datetime + valid_for_time + secret -> encrypt it -> put it in a link -> email the link
@@ -204,6 +205,8 @@ CREATE TABLE user_emails(
        -- this does mean however that we will have to figure out how to limit the number of orgs that can be created
        CONSTRAINT fk__user_emails__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
 );
+
+CREATE UNIQUE INDEX email_lower_index ON user_emails (lower(email));
 
 CREATE FUNCTION email_complete() RETURNS trigger AS $email_complete$
        BEGIN
@@ -230,7 +233,8 @@ CREATE TABLE emails_validating(
        -- TODO consider using something like pg_cron to periodically cull these
        user_id integer NOT NULL,
        email text NOT NULL,
-       token text UNIQUE NOT NULL,
+       UNIQUE (user_id, email, created_datetime), -- can't use user_id email as primary because mail servers may be broken an so need multiple tokens
+       token text PRIMARY KEY NOT NULL, -- this is the logical primary key since it mediates the whole process
        created_datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
        -- delays seconds is time until can validate, helps with 2
        -- things, a slight rate limit on new accounts, and more
@@ -239,7 +243,6 @@ CREATE TABLE emails_validating(
        delay_seconds integer NOT NULL DEFAULT 60,
        lifetime_seconds integer NOT NULL DEFAULT 900, -- default to 15 minutes
        CHECK (delay_seconds <= lifetime_seconds),
-       PRIMARY KEY (user_id, email),
        FOREIGN KEY (user_id, email) REFERENCES user_emails (user_id, email)
 );
 

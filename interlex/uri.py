@@ -105,7 +105,7 @@ def uriStructure():
                                 'orcid-land-assoc',  # currently null case
                                 'orcid-land-change',  # currently not null case
                                 ],
-        'priv':                ['role',
+        'priv':                ['role',  # note that priv -> privileged NOT private!
                                 'upload',
                                 'request-ingest',
                                 #'ontology-new',  # not clear whether we actually need new-ontology on the api because all new ontologies should be POSTed to their desired uri, the frontend probably needs that though?
@@ -119,7 +119,7 @@ def uriStructure():
                                 'modify-add-rem',
 
                                 'org-new',
-                                'reviewer-new',  # generate url to send to reviewer i think, obvs reviewers is a role so you can't just create a new one
+                                #'reviewer-new',  # generate url to send to reviewer i think, obvs reviewers is a role so you can't just create a new one
                                 'committee-new',
 
                                 'curation',  # XXX pulls ? or everything in here at once?
@@ -243,7 +243,7 @@ def uriStructure():
                     'orcid-dissoc': ['POST'],
                     'email-add': ['POST'],
                     'email-del': ['POST'],
-                    '*email-verify': ['POST'],
+                    '*email-verify': ['GET'],  # use query parameters
                     'email-primary': ['POST'],
 
                     'api-tokens': ['GET'],
@@ -325,7 +325,7 @@ def build_endpoints(db, rules_req_auth):
                         '': own},
                 'versions': {'': versions},
                 'ontologies': {'': ontologies},
-                'pulls': {'': pulls}
+                'pulls': {'': pulls},
                 'priv': {'': priv},
                 '*priv': {'': privu},
                 'ops': {'': ops},

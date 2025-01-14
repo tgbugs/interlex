@@ -67,6 +67,12 @@ INSERT INTO user_passwords (user_id, argon2_string) SELECT user_id, :argon2_stri
 '''
         return list(self.session_execute(sql, params=params))
 
+    def getUserEmailMeta(self, group, email):
+        # need group to prevent cross group requests for email validation
+        args = dict(group=group, email=email)
+        sql = 'select * from user_emails where email = :email and user_id = idFromGroupname(:group)'
+        return list(self.session_execute(sql, args))
+
     def email_verify_start(self, group, email, token, delay_seconds=None, lifetime_seconds=None):
         if lifetime_seconds is not None and delay_seconds is None:
             msg = 'delay_seconds cannot be None if lifetime_seconds is not None'
