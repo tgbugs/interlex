@@ -72,10 +72,10 @@ If it was you, click the following link in about {delay_seconds} seconds to conf
 
 {verification_link}
 
-The confirmation link will work approximately {delay_seconds} seconds
-after this email was sent starting at {istart}
-and will expire approximately {minutes} minutes after this email
-was sent at around {iexpires}
+The confirmation link will work starting at {istart}
+approximately {delay_seconds} seconds after this email was sent
+and will expire at {iexpires}
+approximately {minutes} minutes after this email was sent.
 
 Sent   {inow}
 Start  {istart}

@@ -930,11 +930,13 @@ class Ops(EndBase):
         # password
         # TODO only orcid
 
+        already_registered = fl.current_user is not None and hasattr(fl.current_user, 'groupname') and fl.current_user.groupname is not None
         _orcid = fl.current_user is not None and hasattr(fl.current_user, 'orcid') and fl.current_user.orcid
         orcid = _orcid if _orcid else None  # adjust types, sql doesn't like nulls being passed as false ...
 
         if request.method == 'GET':
             # fine we'll send you a form to fill out
+            _areg = f' You are already registered as {fl.current_user.groupname}. <br>' if already_registered else ''
             if orcid is None:
                 orcid_not = ' not'
                 not_orcid_not = 'this is you'
@@ -952,8 +954,8 @@ Required: eventually associated ORCiD account <br>
 Required: eventually verified email <br>
 
 If you chose to sign up with ORCiD (you have{orcid_not}) the password is optional but encouraged. <br>
-If you did not sign up with ORCiD (not_orcid_not) then a password is required so that you can resume your registration in case something goes wrong. <br>
-If you did not sign up with ORCiD (not_orcid_not) then you will be directed to ORCiD after completion of this form. <br>
+If you did not sign up with ORCiD ({not_orcid_not}) then a password is required so that you can resume your registration in case something goes wrong. <br>
+If you did not sign up with ORCiD ({not_orcid_not}) then you will be directed to ORCiD after completion of this form. <br>
 
 We suggest that you use a developer email account that can be disclosed
 publicly since the email will be associated with your contributions (similar to
@@ -968,7 +970,7 @@ receive quite a few during periods of active development.
 
   <div class="user-new">
     <label for="username">Username: </label>
-    <input type="text" name="username" id="username" size="40" required />
+    <input type="text" name="username" id="username" size="40" required />{_areg}
   </div>
 
   <div class="user-new">
@@ -989,7 +991,7 @@ receive quite a few during periods of active development.
   -->
 
   <div class="user-new">
-    <input type="submit" value="Register" />
+    <input type="submit" value="Register" /> After clicking Register you will be taken to ORCiD to associate your account. <br>
   </div>
 
 </form>
@@ -1305,12 +1307,17 @@ receive quite a few during periods of active development.
             abort(404)
 
     def login(self):
-            _login_form = '''
-<form action="" method="post" class="login">
+        # SIGH turns out that the UX for basic login is absolutely utterly horrible
+        # so we provide the form as well
+        already_logged_in = fl.current_user is not None and hasattr(fl.current_user, 'groupname') and fl.current_user.groupname is not None
+        _alog = f' You are already logged in as {fl.current_user.groupname}. <br>' if already_logged_in else ''
+        # groupname is safe to pass to format here because it is coming from the db not the user
+        _login_form = f'''
+<form action="/u/ops/user-login" method="post" class="login">
 
   <div class="login">
     <label for="username">Username: </label>
-    <input type="text" name="username" id="username" required />
+    <input type="text" name="username" id="username" required />{_alog}
   </div>
 
   <div class="login">
@@ -1325,15 +1332,16 @@ receive quite a few during periods of active development.
 </form>
 '''
 
-            body = '''
+        body = f'''
 InterLex Login <br>
-<a href="/u/ops/user-login">Login</a> <br>
+{_login_form}
+<br>
 <a href="/u/ops/orcid-login">Login with ORCiD</a> <br>
 <a href="/u/ops/user-new">Signup</a> <br>
 <a href="/u/ops/orcid-new">Signup with ORCiD</a> <br>
 '''
 
-            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+        return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head><title>InterLex Login</title></head>
@@ -1358,19 +1366,22 @@ InterLex Login <br>
             return abort(405)
 
         if request.method == 'GET' and 'Authorization' not in request.headers:
-            # need simple login for testing so provide one
-            # XXX we don't use a form for login, basic and then return a session
-            # the react frontend can deal with it as it sees fit
+            # allow basic login for now noting that the ux is really bad even for dev
+            _ex_header = '{"Authorization": "Basic " + base64(username + ":" + password)}'
+            _alt = f'''
+To log in to InterLex use the basic auth dialog provided by your browser. <br>
+If you are seeing this message you can refresh the page to get it back. <br>
+Alternately send an HTTP GET request with headers containing <br>
+<pre>
+{_ex_header}
+</pre>
+            '''
             return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head><title>InterLex User Login</title></head>
 <body>
-To log in to InterLex use the basic auth dialog provided by your browser. <br>
-Alternately send an HTTP GET request with headers containing <br>
-<pre>
-{"Authorization": "Basic " + base64(username + ":" + password)}
-</pre>
+{_alt}
 </body>
 </html>''', 401, {'WWW-Authenticate': 'Basic realm="InterLex"'}
 
@@ -1378,26 +1389,38 @@ Alternately send an HTTP GET request with headers containing <br>
             # if the the group is not a user then 404 since can only log in to orcid mapped users
             # FIXME must check roles
             # FIXME forcing group == ops causes issues here
-
             basic_group_password = request.headers.get('Authorization', '')
-            if not basic_group_password:
-                return abort(404)
+            if 'username' in request.form and 'password' in request.form:
+                pass_group = request.form['username']
+                password = request.form['password']
+                if not pass_group or not password:
+                    if not pass_group and not password:
+                        msg = 'missing username and password'
+                    elif not pass_group:
+                        msg = 'missing username'
+                    elif not password:
+                        msg = 'missing password'
 
-            abasic, *_group_password = basic_group_password.split(None, 1)
-            if abasic.lower() != 'basic' or not _group_password:  # FIXME do we force case sense or not here ...
-                return abort(404)  # FIXME maybe malformed from client
+                    abort(400, msg)
+
+            elif basic_group_password:
+                abasic, *_group_password = basic_group_password.split(None, 1)
+                if abasic.lower() != 'basic' or not _group_password:  # FIXME do we force case sense or not here ...
+                    abort(400)
+                else:
+                    b64_group_password = _group_password[0]
+
+                group_password = base64.b64decode(b64_group_password).decode()
+                pass_group, password = group_password.split(':', 1)
             else:
-                b64_group_password = _group_password[0]
-
-            group_password = base64.b64decode(b64_group_password).decode()
-            pass_group, password = group_password.split(':', 1)
+                abort(422, 'POST a username and password or set Authorization header')
 
             # FIXME TODO must also check users here to ensure actually allowed to log in
             dbstuff = Stuff(self.session)
             rows = dbstuff.getUserPassword(pass_group)
             if not rows:
                 # not a user
-                return abort(401)
+                abort(401)
 
             group_row = rows[0]
             argon2_string = group_row.argon2_string
@@ -1512,6 +1535,7 @@ class Priv(EndBase):
             'modify-add-rem': self.modify_add_rem,
 
             'org-new': self.org_new,
+            'committee-new': self.committee_new,
 
             'curation': self.curation,
             'settings': self.settings,
@@ -1963,6 +1987,10 @@ class Priv(EndBase):
             'organization that you would like to create, a brief explaination of what it will '
             'be used for, and the interlex username associated with the email you are sending '
             'from which will become the owner of the new organization.'), 501
+
+    @basic
+    def committee_new(self, group, db=None):
+        return 'TODO', 501
 
     @basic
     def pull_new(self, group, db=None):

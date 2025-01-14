@@ -595,7 +595,7 @@ def combinatorics():
             if scen['auth'] is not None:
                 if scen['auth'] == 'login':
                     lheaders = {'Authorization': 'Basic ' + base64.b64encode((scen['auth_user'] + ':' + test_password).encode()).decode()}
-                    lurl = url_prefix + '/u/ops/login'
+                    lurl = url_prefix + '/u/ops/user-login'
                     lresp = fixresp(client.get(lurl, headers=lheaders))
                     headers['Cookie'] = lresp.headers['Set-Cookie']
                 elif scen['auth'] == 'orcid':
