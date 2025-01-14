@@ -217,7 +217,7 @@ def uriStructure():
                     'vote': ['POST'],  # approve deny present (possibly implicit present)
 
                     # ops
-                    'login': ['GET', 'POST'],
+                    'login': ['GET'],  # this is the login landing page for the api, the actual postable is user-login
                     'user-new': ['GET', 'POST'],  # FIXME why are tests trying head?
                     'user-login': ['GET', 'POST'],
                     'user-recover': ['GET', 'POST'],
