@@ -50,7 +50,8 @@ class DocsApi(Api):
     def make_response(self, data, *args, **kwargs):
         # this only affects /docs/swagger.json right now
         resp = super().make_response(data, *args, **kwargs)
-        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Origin'] = '*'  # FIXME TODO need on ALL endpoints not just docs
+        # https://stackoverflow.com/questions/26980713/solve-cross-origin-resource-sharing-with-flask
         return resp
 
 
@@ -392,7 +393,7 @@ def build_api(app):
                   version='0.0.1',
                   title='InterLex URI structure API',
                   description='Resolution, update, and compare for ontologies and ontology identifiers.',
-                  default='URIs',
+                  default='URIs',  # FIXME warn when other stuff sneeks in to the default
                   default_label='Group URIs',
                   doc='/docs',)
 
@@ -404,9 +405,10 @@ def build_api(app):
         'versions':api.namespace('Versions', 'View data associated with any ilx: URI at a given timepoint or version', '/'),
         'diff':api.namespace('Diff', 'Compare groups', '/'),
         'own':api.namespace('Own', 'See one group\'s view of another group\'s personalized IRIs', '/'),
-        # XXX these are being trialed
         'ops':api.namespace('Operations', 'Stateful operations.', '/'),
+        '*priv':api.namespace('Privileged*', 'Resources and operations that always require auth but no group', '/'),
         'priv':api.namespace('Privileged', 'Resources and operations that always require auth', '/'),
+        'pulls':api.namespace('Pulls', 'Pull requests and reviews', '/'),
     }
     extra = {name + '_':ns for name, ns in doc_namespaces.items() if name in ('curies', 'contributions', 'ontologies')}
     doc_namespaces = {**extra, **doc_namespaces}  # make sure the extras come first for priority ordering
