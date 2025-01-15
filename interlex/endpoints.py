@@ -23,7 +23,7 @@ from interlex import tasks
 from interlex import config
 from interlex import exceptions as exc
 from interlex.auth import Auth, gen_key
-from interlex.core import diffCuries, makeParamsValues, default_prefixes
+from interlex.core import diffCuries, makeParamsValues, default_prefixes, from_title_subjects_ontspec
 from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
 from interlex.utils import log as _log
@@ -264,13 +264,17 @@ class Endpoints(EndBase):
 
             # FIXME how to deal with own/other for ontologies/uris ?
             # FIXME ontologies are weird with need to be here ...
-            # but eithe you duplicate functions or you duplicate diff and own classes
-            'ontologies_': self.ontologies_,
+            # but either you duplicate functions or you duplicate diff and own classes
+            '*ontologies': self.ontologies_,  # Endpoints only
             'ontologies': self.ontologies,
             'version': self.ontologies_version,  # FIXME collision prone?
 
             '*ont_ilx_get': self.ontologies_ilx,
             '*uris_ont': self.ontologies_uris,
+
+            'spec': self.ontologies_spec,
+            'spec.<extension>': self.ontologies_spec,
+
             '*<path:uris_ont_path>': self.ontologies_uris,
             '*uris_version': self.ontologies_uris_version,
 
@@ -659,7 +663,10 @@ class Endpoints(EndBase):
     @basic
     def ontologies_(self, group, db=None):
         """ The terminal ontologies query does go on endpoints """
-        return json.dumps('your list sir')
+        dbstuff = Stuff(self.session)
+        resp = dbstuff.getGroupOntologies(group)
+        # TODO
+        return json.dumps('your list sir'), 501
 
     @basic
     def ontologies_ilx(self, group, frag_pref_id, extension, db=None):
@@ -688,6 +695,11 @@ class Endpoints(EndBase):
 
     @basic
     def ontologies_contributions(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_spec(self, *args, **kwargs):
         """ needed because ontologies appear under other routes """
         raise NotImplementedError('should not be hitting this')
 
@@ -835,8 +847,13 @@ class Ops(EndBase):
             data=data)
 
         if not resp.ok:
-            # FIXME TODO need to tell the user that login failed
             try:
+                if resp.status_code < 500:
+                    try:
+                        log.debug(resp.json())
+                    except Exception:
+                        pass
+
                 resp.raise_for_status()
             except Exception as e:
                 log.exception(e)
@@ -851,9 +868,7 @@ class Ops(EndBase):
 
     def orcid_landing_login(self):
         orcid_meta = self._orcid_landing()
-        orcid = idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
-        dbstuff = Stuff(self.session)
-        group_resp = dbstuff.getUserByOrcid(orcid)
+        orcid, group_resp = self._orcid_check_already(orcid_meta)
         if not group_resp:
             # TODO options
             # create new account
@@ -869,6 +884,10 @@ class Ops(EndBase):
             return redirect(reiri, code=302)
 
         else:
+            self._orcid_login(orcid, group_resp)
+            return 'orcid-login successful, check your cookies (use requests.Session)'
+
+    def _orcid_login(self, orcid, group_resp):
             group_row = group_resp[0]
 
             _orcid = orcid
@@ -885,11 +904,22 @@ class Ops(EndBase):
                     return __id
 
             fl.login_user(tuser())  # TODO I don't think there is an easy way to remember this stuff
-            return 'orcid-login successful, check your cookies (use requests.Session)'
+
+    def _orcid_check_already(self, orcid_meta):
+        orcid = idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
+        dbstuff = Stuff(self.session)
+        return orcid, dbstuff.getUserByOrcid(orcid)
 
     def orcid_landing_new(self):
         # read from auth at start and isolate somewhere outside this class
         orcid_meta = self._orcid_landing()
+        orcid, group_resp = self._orcid_check_already(orcid_meta)  # FIXME ideally we wouldn't have to do this ... and just handle the error but ...
+
+        if group_resp:
+            self._orcid_login(orcid, group_resp)
+            return redirect(f'/{group_resp}/priv/settings?from=orcid-landing-new')
+            #return 'you already have an InterLex account and have been logged in'
+
         self._insert_orcid_meta(self.session, orcid_meta)
         self._orcid_login_user_temp(orcid_meta)
 
@@ -937,7 +967,7 @@ class Ops(EndBase):
 
         if request.method == 'GET':
             # fine we'll send you a form to fill out
-            _areg = f' You are already registered as {fl.current_user.groupname}. <br>' if already_registered else ''
+            _areg = f' You are already logged in as {fl.current_user.groupname}. <br>' if already_registered else ''
             if orcid is None:
                 orcid_not = ' not'
                 not_orcid_not = 'this is you'
@@ -945,9 +975,9 @@ class Ops(EndBase):
                 orcid_not = ''
                 not_orcid_not = 'not you'
 
+            _suwo = '<a href="/u/ops/orcid-new">Sign up with ORCiD</a> <br>' if orcid is None else ''
             message = f'''
-<a href="/u/ops/orcid-new">Sign up with ORCiD</a> <br>
-
+{_suwo}
 Required: username <br>
 Required: email <br>
 Required: password OR already associated ORCiD account <br>
@@ -965,6 +995,7 @@ receive quite a few during periods of active development.
 <br>
 '''
 
+            _orcid_reg = ' After clicking Register you will be taken to ORCiD to associate your account.' if orcid is None else ''
             password_required = '' if orcid else 'required '
             user_new_form = f'''
 <form action="" method="post" class="user-new">
@@ -992,7 +1023,7 @@ receive quite a few during periods of active development.
   -->
 
   <div class="user-new">
-    <input type="submit" value="Register" /> After clicking Register you will be taken to ORCiD to associate your account. <br>
+    <input type="submit" value="Register" />{_orcid_reg} <br>
   </div>
 
 </form>
@@ -1210,6 +1241,12 @@ receive quite a few during periods of active development.
                         # FIXME likely want a way to show account creation successful or something after redirect
                         return redirect(freiri, 303)
 
+                elif 'from' in request.args:
+                    frm = request.args['from']
+                    if frm == 'orcid-new':
+                        # e.g. someone went to orcid-new directly without coming from anywhere else
+                        return redirect(f'/{username}/priv/settings?from=orcid-new-success', 303)
+
                 return ('Account creation and association with orcid successful. '
                         f'As a final step a verification email has been sent to {email}'), 201
 
@@ -1263,8 +1300,35 @@ receive quite a few during periods of active development.
 
     def email_verify(self):
         """ callback point for email with token not to be confused with priv/email-verify """
-        if 't' not in request.args:
-            return abort(400, 'missing verification token t=')
+        if 't' not in request.args or not request.args['t']:
+            abort(400, 'missing verification token t=')
+
+        def do_log(group, status, err_reason=None):
+            _p_g = 'null' if group is None else group
+            _m_prefix = f':email verification-request :status {status} :token-group {_p_g} '
+            if fl.current_user is not None and fl.current_user.is_authenticated:
+                if not hasattr(fl.current_user, 'groupname'):
+                    # how did we manage this !?
+                    msg = f':session-group null :session-id {fl.current_user.get_id()}'
+                    if hasattr(fl.current_user, 'orcid'):
+                        msg += f' :session-orcid {fl.current_user.orcid}'
+
+                        log_ver.error(_m_prefix + msg)
+                elif group is None:
+                    msg = f':session-group {fl.current_user.groupname}'
+                    if err_reason is not None:
+                        msg += f' :reason "{err_reason}"'
+
+                    log_ver.warning(_m_prefix + msg)
+                elif fl.current_user.groupname != group:
+                    msg = f':session-group {fl.current_user.groupname} :reason group-mismatch'
+                    log_ver.critical(_m_prefix + msg)
+                else:  # fl.current_user.groupname == group:
+                    msg = f':session-group {fl.current_user.groupname}'
+                    log_ver.info(_m_prefix + msg)
+            else:
+                msg = ':session null'
+                log_ver.warning(_m_prefix + msg)
 
         token_str = request.args['t']
         dbstuff = Stuff(self.session)
@@ -1275,35 +1339,20 @@ receive quite a few during periods of active development.
                 and e.orig.diag.context is not None
                 and e.orig.diag.context.startswith('PL/pgSQL function email_verify_complete(text)')):
                 msg = e.orig.diag.message_primary
+                group = e.orig.diag.message_detail if e.orig.diag.message_detail else None
+                self.session.rollback()
+                do_log(group, 'fail', msg)
                 abort(404, msg)
 
-            log.exception(e)
+            log_ver.exception(e)
             abort(404)
 
         if resp:
             self.session.commit()
             group = resp[0][0]
-
-            _m_prefix = f':email verification-request :token-group {group}'
-            if fl.current_user is not None and fl.current_user.is_authenticated:
-               if not hasattr(fl.current_user, 'groupname'):
-                   # how did we manage this !?
-                   msg = f':session-group null :session-id {fl.current_user.get_id()}'
-                   if hasattr(fl.current_user, 'orcid'):
-                       msg += f' :session-orcid {fl.current_user.orcid}'
-
-                   log_ver.error(_m_prefix + msg)
-               elif fl.current_user.groupname != group:
-                   msg = f':session-group {fl.current_user.groupname} :reason group-mismatch'
-                   log_ver.critical(_m_prefix + msg)
-               else:  # fl.current_user.groupname == group:
-                   msg = f':session-group {fl.current_user.groupname}'
-                   log_ver.info(_m_prefix + msg)
-            else:
-                msg = ':session null'
-                log_ver.warning(_m_prefix + msg)
-
-            return f'email verification complete for {group}'
+            do_log(group, 'success')
+            return redirect(302, '/{group}/priv/settings?from=email-verify-success')
+            #return f'email verification complete for {group}'
         else:
             # failure should look like an error not a null value on return so
             # we really should never get here
@@ -1466,7 +1515,6 @@ Alternately send an HTTP GET request with headers containing <br>
 
 class Privu(EndBase):
 
-
     def get_func(self, nodes):
         mapping = {
             'user-new': self.user_new,  # for orcid
@@ -1520,7 +1568,7 @@ class Privu(EndBase):
             frm = request.args['from']
             if frm == 'user-new':
                 # e.g. someone went to user-new directly without coming from anywhere else
-                return redirect(f'/{user}/priv/settings', 302)
+                return redirect(f'/{user}/priv/settings?from=user-new-success', 302)
 
         orcid = 'https://orcid.org/' + orcid_meta['orcid']
         # FIXME vs 303 -> interlex.org ...
@@ -1548,6 +1596,9 @@ class Priv(EndBase):
 
             # all below except noted require fresh login
             '<user>': self.user_role,
+            'user_role_': self.user_role_,
+            '<other_role_group>': self.role_other_group,
+            'role_other_group_': self.role_other_group_,
 
             'password-change': self.password_change,  # tokens cannot be used for this one
             'user-deactivate': self.user_deactivate,
@@ -1574,6 +1625,16 @@ class Priv(EndBase):
         return super().get_func(nodes, mapping=mapping)
 
     @basic
+    def user_role_(self, group, db=None):
+        dbstuff = Stuff(self.session)
+        resp = dbstuff.groupRoles(group)
+        if not resp:
+            return json.dumps([]), 200, ctaj
+        else:
+            # TODO probably condense
+            return json.dumps([[row.user_role, row.groupname] for row in resp]), 200, ctaj
+
+    @basic
     @fl.fresh_login_required
     def user_role(self, group, user, db=None):
         if request.method == 'GET':
@@ -1582,10 +1643,8 @@ class Priv(EndBase):
             pass
         elif request.method == 'DELETE':
             pass
-        elif request.method == 'OPTIONS':
-            pass
         else:
-            return abort(405)
+            abort(405)
 
         breakpoint()
         # FIXME /<group>/priv/role/<user>
@@ -1593,7 +1652,30 @@ class Priv(EndBase):
         # PUT to create or change
         # DELETE to remove record
         # OPTIONS to list possible roles
-        return abort(501)
+        abort(501, 'TODO')
+
+    @basic
+    def role_other_group_(self, group, db=None):
+        dbstuff = Stuff(self.session)
+        resp = dbstuff.groupHasRoles(group)
+        if not resp:
+            return json.dumps([]), 200, ctaj
+        else:
+            # TODO probably condense
+            return json.dumps([[row.user_role, row.groupname] for row in resp]), 200, ctaj
+
+    @basic
+    @fl.fresh_login_required
+    def role_other_group(self, group, other_role_group, db=None):
+        if request.method == 'GET':
+            pass
+        elif request.method == 'DELETE':
+            pass
+        else:
+            abort(405)
+
+        breakpoint()
+        abort(501, 'TODO')
 
     @basic
     def request_ingest(self, group, db=None):
@@ -1707,7 +1789,8 @@ class Priv(EndBase):
     @basic
     def settings(self, group, db=None):
         # TODO can handle logged in user x group membership and role in a similar way
-        recs = self.queries.getUserSettings(group)
+        dbstuff = Stuff(self.session)
+        recs = dbstuff.getUserSettings(group)
         user = [r for r in recs if r.rec_type == 'u'][0]
         emails = [r for r in recs if r.rec_type == 'e']
         keys = [r for r in recs if r.rec_type == 'k']
@@ -2098,6 +2181,54 @@ class Ontologies(Endpoints):
     @basic
     def ontologies_contributions(self, group, db=None):
         return 'TODO list of ontology contributions', 501
+
+    @basic
+    def ontologies_spec(self, group, filename, extension=None, ont_path='', db=None):
+        # the process
+        # get the current head identity
+        # reconstruct the graph at that identity
+        # make the specified changes to the graph
+        # ingest the new graph, pass the current head for identity relations insertion probably wasModifiedFromIdentity or something
+        # update the current head ideantity the new identity
+
+        if request.method == 'GET':
+            return self.ontologies(
+                group, filename, extension=extension,
+                ont_path=ont_path + '/spec', extension=extension, db=db)
+
+        elif request.method == 'POST':
+            # FIXME TODO handle this properly
+            if 'Content-Type' not in request.headers:
+                abort(415)
+
+            ct = request.headers['Content-Type']
+            if ct == 'application/json':
+                if 'title' not in request.json:
+                    abort(422, 'new ontologies minimally need a title')
+
+                title = request.json['title']
+                subjects = request.json['subjects'] if 'subjects' in request.json else []
+            elif ct == 'application/ld+json':
+                breakpoint()
+                abort(501, 'TODO')
+            elif ct == 'text/turtle':
+                breakpoint()
+                abort(501, 'TODO')
+            else:
+                abort(415, ct)
+
+            dbstuff = Stuff(self.session)
+            try:
+                spec_uri = dbstuff.createOntology(group, ont_path)
+            except sa.exc.IntegrityError as e:
+                # TODO make sure it actually already exists in this case
+                abort(409)
+
+            graph, bnp = from_title_subjects_ontspec(spec_uri, title, subjects)
+            dout = ingest_ontspec(graph, bnp, session=self.session)
+
+        elif request.method == 'PATCH':
+            return 'TODO', 501
 
     @basic
     def ontologies(self, group, filename, extension=None, ont_path='', db=None, nocel=False):

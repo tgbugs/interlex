@@ -6,6 +6,10 @@
          'environment-variables': 'INTERLEX_DEBUG',},
      'ilx-pattern': '<regex("((ilx|cde|fde)_[0-9]{7})|(pde_[0-9]{8})"):frag_pref_id>',
 
+     'interlex-api-key': {
+         'default': None,
+         'environment-variables': 'INTERLEX_API_KEY',},
+
      # ports
      'port-api': 8500,
      'port-uri': 8505,

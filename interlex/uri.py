@@ -70,6 +70,7 @@ def uriStructure():
         '*ilx_pattern': ilx_pattern,
         '*ilx_get': ilx_get,
         '*ont_ilx_get': ilx_get,
+        '*ontologies': 'ontologies',
         '*contributions_ont': 'contributions',
         '*external': 'external',  # FIXME TEMP
         '*versions': 'versions',
@@ -80,13 +81,13 @@ def uriStructure():
         return path_names[node] if node in path_names else node
 
     basic = ['*ilx_pattern', 'readable']
-    branches = ['uris', 'curies', 'ontologies', 'versions']  # 'prov'
+    branches = ['uris', 'curies', 'ontologies', '*ontologies', 'versions']  # 'prov'
     compare = ['own', 'diff']
     version_compare = []  # TODO? probably best to deal with the recursion in make_paths
     versioned_ids = basic + ['curies', 'uris']
     intermediate_filename = ['<filename>.<extension>', '<filename>']
     uris_intermediate_filename = ['<filename>.<extension>', '*<uris_filename>']
-    spec_ext = ['spec', 'spec.<extension>']
+    spec_ext = ['spec', 'spec.<extension>']  # FIXME spec is recognized <filename> for some reason? order of loading or something?, looks like this is a common problem
     # reminder: None is used to mark branches that are also terminals
     parent_child = {
         '<group>':             basic + ['*ilx_get', 'lexical'] + branches + compare + [
@@ -107,6 +108,7 @@ def uriStructure():
                                 'orcid-land-change',  # currently not null case
                                 ],
         'priv':                ['role',  # note that priv -> privileged NOT private!
+                                'role-other',  # this the summary of current users role in other groups
                                 'upload',
                                 'request-ingest',
                                 #'ontology-new',  # not clear whether we actually need new-ontology on the api because all new ontologies should be POSTed to their desired uri, the frontend probably needs that though?
@@ -146,7 +148,8 @@ def uriStructure():
                                 'api-token-new',
                                 'api-token-revoke',
                                 ],
-        'role':                ['<user>'],
+        'role':                [None, '<user>'],
+        'role-other':          [None, '<other_role_group>'],  # if the user wants to leave an existing role this is the only way they can do it
         'pulls':               [None, '<pull>'],
         '<pull>':              [None, '*ops-pull', 'review'],
         'reviews':             ['<review>'],
@@ -226,6 +229,8 @@ def uriStructure():
 
                     # priv
                     '<user>': ['GET', 'PUT', 'DELETE'],  # for user roles
+                    '<other_role_group>': ['GET', 'DELETE'],  # for user has role
+
                     'upload':['HEAD', 'POST'],  # FIXME why did this need head?
                     'request-ingest': ['POST'],
 
@@ -270,6 +275,7 @@ _known_default = (
     '<filename_terminal>.<extension>',
     '<word>',
     'contributions',
+    'ontologies',
 
     'settings',
 
@@ -288,12 +294,17 @@ def add_leafbranches(nodes):
         prefix = tuple(nodes[:-2])
         if 'curies' in nodes:
             nodes = prefix + ('curies_',)
-        elif nodes == ['', '<group>', 'ontologies', TERMINAL]:  # only at depth 2
-            nodes = prefix + ('ontologies_',)
+        #elif nodes == ('', '<group>', 'ontologies', TERMINAL):  # only at depth 2
+            #breakpoint()
+            #nodes = prefix + ('ontologies_',)
         elif 'contributions' in nodes:
             nodes = prefix + ('contributions_',)
         elif '*ilx_pattern' in nodes:
             nodes = prefix + ('ilx',)
+        elif 'role' in nodes:
+            nodes = prefix + ('user_role_',)
+        elif 'role-other' in nodes:
+            nodes = prefix + ('role_other_group_',)
         else:
             if not nodes[-2].startswith('<') and not nodes[-2].startswith('*<'):
                 log.debug(f'possibly unhandled leafbranch {nodes}')

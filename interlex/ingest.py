@@ -599,6 +599,7 @@ def natsortlz(s, pat=re.compile(r'([1-9][0-9]*)')):
 def process_triple_seq(triple_seq, serialization_identity=None,
                        metadata_to_fetch=None, metadata_not_to_fetch=None,
                        local_conventions=None,
+                       bound_name_predicate=None,
                        batchsize=None, force=False, debug=False, dout=None):
     # triples_seq should not be a generator because we need to traverse it multiple times ...
     # imagine you go them from somewhere else
@@ -1820,6 +1821,20 @@ def recons_uri(uri_string, name_type='pointer', debug=True):
         breakpoint()
 
     assert resp == redout['graph_combined_local_conventions_identity'], 'oops'
+
+
+def ingest_ontspec(graph, bound_name_predicate, session=None, debug=False):
+    if session is None:
+        raise NotImplementedError('TODO')
+
+    # TODO validate ontspec
+
+    (serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions) = None, None, None, None
+    process_args = (graph, serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions, bound_name_predicate)
+
+    dout = {}
+    do_process_into_session(session, process_triple_seq, *process_args, debug=debug, dout=dout)
+    return dout
 
 
 def ingest_path(path, user, **kwargs):

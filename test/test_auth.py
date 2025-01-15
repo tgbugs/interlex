@@ -27,7 +27,7 @@ class TestAuth(unittest.TestCase):
             int_key = secrets.randbelow(max_30)
             actual_key = int.to_bytes(int_key, 23, byteorder='big')
             k = _gen_key(actual_key)
-            av = f'Bearer: {k}'
+            av = f'Bearer {k}'
             rk = key_from_auth_value(av)
             key, crc = _decompose_key(k, fail=False)
             row = (actual_key, k, av, rk, key, crc)
@@ -43,7 +43,7 @@ class TestAuth(unittest.TestCase):
         bads = []
         for i in range(99999):
             k = gen_key()
-            av = f'Bearer: {k}'
+            av = f'Bearer {k}'
             rk = key_from_auth_value(av)
             if len(k) != 40:
                 bads.append(row)

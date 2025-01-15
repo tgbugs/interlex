@@ -82,7 +82,7 @@ def _decompose_key(raw_key, fail=True):
 
 def key_from_auth_value(auth_value):
     # FIXME TODO must test this, gh impl mentions zero padding which i don't have right now
-    raw_key = auth_value[8:]  # strip 'Bearer '
+    raw_key = auth_value[7:]  # strip 'Bearer '
     _decompose_key(raw_key)
     return raw_key
 
@@ -326,6 +326,8 @@ class Auth:
             _notok = [
                 'logout',
                 'settings',
+                'role',
+                'role-other',
                 'password-change',  # TODO figure out what to do about accounts without email validation
                 'user-deactivate',
                 'orcid-assoc',
@@ -353,9 +355,17 @@ class Auth:
 
         if 'Authorization' in request.headers:
             auth_value = request.headers['Authorization']
-            if request.url_rule.rule == '/<group>/priv/password-change':
-                # early abord, don't bother checking anything
-                msg = 'cannot use token to change password'
+            if (request.url_rule.rule in ('/<group>/priv/password-change', '/<group>/priv/user-deactivate') or
+                request.url_rule.rule.startswith('email-') or
+                request.url_rule.rule.startswith('orcid-')):
+                # auth can only modify at or below its own level since tokens
+                # can be leaked etc. the can only be used to generate new
+                # tokens not do things like add a new email or change the
+                # primary email or orcid because that can allow an account
+                # takeover with nothing but the token
+
+                # early abort, don't bother checking anything
+                msg = 'cannot use token to change password, email, or orcid'
                 abort(401, msg)
         elif li_user is not None and no_token_ok(request):
             # we don't actually check for pending here, we only allow
@@ -417,7 +427,7 @@ class Auth:
                 msg = 'the provided token has been revoked'
                 raise self.RevokedTokenError(request, msg)
 
-            if row.created_datetime + timedelta(seconds=row.lifetime_seconds) >= now:
+            if row.lifetime_seconds is not None and row.created_datetime + timedelta(seconds=row.lifetime_seconds) >= now:
                 # TODO need a way to document how long after
                 # expiration tokens are rotated out
                 msg = 'the provided token has expired'

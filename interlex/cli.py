@@ -9,6 +9,7 @@ Usage:
     interlex sync          [options] [<database>]
     interlex get           [options]
     interlex post ontology [options] <ontology-filename> ...
+    interlex post ontspec  [options] <ont-path> <title> <ont-subject> ...
     interlex post triples  [options] (<reference-name> <triples-filename>) ...
     interlex post curies   [options] [<curies-filename>]
     interlex post curies   [options] (<curie-prefix> <iri-namespace>) ...
@@ -25,6 +26,7 @@ Usage:
     interlex ops password  [options]
     interlex ops resource  [options] <rdf-iri>
     interlex ops ontology  [options] <ontology-filename> ...
+    interlex ops api-key   [options]
 
 Commands:
     server api      start a server running the api endpoint (WARNING: OLD)
@@ -263,8 +265,9 @@ class Post(clif.Dispatcher):
         else:
             group = self.options.group
 
+        from interlex.config import auth
         # FIXME obviously allowing the group name as the default password is unspeakably dumb
-        api_key = os.environ.get('INTERLEX_API_KEY', group)  # FIXME
+        api_key = auth.get('interlex-api-key')  # os.environ.get('INTERLEX_API_KEY', group)  # FIXME
         headers = {'Authorization': 'Bearer ' + api_key}
         if self.options.local:
             from interlex.config import port_uri
@@ -370,6 +373,16 @@ class Post(clif.Dispatcher):
 
         printD(resp.status_code, resp.text)
 
+    def ontspec(self):
+        scheme, host, group, headers = self._post()
+        j = {
+            'title': self.options.title,
+            'subjects': self.options.ont_subject,
+             }
+        url = f'{scheme}://{host}/{group}/ontologies/uris/{self.options.ont_path}/spec'  # use smart endpoint
+        resp = requests.post(url, json=j, headers=headers)
+        breakpoint()
+
     def ontology(self):
         scheme, host, group, headers = self._post()
         for filename in self.options.ontology_filename:
@@ -418,6 +431,20 @@ class Post(clif.Dispatcher):
 class Ops(clif.Dispatcher):
 
     _post = Post._post
+
+    def api_key(self):
+        """ set user api key manually to simplify testing """
+        scheme, host, group, headers = self._post()
+
+        from .core import getScopedSession
+        from .dbstuff import Stuff
+        from .config import auth
+        key = auth.user_config.secrets('interlex', group, 'test')
+        session = getScopedSession(echo=False)
+        dbstuff = Stuff(session)
+        dbstuff.insertApiKey(group, key, 'personal', 'settings-all')
+        key = None
+        session.commit()
 
     def resource(self):
         # direct call to load a resource for simpler debug

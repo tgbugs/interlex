@@ -250,15 +250,17 @@ CREATE OR REPLACE FUNCTION email_verify_complete(token text) RETURNS text AS $em
 DECLARE
 out_groupname text;
 BEGIN
+
+    SELECT g.groupname INTO out_groupname
+    FROM groups AS g
+    JOIN users AS u ON u.id = g.id
+    JOIN emails_validating AS ev ON ev.user_id = u.id AND ev.token = email_verify_complete.token;
+
     IF EXISTS (
        SELECT * FROM emails_validating AS ev
        WHERE ev.token = email_verify_complete.token
        AND CURRENT_TIMESTAMP > ev.created_datetime + make_interval(secs := ev.delay_seconds)
        AND CURRENT_TIMESTAMP < ev.created_datetime + make_interval(secs := ev.lifetime_seconds)) THEN
-           SELECT g.groupname INTO out_groupname
-           FROM groups AS g
-           JOIN users AS u ON u.id = g.id
-           JOIN emails_validating AS ev ON ev.user_id = u.id AND ev.token = email_verify_complete.token;
 
            WITH evs AS (SELECT * FROM emails_validating AS ev WHERE ev.token = email_verify_complete.token)
            UPDATE user_emails AS ue SET email_validated = CURRENT_TIMESTAMP FROM evs WHERE ue.email = evs.email AND ue.user_id = evs.user_id;
@@ -271,12 +273,12 @@ BEGIN
     AND CURRENT_TIMESTAMP <= ev.created_datetime + make_interval(secs := ev.delay_seconds)) THEN
         -- <= to ensure that attempts to start and complete in the same transaction fail for an explicable reason
         -- also because the token is only valid AFTER time, not at the same moment
-        RAISE EXCEPTION 'too early, verification link not active';
+        RAISE EXCEPTION 'too early, verification link not active' USING DETAIL = out_groupname;
     ELSIF EXISTS (
     SELECT * FROM emails_validating AS ev
     WHERE ev.token = email_verify_complete.token
     AND CURRENT_TIMESTAMP > ev.created_datetime + make_interval(secs := ev.lifetime_seconds)) THEN
-        RAISE EXCEPTION 'too late, verification link has expired';
+        RAISE EXCEPTION 'too late, verification link has expired' USING DETAIL = out_groupname;
     ELSIF NOT EXISTS (SELECT * FROM emails_validating AS ev WHERE ev.token = email_verify_complete.token) THEN
         RAISE EXCEPTION 'unknown email verification token';
     ELSE
@@ -348,11 +350,28 @@ CREATE TABLE user_permissions(
        CHECK (group_id != user_id),  -- that's what own_role is for
        user_role group_role NOT NULL,
        CHECK ((user_role > 'admin' AND user_role <= 'view') OR user_role = 'admin' AND group_id = 0),
-       -- TODO references users vs references new_users due to need to erase users?
        CONSTRAINT pk__user_permissions PRIMARY key (group_id, user_id),  -- users can only have one role at a time
        CONSTRAINT fk__user_permissions__group_id__groups FOREIGN key (group_id) REFERENCES groups (id) match simple,
        CONSTRAINT fk__user_permissions__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
 );
+
+CREATE TABLE user_permission_log(
+       -- TODO trigger to insert
+       group_id integer references groups (id),
+       user_id integer references users (id),
+       foreign key (group_id, user_id) references user_permissions (group_id, user_id),
+       user_role group_role,
+       set_datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+       primary key (group_id, user_id, user_role, set_datetime)
+);
+
+CREATE FUNCTION log_user_permissions() RETURNS trigger AS $$
+BEGIN
+    INSERT INTO user_permissions_log (group_id, user_id, user_role) VALUES (NEW.group_id, NEW.user_id, NEW.user_role);
+END;
+$$ language plpgsql;
+
+CREATE TRIGGER log_user_permissions AFTER INSERT OR UPDATE ON user_permissions FOR EACH ROW EXECUTE PROCEDURE log_user_permissions();
 
 CREATE TYPE term_user_roles AS ENUM (
 'editor', -- final sign off can merge even if does not have group level permissions
@@ -553,15 +572,68 @@ CREATE TABLE user_failover_ranks(
        CONSTRAINT un__user_failover_ranks UNIQUE (user_id, group_id),
        CONSTRAINT fk__user_failover_ranks__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple,
        CONSTRAINT fk__user_failover_ranks__other_user_id__users FOREIGN key (group_id) REFERENCES users (id) match simple
-
 );
 
-CREATE type event_type AS enum ('pull requests',
-                                -- new term requests vs include requests vs modification requests?
-                                'review requests',
-                                'changes to terms i track',
-                                'changes to ontologies i track'
-                                );
+CREATE type event_type AS enum (
+/* -- event grammar (ish)
+-- TODO are changes to existing ids just changes or do they need their own subcategory?
+
+meta-event: request comment change new-variant new-existing
+process: pull review committee resources
+resources: entity ontology term-in-ontology ontology-has-term
+role: create edit curate review follow
+role-entities: map-to (user-uri -> entity)
+role-ontologies: import (ontology -> ontology)
+scope: immediate transitive
+
+*/
+'new pull requests to perspectives i curate',
+-- new term requests vs include requests vs modification requests?
+'new review requests',
+'new committees to sit on',
+'comments on pull requests',
+'comments on pull reviews',
+'changes to terms i map to',
+'changes to terms i create',
+'changes to terms i curate',
+'changes to terms i review',
+'changes to terms i follow',
+'changes to terms in ontologies i create',
+'changes to terms in ontologies i curate',
+'changes to terms in ontologies i review',
+'changes to terms in ontologies i follow',
+'changes to ontologies i import',
+'changes to ontologies i create',
+'changes to ontologies i curate',
+'changes to ontologies i review',
+'changes to ontologies i follow',
+'derp'
+);
+
+CREATE TABLE event_types ( -- TODO properly factored, TODO for notification configuration logic
+       event integer,
+       process integer,
+       resource integer,
+       urole integer,
+       escope integer
+);
+
+/*
+review dashbaord
+committe dashboard
+
+follow
+transitive closure from terms subClassOf only, walk up the tree and fire off if you hit, but whose subclassof
+ontologies
+user uris mapped terms
+user variant terms
+user followed terms
+
+parent term updated if the identity of upstream changes due to some other merge
+need a view up all upstream changes
+
+TODO need to make sure that keator's endpoints will have replacements
+*/
 
 CREATE type notification_pref AS enum ('email', 'InterLex feed');
        -- null/none is not recorded and simply removed from the table

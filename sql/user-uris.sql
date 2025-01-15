@@ -98,3 +98,67 @@ CREATE TABLE curies(
 -- CREATE MATERIALIZED VIEW current_curies AS
 --        SELECT t.o_lit, t.p FROM triples AS t JOIN triple_qualifiers AS tq JOIN current_qualifiers AS cq
 --        ON cq.qualifier_id on tq.triple_id
+
+CREATE TABLE ontologies(
+       -- internal complement to the names table
+       -- TODO this is woefully incomplete
+       group_id integer references groups (id),
+       ont_path text, -- we call these reference names elsewhere, XXX however they are sandboxed in /ontologies/uris/ NOT /ontologies/
+       PRIMARY KEY (group_id, ont_path),
+       spec_head_identity bytea, -- point to the identity that contains the latest head info -- TODO trigger to prevent renull after first insert, we don't need to e.g. start from the null identity because we can check all identities that include the type triple identity where there is no identity relation to a previous version
+       -- identity relations should be able to hold the previous version of relation i think ?
+       spec uri unique not null, -- the spec will be in the triples table and they will include the list of terms
+       CHECK (uri_host(spec) = reference_host() AND uri_path(spec) = ont_path || '/spec'),
+       iri uri -- in the event that it is different
+);
+
+CREATE TYPE follow_types AS ENUM (
+-- 'import', -- ont -> ont XXX i think this is also a derived concept
+-- 'map', -- uri -> ilx XXX i think this is also a derived concept
+-- 'use',  ont -> ilx
+-- 'is-used', ilx -> ont TODO ontology-in-which-term-is-used-changes is a bit different in meaning
+
+-- term-in-ontology and ontology-has-term are derived otherwise way too much data
+
+'create', -- bulk upload doesn't count as creating terms for prov purposes, it is creating the whole ontology that maps back
+'edit',
+'curate',
+'review',
+'follow', -- receive notifications
+'bookmark' -- we don't notify for these, like github stars, but preferably not displayed publicly on resource page because used in ontology is a much stronger signal
+
+);
+
+CREATE TYPE follow_target_types AS ENUM (
+'entity-not-property', -- any rdf thing that is not by default a predicate or owl property ...
+'property', -- these are used in terms like terms are in ontologies
+'ontology',
+'pull',
+'review',
+'committee',  -- following commitee votes is useful though votes
+'user', -- very much not sure about this one, i think we allow follow but not notify
+'org'
+);
+
+CREATE TYPE notify_on AS ENUM (
+'new', -- new pull request, new term subClassOf, new review request, new committee request
+'comment',
+'change',
+'fork', -- new variant for terms fork for ontologies
+'map' -- includes owl:imports, new user uri mapping, new existing id mapping, technically subPropertyOf change
+);
+
+CREATE TABLE follows (
+       -- TODO we also use this as an inverted(ish) index to simplify automatic follows
+       -- TODO see if the auto follows should go somewhere else? probably not, because
+       -- what we will do is mask out ones that user's don't want to execute
+       user_id integer references users (id),
+       follow_target uri, -- FIXME TODO do we put target_type here explicitly beyond what is in triples? i think yes?
+       primary key (user_id, follow_target),
+       target_type follow_target_types not null,
+       follow_type follow_types not null,
+       follow_scope uri,  -- initially limited to subClassOf and owl:imports, if null it is not transitive
+       notify notify_on,
+       CHECK (((target_type != 'user' and target_type != 'org' and follow_type != 'bookmark') or notify is null)) -- block notify in these cases
+);
+

@@ -21,7 +21,7 @@ from ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
 from pyontutils.core import makeGraph, OntId, OntGraph
 from pyontutils.utils import TermColors as tc, injective_dict
 from pyontutils.namespaces import PREFIXES as uPREFIXES
-from pyontutils.namespaces import ilxtr, rdf, rdfs, owl, oboInOwl, NIFRID
+from pyontutils.namespaces import ilxtr, rdf, rdfs, owl, oboInOwl, NIFRID, ILX
 from pyontutils.combinators import annotation
 from pyontutils.identity_bnode import IdentityBNode, IdLocalBNode
 from interlex import config
@@ -514,3 +514,17 @@ def run_api():
 
 def run_curies():
     return server_curies(db=SQLAlchemy())
+
+
+def from_title_subjects_ontspec(spec_uri, title, subjects):
+    s = rdflib.URIRef(spec_uri)
+    # FIXME other settings
+    bnp = ilxtr.OntologySpec # FIXME type uri should use the ilx.type or whatever it was i created for that
+    g = OntGraph(bind_namespaces='none')
+    g.namespace_manager.populate_from({'rdf': str(rdf), 'ilxtr': str(ilxtr), 'ILX': str(ILX)})
+    g.add((s, rdf.type, bnp))
+    for o in subjects:
+        # FIXME TODO validation etc.
+        g.add((s, ilxtr['include-subject'], URIRef(o)))
+
+    return g, bnp

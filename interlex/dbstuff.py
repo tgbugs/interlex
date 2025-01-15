@@ -233,3 +233,113 @@ where g.groupname in :groups and p.user_id = idFromGroupname(:user)
             # we clean up the tokens from the database
             "and g.own_role < 'pending'")
         return list(self.session_execute(sql, args))
+
+    def groupHasRoles(self, group):
+        # TODO include term level permissions
+        args = dict(group=group)
+        sql = '''
+select up.user_role, g.groupname
+from user_permissions as up
+join groups as g on up.group_id = g.id
+where up.user_id = idFromGroupname(:group)
+'''
+        return list(self.session_execute(sql, args))
+
+    def groupRoles(self, group):
+        args = dict(group=group)
+        sql = '''
+select up.user_role, g.groupname
+from user_permissions as up
+join groups as g on up.user_id = g.id
+where up.group_id = idFromGroupname(:group)
+'''
+        return list(self.session_execute(sql, args))
+
+    def getOrgSettings(self, group):
+        pass
+
+    def getUserSettings(self, group):
+        # FIXME move to dbstuff
+        args = dict(group=group)
+        sql = '''
+SELECT 'u' as rec_type,
+g.groupname,
+g.own_role,
+u.orcid,
+
+null as email,
+null as email_primary,
+null as email_validated,
+
+null::text as key,
+null::key_types as key_type,
+null::key_scopes as key_scope,
+null::TIMESTAMP as created_datetime,
+null::integer as lifetime_seconds,
+null::TIMESTAMP as revoked_datetime
+
+FROM groups AS g JOIN users AS u ON u.id = g.id
+WHERE g.id = idFromGroupname(:group)
+
+UNION
+
+SELECT 'e' as rec_type,
+null,
+null,
+null,
+
+ue.email,
+ue.email_primary,
+ue.email_validated,
+
+null::text,
+null::key_types,
+null::key_scopes,
+null::TIMESTAMP,
+null::integer,
+null::TIMESTAMP
+
+FROM user_emails AS ue
+WHERE ue.user_id = idFromGroupname(:group)
+
+UNION
+
+SELECT 'k' as rec_type,
+null,
+null,
+null,
+
+null,
+null,
+null,
+
+ak.key,
+ak.key_type,
+ak.key_scope,
+ak.created_datetime,
+ak.lifetime_seconds,
+ak.revoked_datetime
+
+FROM api_keys AS ak
+WHERE ak.user_id = idFromGroupname(:group)
+'''
+        return list(self.session_execute(sql, args))
+
+    def getGroupOntologies(self, group):
+        args = dict(group=group)
+        # TODO big major todo
+        sql = '''
+select * from ontologies as o
+join triples as t on o.spec = t.s
+where o.group_id = idFromGroupname(:group)
+'''
+        return list(self.session_execute(sql, args))
+
+    def createOntology(self, reference_host, group, path):
+        spec = f'http://{reference_host}/{group}/ontologies/uris{path}/spec'
+        args = dict(group=group, path=path, spec=spec)
+        sql = '''
+INSERT INTO ontologies (group_id, ont_path, spec) VALUES
+(:group, :path, :spec) RETURNING spec
+'''
+        return list(self.session_execute(sql, args))
