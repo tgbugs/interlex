@@ -878,20 +878,30 @@ where n.name in :uris
         resp = list(self.session_execute(sql, args))
         return resp
 
+    _gclc_stuff = '''
+), gclc_idtys_direct as (
+  select ids.identity
+  from identities as ids
+  join name_to_identity as nti on nti.identity = ids.identity
+  where ids.type = 'graph_combined_local_conventions' and nti.type = :type and nti.name = :name
+  order by first_seen desc limit 1
+), gclc_idtys as (
+  select ids.identity
+  from identity_relations as irs
+  right join identities as ids on irs.o = ids.identity
+  where ids.identity in (select * from gclc_idtys_direct) or
+        irs.p = 'parsedTo' and(ids.type = 'graph_combined_local_conventions') and irs.s in (select * from ser_idtys)
+'''
     def getLatestIdentityByName(self, name, type='bound'):
         args = dict(name=name, type=type)
-        sql = '''
+        sql = f'''
 with ser_idtys as (
   select ids.identity
   from identities as ids
   join name_to_identity as nti on nti.identity = ids.identity
-  where ids.type = 'serialization' and nti.type = :type and nti.name::text = :name
+  where ids.type = 'serialization' and nti.type = :type and nti.name = :name
   order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
-), gclc_idtys as (
-  select irs.o
-  from identity_relations as irs
-  join identities as ids on irs.o = ids.identity
-  where irs.p = 'parsedTo' and(ids.type = 'graph_combined_local_conventions') and irs.s in (select * from ser_idtys)
+{self._gclc_stuff}
 )
 select * from gclc_idtys
 '''
@@ -906,7 +916,7 @@ select * from gclc_idtys
   select ids.identity
   from identities as ids
   join name_to_identity as nti on nti.identity = ids.identity
-  where ids.type = 'serialization' and nti.type = :type and nti.name::text = :name
+  where ids.type = 'serialization' and nti.type = :type and nti.name = :name
   order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
 '''
 
@@ -918,11 +928,7 @@ select * from gclc_idtys
         sql = f'''
 with ser_idtys as (
 {_sql_ser_idtys}
-), gclc_idtys as (
-  select irs.o
-  from identity_relations as irs
-  join identities as ids on irs.o = ids.identity
-  where irs.p = 'parsedTo' and(ids.type = 'graph_combined_local_conventions') and irs.s in (select * from ser_idtys)
+{self._gclc_stuff}
 ), lc_idtys as (
   select irs.o
   from identity_relations as irs
@@ -932,7 +938,6 @@ with ser_idtys as (
 select c.curie_prefix, c.iri_namespace
 from curies as c
 where c.local_conventions_identity in (select * from lc_idtys)
-
 '''
         resp = list(self.session_execute(sql, args))
         return resp
@@ -951,7 +956,7 @@ where c.local_conventions_identity in (select * from lc_idtys)
   select ids.identity
   from identities as ids
   join name_to_identity as nti on nti.identity = ids.identity
-  where ids.type = 'serialization' and nti.type = :type and nti.name::text = :name
+  where ids.type = 'serialization' and nti.type = :type and nti.name = :name
   order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
 '''
 
@@ -959,14 +964,11 @@ where c.local_conventions_identity in (select * from lc_idtys)
             args = dict(serialization_identity=serialization_identity)
             _sql_ser_idtys = 'select :serialization_identity'
 
+
         _sql_common = f'''
 with ser_idtys as (
 {_sql_ser_idtys}
-), gclc_idtys as (
-  select irs.o
-  from identity_relations as irs
-  join identities as ids on irs.o = ids.identity
-  where irs.p = 'parsedTo' and(ids.type = 'graph_combined_local_conventions') and irs.s in (select * from ser_idtys)
+{self._gclc_stuff}
 ), gc_idtys as (
   select irs.o
   from identity_relations as irs
@@ -1180,6 +1182,49 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
         resp = list(self.session_execute(self.sql.getById, args))
         return resp
 
+    def getGraphFromSubjects(self, subjects, at_identity=None, expansion_rules=None):
+        # TODO yeah ... at_identity is why we are still going to need something
+        # closer to git for constructing theh total history for perspectives
+        args = dict(subjects=tuple(subjects))
+        sql = '''
+select
+t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity
+-- sr.replica as subgraph_replica, sd.object_subgraph_identity as object_subgraph_identity, sd.object_replica as object_replica
+from triples as t
+where t.s in :subjects and t.triple_identity is not null
+
+union
+
+select
+t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity
+from triples as ta
+join triples as t on t.subgraph_identity = ta.subgraph_identity
+where ta.s in :subjects
+and ta.subgraph_identity is not null
+and t.subgraph_identity is not null
+'''
+        return list(self.session_execute(sql, args))
+
+    def generateOntologyFromSpec(self, spec):
+        # TODO reduce roundtrips to 1 and deal with history/versions
+
+        # 1. get latest head identity
+        # 2. ...
+        # 3. profit!
+
+        #li = self.getLatestIdentityByName(spec)  # already done internally in getGraphByName
+        spec_graph_rows = list(self.getGraphByName(spec))  # XXX TODO for now there should be no blanknodes in here
+        pred = ilxtr['include-subject']  # FIXME TODO ilxr:includesSubject -> current ilx for includesTerm
+        spred = str(pred)
+        # TODO other config options if relevant
+        subjects = [r.o for r in spec_graph_rows if r.p == spred]
+        # TODO also pull dc title over and TODO maybe even insert it into the ontology metadata record itself
+        graph_rows = self.getGraphFromSubjects(subjects)
+        return graph_rows
+        #breakpoint()
+        #args = dict(name=spec)
+        #return list(self.session_execute(sql, args))
+
     def getUnmappedByGroupUriPath(self, group, path, read_private, redirect=False):
         # XXX this should only be called via the api if the auth layer
         # has passed because the user matches or the user has been
@@ -1291,19 +1336,3 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
                                                 'WITH ORDINALITY id',
                                                 dict(triples_ids=list(triples_ids))):
             yield identity
-
-    def getConstraint(self, schema, table, constraint):
-        # https://dba.stackexchange.com/a/214877
-        args = dict(schema=schema, table=table, constraint=constraint)
-        sql = '''
-SELECT con.conname, pg_get_constraintdef(con.oid)
-       FROM pg_catalog.pg_constraint con
-            INNER JOIN pg_catalog.pg_class rel
-                       ON rel.oid = con.conrelid
-            INNER JOIN pg_catalog.pg_namespace nsp
-                       ON nsp.oid = connamespace
-       WHERE nsp.nspname = :schema
-             AND rel.relname = :table
-             AND con.conname = :constraint
-'''
-        return list(self.session_execute(sql, args))

@@ -124,6 +124,7 @@ INSERT INTO groups (own_role, groupname)
                          'dq',  -- deleteQualifier
                          'eq',  -- excludeQualifier (aka dq)
 
+                         'dns', -- used to simplify resolution to non-interlex iris with point in time support if we need to, simplifies curie redirect
                          'api',
                          'read',
                          'readonly',

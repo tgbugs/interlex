@@ -1,9 +1,11 @@
 import unittest
+import pytest
 import requests
+import secrets
 from pyontutils.ontutils import url_blaster
 from interlex.uri import uriStructure, run_uri
 from interlex.core import make_paths, remove_terminals
-from interlex.config import ilx_pattern
+from interlex.config import ilx_pattern, auth
 from interlex.config import test_host, test_port
 from interlex.utils import log
 
@@ -83,7 +85,7 @@ class RouteTester:
 
     @classmethod
     def setUpClass(cls):
-        cls.app = run_uri()
+        cls.app = run_uri(echo=True)
         cls.client = cls.app.test_client()
         cls.runner = cls.app.test_cli_runner()
 
@@ -175,6 +177,38 @@ class TestRoutes(RouteTester, unittest.TestCase):
         url = f'{self.prefix}/base/lexical/liver'
         resp = self.get(url)
         assert self.host in resp.url
+
+    def test_post_ontspec(self):
+        self.app.debug = True
+        client = self.app.test_client()
+        tuser = 'tgbugs'  # FIXME
+        token = auth.user_config.secrets('interlex', tuser, 'test')
+        headers = {'Authorization': f'Bearer {token}'}
+        data = {'title': 'test ontology',
+                'subjects': [
+                    #'http://uri.interlex.org/base/ilx_0101431',
+                    #'http://uri.interlex.org/base/ilx_0101432',
+                    #'http://uri.interlex.org/base/ilx_0101433',
+                    #'http://purl.obolibrary.org/obo/UBERON_0000955',
+                    'http://purl.obolibrary.org/obo/BFO_0000001',
+                    'http://purl.obolibrary.org/obo/IAO_0000001',
+                ]}
+        # FIXME TODO somehow looking at this I'm seeing that if we don't already have it we need
+        # to ensure that we don't wind up with duplicate ontologies all having a single subject in them
+        fname = 'test-' + secrets.token_hex(6)
+        ont_url = f'{self.prefix}/{tuser}/ontologies/uris/{fname}'
+        url = ont_url + '/spec'
+        resp = client.post(url, json=data, headers=headers)
+        if resp.location is not None:
+            client2 = self.app.test_client()
+            resp2 = client2.get(resp.location)
+            client3 = self.app.test_client()
+            #resp3 = client3.get(url + '.html')  # FIXME .html breaks url matcher TODO
+            resp3 = client3.get(url, headers={'Accept': 'text/html'})
+
+        with self.app.app_context():
+            breakpoint()
+            ''
 
 
 class TestApiDocs(RouteTester, unittest.TestCase):

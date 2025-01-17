@@ -108,9 +108,25 @@ CREATE TABLE ontologies(
        spec_head_identity bytea, -- point to the identity that contains the latest head info -- TODO trigger to prevent renull after first insert, we don't need to e.g. start from the null identity because we can check all identities that include the type triple identity where there is no identity relation to a previous version
        -- identity relations should be able to hold the previous version of relation i think ?
        spec uri unique not null, -- the spec will be in the triples table and they will include the list of terms
-       CHECK (uri_host(spec) = reference_host() AND uri_path(spec) = ont_path || '/spec'),
+       CHECK (uri_host(spec) = reference_host()), -- AND position('/ontologies/uris' || ont_path || '/spec' in uri_path(spec)) is not null), -- now in trigger where we can check groupname
        iri uri -- in the event that it is different
 );
+
+CREATE OR REPLACE FUNCTION ontology_group_spec_check() RETURNS trigger AS $$
+DECLARE
+groupname text;
+recons text;
+BEGIN
+    SELECT g.groupname INTO groupname FROM groups AS g WHERE g.id = NEW.group_id;
+    recons := '/' || groupname || '/ontologies/uris' || NEW.ont_path || '/spec';
+    IF (groupname IS NULL OR recons != uri_path(NEW.spec)) THEN
+       RAISE EXCEPTION 'spec uri does not match recons uri % != %', NEW.spec, recons;
+    END IF;
+    RETURN NEW;
+END;
+$$ language plpgsql;
+
+CREATE TRIGGER ontology_group_spec_check BEFORE INSERT ON ontologies FOR EACH ROW execute procedure ontology_group_spec_check();
 
 CREATE TYPE follow_types AS ENUM (
 -- 'import', -- ont -> ont XXX i think this is also a derived concept

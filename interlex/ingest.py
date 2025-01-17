@@ -599,7 +599,6 @@ def natsortlz(s, pat=re.compile(r'([1-9][0-9]*)')):
 def process_triple_seq(triple_seq, serialization_identity=None,
                        metadata_to_fetch=None, metadata_not_to_fetch=None,
                        local_conventions=None,
-                       bound_name_predicate=None,
                        batchsize=None, force=False, debug=False, dout=None):
     # triples_seq should not be a generator because we need to traverse it multiple times ...
     # imagine you go them from somewhere else
@@ -646,7 +645,8 @@ def process_triple_seq(triple_seq, serialization_identity=None,
 
     if serialization_identity is not None:
         yield from process_serialization(serialization_identity, record_count)
-        yield from process_name_metadata(serialization_identity, metadata_to_fetch, metadata_not_to_fetch)
+        yield from process_name_metadata(metadata_to_fetch, metadata_not_to_fetch,
+                                         serialization_identity=serialization_identity,)
         yield None, None
 
     g_name = sorted([(s, p, o) for s, p, o in triple_seq if not isinstance(s, rdflib.BNode) and not isinstance(o, rdflib.BNode)], key=kname)
@@ -691,6 +691,8 @@ def process_triple_seq(triple_seq, serialization_identity=None,
         local_conventions_identity,
         serialization_identity,
         record_count,
+        metadata_to_fetch,
+        metadata_not_to_fetch,
         dout=dout)
     yield None, None
 
@@ -764,7 +766,8 @@ def process_prepared(path, serialization_identity, metadata_to_fetch, metadata_n
     record_count = local_conventions_count + triple_count
 
     yield from process_serialization(serialization_identity, record_count)
-    yield from process_name_metadata(serialization_identity, metadata_to_fetch, metadata_not_to_fetch)
+    yield from process_name_metadata(metadata_to_fetch, metadata_not_to_fetch,
+                                     serialization_identity=serialization_identity,)
     yield None, None
 
     if dout is None:
@@ -830,7 +833,15 @@ def process_serialization(serialization_identity, record_count):
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 7 */', idents, ocdn)
 
 
-def process_name_metadata(serialization_identity, metadata_to_fetch, metadata_not_to_fetch):
+def process_name_metadata(metadata_to_fetch,
+                          metadata_not_to_fetch,
+                          serialization_identity=None,
+                          graph_combined_local_conventions_identity=None,):
+    """ if we have serialization_identity we run before ingest
+        otherwise run after with gclc """
+    if serialization_identity is not None and graph_combined_local_conventions_identity is not None:
+        raise TypeError('only one of si or gclci should be provided')
+
     log.debug('start names and metadata')
     # name + resolution chain
     # bound name
@@ -871,17 +882,26 @@ def process_name_metadata(serialization_identity, metadata_to_fetch, metadata_no
         # FIXME TODO consider whether we want to differentiate the type for
         # the name that was the input name
         name_rows.extend(names)
-        name_to_idents.extend([(name, serialization_identity, 'pointer') for name in names])
+        if serialization_identity is not None:
+            name_to_idents.extend([(name, serialization_identity, 'pointer') for name in names])
+        elif graph_combined_local_conventions_identity is not None:
+            name_to_idents.extend([(name, graph_combined_local_conventions_identity, 'pointer') for name in names])
 
         bound_name = metadata.identifier_bound
         if bound_name:
             name_rows.append(bound_name)
-            name_to_idents.append((bound_name, serialization_identity, 'bound'))
+            if serialization_identity is not None:
+                name_to_idents.append((name, serialization_identity, 'bound'))
+            elif graph_combined_local_conventions_identity is not None:
+                name_to_idents.append((name, graph_combined_local_conventions_identity, 'bound'))
 
         bound_version_name = metadata.identifier_version
         if bound_version_name:
             name_rows.append(bound_version_name)
-            name_to_idents.append((bound_version_name, serialization_identity, 'bound_version'))
+            if serialization_identity is not None:
+                name_to_idents.append((bound_version_name, serialization_identity, 'bound_version'))
+            elif graph_combined_local_conventions_identity is not None:
+                name_to_idents.append((bound_version_name, graph_combined_local_conventions_identity, 'bound_version'))
 
         if name != bound_name and name != bound_version_name:
             if bound_name in names:
@@ -962,23 +982,28 @@ def process_name_metadata(serialization_identity, metadata_to_fetch, metadata_no
                 ('bnode_condensed', bnode_condensed, bnode_record_count),
             ))
 
+            si_or_gclc_identity = serialization_identity or graph_combined_local_conventions_identity
+            if si_or_gclc_identity:
+                irels.extend(
+                    ((si_or_gclc_identity, 'hasMetadataGraph', graph),
+                     (si_or_gclc_identity, 'hasMetadataGraph', combined),
+                     ))
+
             irels.extend(
-                ((serialization_identity, 'hasMetadataGraph', graph),
-                (serialization_identity, 'hasMetadataGraph', combined),
-                (graph, 'hasEquivalent', combined),
+                ((graph, 'hasEquivalent', combined),
 
-                (graph, 'hasMetadataRecord', embedded),
-                (embedded, 'hasCondensed', condensed),
+                 (graph, 'hasMetadataRecord', embedded),
+                 (embedded, 'hasCondensed', condensed),
 
-                (combined, 'hasNamedGraph', named),
-                (combined, 'hasBnodeGraph', bnode),
-                (named, 'hasNamedRecord', named_embedded),
-                (named_embedded, 'hasCondensed', named_condensed),
-                (bnode, 'hasBnodeRecord', bnode_condensed),  # XXX might miss free but dedupe should cover it?
-                # FIXME if this is not truncated then bnode_condensed
-                # will be a subgraph identity, if it is truncated then
-                # we have map metadata_graph_combined to truncated_metadata_graph_combined
-                # i think going via bound name will work
+                 (combined, 'hasNamedGraph', named),
+                 (combined, 'hasBnodeGraph', bnode),
+                 (named, 'hasNamedRecord', named_embedded),
+                 (named_embedded, 'hasCondensed', named_condensed),
+                 (bnode, 'hasBnodeRecord', bnode_condensed),  # XXX might miss free but dedupe should cover it?
+                 # FIXME if this is not truncated then bnode_condensed
+                 # will be a subgraph identity, if it is truncated then
+                 # we have map metadata_graph_combined to truncated_metadata_graph_combined
+                 # i think going via bound name will work
 
                 ))
 
@@ -1016,6 +1041,8 @@ def process_post(
         local_conventions_identity=None,
         serialization_identity=None,
         record_count=None,
+        metadata_to_fetch=None,
+        metadata_not_to_fetch=None,
         dout=None,):
 
     if dout is None:
@@ -1037,7 +1064,12 @@ def process_post(
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */', idents, ocdn)
     yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
 
-    if serialization_identity is not None:
+    if serialization_identity is None:
+        yield from process_name_metadata(
+            metadata_to_fetch, metadata_not_to_fetch,
+            graph_combined_local_conventions_identity=graph_combined_local_conventions_identity)
+
+    else:
         # serialization should be inserted last and separately
         # irels in particular need to be separate to detect if
         # the identity function changed (by accident)
@@ -1823,17 +1855,25 @@ def recons_uri(uri_string, name_type='pointer', debug=True):
     assert resp == redout['graph_combined_local_conventions_identity'], 'oops'
 
 
-def ingest_ontspec(graph, bound_name_predicate, session=None, debug=False):
+def ingest_ontspec(graph, session=None, debug=False):
     if session is None:
         raise NotImplementedError('TODO')
 
     # TODO validate ontspec
 
-    (serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions) = None, None, None, None
-    process_args = (graph, serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions, bound_name_predicate)
+    g = graph.__class__()
+    g.metadata_type_markers = graph.metadata_type_markers
+    g.namespace_manager.populate_from(graph)
+    g.populate_from_triples(graph.metadata())
+    metadata_to_fetch = OntMetaIri(g.boundIdentifier)
+    def nofetch(*args, **kwargs): return
+    metadata_to_fetch.data_next = nofetch
+    metadata_to_fetch._graph = g
+    (serialization_identity, metadata_not_to_fetch, local_conventions) = None, None, graph.namespace_manager
+    process_args = (graph, serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions)
 
     dout = {}
-    do_process_into_session(session, process_triple_seq, *process_args, debug=debug, dout=dout)
+    do_process_into_session(session, process_triple_seq, *process_args, commit=False, close=False, debug=debug, dout=dout)
     return dout
 
 

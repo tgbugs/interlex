@@ -63,12 +63,18 @@ def uriStructure():
         '*priv': 'priv',
         '*email-verify': 'email-verify',
         '*ops-pull': 'ops',
+        '*spec': 'spec',
+        '*spec.<extension>': 'spec.<extension>',
+        '*dns_ont': 'dns',
+        '*<path:dns_ontpath>': '<path:ont_path>',
+        '*dns_version': 'version',
         '*uris_ont': 'uris',
         '*uris_version': 'version',
         '*<uris_filename>': '<filename>',
         '*<path:uris_ont_p>': '<path:ont_path>',
         '*ilx_pattern': ilx_pattern,
         '*ilx_get': ilx_get,
+        '*ont_ilx_pattern': ilx_pattern,
         '*ont_ilx_get': ilx_get,
         '*ontologies': 'ontologies',
         '*contributions_ont': 'contributions',
@@ -88,6 +94,7 @@ def uriStructure():
     intermediate_filename = ['<filename>.<extension>', '<filename>']
     uris_intermediate_filename = ['<filename>.<extension>', '*<uris_filename>']
     spec_ext = ['spec', 'spec.<extension>']  # FIXME spec is recognized <filename> for some reason? order of loading or something?, looks like this is a common problem
+    ilx_spec_ext = ['*spec', '*spec.<extension>']
     # reminder: None is used to mark branches that are also terminals
     parent_child = {
         '<group>':             basic + ['*ilx_get', 'lexical'] + branches + compare + [
@@ -163,17 +170,24 @@ def uriStructure():
         'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
         '<epoch_verstr_id>':   versioned_ids + version_compare,
         #'ontologies':          [2, ilx_get, '*uris_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
-        'ontologies':          ['*ont_ilx_get', '*uris_ont', '*contributions_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
+        'ontologies':          ['*ont_ilx_pattern', '*ont_ilx_get', '*dns_ont', '*uris_ont', '*contributions_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
+        '*ont_ilx_pattern':    ilx_spec_ext,  # needed to support existing termsets
         #'collections':         [2, '<path:ont_path>'] + intermediate_filename,  # TODO more general than files, ontologies, or resources
         # TODO distinguish between ontology _files_ and 'ontologies' which are the import closure?
         # ya, identified vs unidentified imports, owl only supports unidentified imports
+
+        '*dns_ont':            ['<dns_host>'],
+        '<dns_host>':          ['*<path:dns_ontpath>'],
+        '*<path:dns_ontpath>': [None, '*dns_version'],
+        '*dns_version':        ['<epoch_verstr_ont>'],  # FIXME possibly only epoch/dt for these?
+
         '<path:ont_path>':     intermediate_filename,  # FIXME this would seem to only allow a single extension?
         '*<path:uris_ont_p>':  uris_intermediate_filename,  # FIXME this would seem to only allow a single extension?
         '*uris_ont':           uris_intermediate_filename + ['*<path:uris_ont_p>'],  # FIXME need the ability to dissociate node name from render name
-        '*<uris_filename>':    [None, '*uris_version'],
+        '*<uris_filename>':    [None, '*uris_version'] + spec_ext,
         '*uris_version':       ['<epoch_verstr_ont>'],
 
-        '<filename>':          [None, 'version'] + spec_ext,
+        '<filename>':          [None, 'version'],  # + spec_ext,  # TODO see if we need these, I'm going with no for now XXX not here but ont ilx needs it
         'version':             ['<epoch_verstr_ont>'],
         '<epoch_verstr_ont>':  ['<filename_terminal>', '<filename_terminal>.<extension>'],
         '<filename_terminal>': [None,] + spec_ext,
@@ -464,15 +478,15 @@ def setup_runonce(app, endpoints, echo):
 
 
 def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, dbonly=False, db_kwargs=None):
-    # app setup and database binding
-    app = Flask('InterLex uri server')
-
     if db_kwargs is None:
         db_kwargs = {k:config.auth.get(f'db-{k}')  # TODO integrate with cli options
                 for k in ('user', 'host', 'port', 'database')}
         db_kwargs['dbuser'] = db_kwargs.pop('user')
         if db_kwargs['database'] is None:
             raise ValueError('db-database is None, did you remember to set one?')
+
+    # app setup and database binding
+    app = Flask('InterLex uri server')
 
     app.config['SECRET_KEY'] = config.auth.get('fl-session-secret-key')
     app.config['SQLALCHEMY_DATABASE_URI'] = dbUri(**db_kwargs)  # use os.environ.update

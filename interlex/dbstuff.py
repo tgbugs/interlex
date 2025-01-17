@@ -335,11 +335,33 @@ where o.group_id = idFromGroupname(:group)
 '''
         return list(self.session_execute(sql, args))
 
+    def subjectsObjects(self, predicate, subjects):
+        args = dict(subjects=tuple(subjects), predicate=predicate)
+        sql = 'select t.s, t.o from triples as t where t.p = :predicate and t.s in :subjects'
+        return list(self.session_execute(sql, args))
+
     def createOntology(self, reference_host, group, path):
         spec = f'http://{reference_host}/{group}/ontologies/uris{path}/spec'
         args = dict(group=group, path=path, spec=spec)
         sql = '''
 INSERT INTO ontologies (group_id, ont_path, spec) VALUES
-(:group, :path, :spec) RETURNING spec
+(idFromGroupname(:group), :path, :spec) RETURNING spec
 '''
         return list(self.session_execute(sql, args))
+
+    def getConstraint(self, schema, table, constraint):
+        # https://dba.stackexchange.com/a/214877
+        args = dict(schema=schema, table=table, constraint=constraint)
+        sql = '''
+SELECT con.conname, pg_get_constraintdef(con.oid)
+       FROM pg_catalog.pg_constraint con
+            INNER JOIN pg_catalog.pg_class rel
+                       ON rel.oid = con.conrelid
+            INNER JOIN pg_catalog.pg_namespace nsp
+                       ON nsp.oid = connamespace
+       WHERE nsp.nspname = :schema
+             AND rel.relname = :table
+             AND con.conname = :constraint
+'''
+        return list(self.session_execute(sql, args))
+

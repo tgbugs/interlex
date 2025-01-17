@@ -242,6 +242,9 @@ class Server(clif.Dispatcher):
         port = self.options.port if self.options.port else port
         setPS1(__file__)
         app.debug = self.options.debug
+        # XXX REMINDER if debug fails to restart on pypy3 make sure
+        # you don't have watchdog installed it is broken for some
+        # reason
         app.run(host='localhost', port=port, threaded=True)  # FIXME gunicorn
 
 

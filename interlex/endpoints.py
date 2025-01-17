@@ -13,9 +13,9 @@ from flask import request, redirect, url_for, abort, Response
 from rdflib import URIRef  # FIXME grrrr
 from htmlfn import atag, btag, h2tag, htmldoc
 from htmlfn import table_style, render_table, redlink_style
-from pyontutils.core import makeGraph
+from pyontutils.core import OntGraph, makeGraph
 from pyontutils.utils_fast import TermColors as tc, isoformat
-from pyontutils.namespaces import makePrefixes, definition
+from pyontutils.namespaces import makePrefixes, definition, rdf, owl
 from sqlalchemy.sql import text as sql_text
 import idlib
 from interlex import auth as iauth
@@ -28,6 +28,7 @@ from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
 from interlex.utils import log as _log
 from interlex.config import ilx_pattern  # FIXME pull from database probably
+from interlex.ingest import ingest_ontspec
 from interlex.dbstuff import Stuff
 from interlex.render import TripleRender  # FIXME need to move the location of this
 from interlex.notifications import send_message, get_smtp_spec, msg_email_verify
@@ -269,11 +270,15 @@ class Endpoints(EndBase):
             'ontologies': self.ontologies,
             'version': self.ontologies_version,  # FIXME collision prone?
 
+            '*ont_ilx_pattern': self.ontologies_ilx,
             '*ont_ilx_get': self.ontologies_ilx,
+            '*dns_ont': self.ontologies_dns,
             '*uris_ont': self.ontologies_uris,
 
             'spec': self.ontologies_spec,
             'spec.<extension>': self.ontologies_spec,
+            '*spec': self.ontologies_ilx_spec,
+            '*spec.<extension>': self.ontologies_ilx_spec,
 
             '*<path:uris_ont_path>': self.ontologies_uris,
             '*uris_version': self.ontologies_uris_version,
@@ -671,6 +676,7 @@ class Endpoints(EndBase):
     @basic
     def ontologies_ilx(self, group, frag_pref_id, extension, db=None):
         # FIXME termset
+        # FIXME TODO i think this dispatch is just wrong? should be on ontologies?
         return self.ilx(group=group, frag_pref_id=frag_pref_id, db=db)
 
     @basic
@@ -680,6 +686,11 @@ class Endpoints(EndBase):
 
     @basic
     def ontologies_version(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_dns(self, *args, **kwargs):
         """ needed because ontologies appear under other routes """
         raise NotImplementedError('should not be hitting this')
 
@@ -700,6 +711,11 @@ class Endpoints(EndBase):
 
     @basic
     def ontologies_spec(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
+    def ontologies_ilx_spec(self, *args, **kwargs):
         """ needed because ontologies appear under other routes """
         raise NotImplementedError('should not be hitting this')
 
@@ -1172,7 +1188,7 @@ receive quite a few during periods of active development.
                     e.orig.diag.schema_name,
                     e.orig.diag.table_name,
                     e.orig.diag.constraint_name,)
-                asdf = self.queries.getConstraint(*args)
+                asdf = dbstuff.getConstraint(*args)
                 if not asdf:
                     log.critical(f'no constraint for: {args} ???')
                     errors['username'] = ['not sure']
@@ -1325,6 +1341,9 @@ receive quite a few during periods of active development.
                     log_ver.critical(_m_prefix + msg)
                 else:  # fl.current_user.groupname == group:
                     msg = f':session-group {fl.current_user.groupname}'
+                    if err_reason is not None:
+                        msg += f' :reason "{err_reason}"'
+
                     log_ver.info(_m_prefix + msg)
             else:
                 msg = ':session null'
@@ -1351,7 +1370,7 @@ receive quite a few during periods of active development.
             self.session.commit()
             group = resp[0][0]
             do_log(group, 'success')
-            return redirect(302, '/{group}/priv/settings?from=email-verify-success')
+            return redirect(f'/{group}/priv/settings?from=email-verify-success', 302)
             #return f'email verification complete for {group}'
         else:
             # failure should look like an error not a null value on return so
@@ -2159,12 +2178,36 @@ class Ontologies(Endpoints):
     # TODO HEAD -> return owl:Ontology section
 
     @basic
+    def ontologies_dns(self, group, dns_host, ont_path='', db=None):
+        return self.ontologies(group=group,
+                               filename=filename,
+                               extension=extension,
+                               ont_path=ont_path,
+                               host=dns_host,
+                               dns=True,
+                               db=db)
+
+    @basic
+    def ontologies_dns_version(self, group, dns_host, ont_path, epoch_verstr_ont, filename_terminal,
+                               extension=None, db=None):
+        return self.ontologies_version(group=group,
+                                       filename=filename,
+                                       epoch_verstr_ont=epoch_verstr_ont,
+                                       filename_terminal=filename_terminal,
+                                       extension=extension,
+                                       ont_path=ont_path,
+                                       host=dns_host,
+                                       dns=True,
+                                       db=db)
+
+    @basic
     def ontologies_uris(self, group, filename, extension=None, ont_path='', db=None):
         # probably just slap a /uris/ on the front of the path
         return self.ontologies(group=group,
                                filename=filename,
                                extension=extension,
-                               ont_path='uris/' + ont_path,
+                               ont_path=ont_path,
+                               uris=True,
                                db=db)
 
     @basic
@@ -2175,7 +2218,8 @@ class Ontologies(Endpoints):
                                        epoch_verstr_ont=epoch_verstr_ont,
                                        filename_terminal=filename_terminal,
                                        extension=extension,
-                                       ont_path='uris/' + ont_path,
+                                       ont_path=ont_path,
+                                       uris=True,
                                        db=db)
 
     @basic
@@ -2183,7 +2227,15 @@ class Ontologies(Endpoints):
         return 'TODO list of ontology contributions', 501
 
     @basic
-    def ontologies_spec(self, group, filename, extension=None, ont_path='', db=None):
+    def ontologies_ilx_spec(self, group, frag_pref_id, extension=None, db=None):
+        return self.ontologies_spec(group, frag_pref_id, extension=extension, from_ilx=True, db=db)
+
+    @basic
+    def ontologies_spec(self, group, filename, ont_path='', extension=None, from_ilx=False, db=None):
+        # FIXME uris vs non-uris currently this assumes we are coming from uris
+        # TODO figure out of /{group}/ontologies/{ilx_*,dns,etc.} also need specs ...
+        # I'm leaving them off for now
+
         # the process
         # get the current head identity
         # reconstruct the graph at that identity
@@ -2191,10 +2243,13 @@ class Ontologies(Endpoints):
         # ingest the new graph, pass the current head for identity relations insertion probably wasModifiedFromIdentity or something
         # update the current head ideantity the new identity
 
+        # FIXME bug in rounting is that if you have //p1/p2/filename/spec that
+        # will match the non-uris version with uris, when it should 404 due to
+        # empty path
         if request.method == 'GET':
             return self.ontologies(
-                group, filename, extension=extension,
-                ont_path=ont_path + '/spec', extension=extension, db=db)
+                group=group, filename=filename, ont_path=ont_path, extension=extension,
+                uris=not from_ilx, spec=True, from_ilx=from_ilx, db=db)
 
         elif request.method == 'POST':
             # FIXME TODO handle this properly
@@ -2212,26 +2267,65 @@ class Ontologies(Endpoints):
                 breakpoint()
                 abort(501, 'TODO')
             elif ct == 'text/turtle':
+                # TODO do we strip out bound version information from the spec?
+                # maybe? we have the db version of when we saw the identity,
+                # behavior a bit different for onts maintained inside interlex
                 breakpoint()
                 abort(501, 'TODO')
             else:
                 abort(415, ct)
 
+            opfn = '/' + os.path.join(ont_path, filename)  # TODO make sure works with all path combos
             dbstuff = Stuff(self.session)
+            if subjects:
+                ssub = set(subjects)  # TODO counter dupes
+                # TODO make sure that no subjects are rdf record type before insert
+                # TODO also make sure that the subjects are actually in interlex
+                subject_types = dbstuff.subjectsObjects(rdf.type, subjects)  # FIXME handle this elsewhere
+                bads = []
+                record_types = {str(owl.Ontology), }
+                sts = set()
+                for s, o in subject_types:
+                    sts.add(s)
+                    if o in record_types:
+                        bads.append((s, o))
+
+                missing = ssub - sts
+                if bads or missing:
+                    msg = ''
+                    if missing:
+                        msg += f'unknown subjects: {missing} '
+
+                    if bads:
+                        msg += f'subjects with record types: {bads}'
+
+                    abort(422, msg)
+
             try:
-                spec_uri = dbstuff.createOntology(group, ont_path)
+                spec_uri_resp = dbstuff.createOntology(self.reference_host, group, opfn)
             except sa.exc.IntegrityError as e:
                 # TODO make sure it actually already exists in this case
-                abort(409)
+                if e.orig.diag.constraint_name == 'ontologies_pkey':
+                    abort(409, 'already created spec for')
+                else:
+                    log.exception(e)
+                    breakpoint()
+                    abort(500, 'oops')
 
-            graph, bnp = from_title_subjects_ontspec(spec_uri, title, subjects)
-            dout = ingest_ontspec(graph, bnp, session=self.session)
+            spec_uri = spec_uri_resp[0].spec
+            graph = from_title_subjects_ontspec(spec_uri, title, subjects)
+            dout = ingest_ontspec(graph, session=self.session)
+            self.session.commit()
+            iri = spec_uri.rsplit('/', 1)[0] + '.html'
+            # BEHOLD! Your new ontology.
+            return redirect(iri, 303)
 
         elif request.method == 'PATCH':
             return 'TODO', 501
 
     @basic
-    def ontologies(self, group, filename, extension=None, ont_path='', db=None, nocel=False):
+    def ontologies(self, group, filename, extension=None, ont_path='', host=None, dns=False, uris=False, spec=False, from_ilx=False,
+                   nocel=False, db=None):
         """ the main ontologies endpoint """
         # on POST for new file check to make sure that that the ontology iri matches the post endpoint
         # response needs to include warnings about any parts of the file that could not be lifted to interlex
@@ -2287,8 +2381,55 @@ class Ontologies(Endpoints):
                 #PREFIXES, graph = self.getGroupCuries(group)
                 #_ = [graph.add(te.star_triple(*r)) for r in oof]
                 #return tripleRender(request, graph, user, 'FIXMEFIXME', object_to_existing)
+            elif dns:
+                name_type = 'bound'
+                local_convention_rows = self.queries.getCuriesByName(uri_string, type=name_type)
+                graph_rows = self.queries.getGraphByName(uri_string, type=name_type)
+            elif uris or from_ilx:
+                # TODO virtual vs managed vs scratch ...
+                # virtual can't post to, only spec
+                # managed is own /uris/ + that allows post and will go through the term mapping flow and scratch space ... ends up being quite complex
+                # i think in theory everything can ultimately become a managed ontology but impl will take some work
+                opfn = os.path.join(ont_path, filename)
+                if uris:
+                    opfn = 'ontologies/uris/' + opfn
+                else:
+                    opfn = 'ontologies/' + opfn
 
-            return 'NOT IMPLEMENTED\n', 400
+                #extension = '' if extension is None else f'.{extension}'  # this is needed by render not query (duh)
+                scheme = 'http'  # FIXME TODO ... still need to determine
+                # what we are going to normalize scheme to for uri use
+                # ... I'm leaning more and more to http
+                ont_uri = f'{scheme}://{self.reference_host}/{group}/{opfn}'
+                spec_uri = f'{ont_uri}/spec'
+                # FIXME bad match in the paths again where going to ont instead of ont spec
+
+                graph = OntGraph()
+                if spec:
+                    curies = {p: n for p, n in self.queries.getCuriesByName(spec_uri)}
+                    graph_rows = self.queries.getGraphByName(spec_uri)
+                    title = f'spec for {ont_uri}'
+                else:
+                    # get the spec config triples
+                    # and the raw triples (for now)
+                    # TODO obviously we need to be deriving from the heads of various perspectives, but we aren't there yet
+                    # for now we pull everything from the triples table
+                    curies = self.queries.getGroupCuries(group)  # TODO derive from spec if spec has rules for it
+                    graph_rows = self.queries.generateOntologyFromSpec(spec_uri)
+                    title = 'TODO derive from dc:title or the ontologies table'
+
+                graph.namespace_manager.populate_from(curies)
+                te = TripleExporter()
+                for r in graph_rows:
+                    graph.add(te.triple(*r))
+
+                return tripleRender(request, graph, group, None, None, tuple(), title)
+
+            else:
+                pass
+
+            breakpoint()
+            abort(501, 'TODO')
 
         elif request.method == 'POST':
             extension = '.' + extension if extension else ''
@@ -2396,7 +2537,7 @@ class Ontologies(Endpoints):
 
     @basic
     def ontologies_version(self, group, filename, epoch_verstr_ont,
-                            filename_terminal, extension=None, ont_path='', db=None):
+                            filename_terminal, extension=None, ont_path='', host=None, dns=False, uris=False, db=None):
         if filename != filename_terminal:
             abort(404)  # 400 maybe ?
         else:

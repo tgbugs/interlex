@@ -136,10 +136,20 @@ CREATE TABLE names(
        -- the validity of the claim is orthogonal to the claim itself, these tables deal with the claims
        -- the best way to identify invalid claims is the enumerate them an mark them as such
        -- NOTE this table can be extended to track the current state of the resolution of a name
-       name uri PRIMARY KEY CHECK (uri_host(name) != reference_host()),
+
+       name uri PRIMARY KEY, -- CHECK (uri_host(name) != reference_host()),
        -- should not be a reference name? yes, TODO make sure that {group}/ontologies/ etc. do not wind up in here
+       -- XXX UPDATE on whether to allow reference host ontologies to be in here
+       -- because of the role this table plays with ANY incoming ontology we need
+       -- those names to be present in this table because there will be identities
+       -- that need to be linked to a name, and the complexity of trying to pull
+       -- stuff from the ontologies table is simply not worth it, so we have an
+       -- index on uri_host(name) now and can always check against ontologies and specs
        first_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
+
+CREATE INDEX names_uri_host_index ON names (uri_host(name));
+
 
 /*  -- going to do this as a table initially
 CREATE FUNCTION name_to_identity() RETURNS trigger as $$
