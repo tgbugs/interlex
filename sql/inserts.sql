@@ -198,7 +198,7 @@ UPDATE user_emails SET email_validated = CURRENT_TIMESTAMP WHERE user_id = idFro
 -- correct, interlex-user only has insert and select access, so these need to be populated via trigger on insert
 --UPDATE users SET orcid_validated = CURRENT_TIMESTAMP WHERE id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
 
-INSERT INTO user_permissions VALUES (0, idFromGroupname('tgbugs'), 'admin');
+INSERT INTO user_permissions (group_id, user_id, user_role) VALUES (0, idFromGroupname('tgbugs'), 'admin');
 
 -- need the null identity in to avoid conficts
 INSERT INTO identities (identity, type, record_count) VALUES (digest('', 'sha256'), 'empty', 0);

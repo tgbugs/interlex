@@ -349,13 +349,14 @@ CREATE TABLE user_permissions(
        user_id integer NOT NULL,  -- the fkey prevents groups from having any permissions which is important since can't log in as group
        CHECK (group_id != user_id),  -- that's what own_role is for
        user_role group_role NOT NULL,
-       CHECK ((user_role > 'admin' AND user_role <= 'view') OR user_role = 'admin' AND group_id = 0),
+       CHECK ((user_role > 'admin' AND user_role <= 'view' AND group_id != 0)
+              OR user_role = 'admin' AND group_id = 0),
        CONSTRAINT pk__user_permissions PRIMARY key (group_id, user_id),  -- users can only have one role at a time
        CONSTRAINT fk__user_permissions__group_id__groups FOREIGN key (group_id) REFERENCES groups (id) match simple,
        CONSTRAINT fk__user_permissions__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
 );
 
-CREATE TABLE user_permission_log(
+CREATE TABLE user_permissions_log(
        -- TODO trigger to insert
        group_id integer references groups (id),
        user_id integer references users (id),
@@ -368,10 +369,30 @@ CREATE TABLE user_permission_log(
 CREATE FUNCTION log_user_permissions() RETURNS trigger AS $$
 BEGIN
     INSERT INTO user_permissions_log (group_id, user_id, user_role) VALUES (NEW.group_id, NEW.user_id, NEW.user_role);
+    RETURN NULL;
 END;
 $$ language plpgsql;
 
 CREATE TRIGGER log_user_permissions AFTER INSERT OR UPDATE ON user_permissions FOR EACH ROW EXECUTE PROCEDURE log_user_permissions();
+
+/*
+CREATE FUNCTION notify_on_new_admin() RETURNS trigger AS $$
+BEGIN
+    -- TODO I'm not sure if this is the best way to implement something like this
+    -- configuration around admin and empty needs review which we won't do right now
+    -- since all admin inserts will be manual for the time being
+
+    -- 1 make sure there is a script listening
+    -- 2 use NOTIFY on a script LISTENing if the user_role is admin
+    RETURN NEW;
+END;
+$$ language plpgsql;
+
+-- it is only possible to insert admin since any change would violate constraints
+CREATE TRIGGER notify_on_new_admin BEFORE INSERT ON user_permissions
+       FOR EACH ROW WHEN (NEW.group_id = 0 AND NEW.user_role = 'admin')
+       EXECUTE PROCEDURE notify_on_new_admin();
+*/
 
 CREATE TYPE term_user_roles AS ENUM (
 'editor', -- final sign off can merge even if does not have group level permissions
@@ -399,7 +420,7 @@ CREATE FUNCTION check_valid_user_user_role() RETURNS trigger AS $$
                  RAISE exception 'The only valid user -> user permissions is view. % is not valid.', NEW.user_role;
               END IF;
            END IF;
-           RETURN NULL;
+           RETURN NEW;
        END;
 $$ language plpgsql;
 

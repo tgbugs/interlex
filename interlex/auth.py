@@ -489,9 +489,9 @@ class Auth:
             # if auth_user == request_group then unless we aborted on scope
             # mismatch (i.e. we never get here), all requests are allowed
             # so we only have to check mismatched cases
-            resp = dbstuff.getUserRoleForGroups(auth_user, need_perms)
-            write_roles = {'owner', 'contributor'}
-            read_roles = {'owner', 'contributor', 'curator', 'view'}
+            resp = dbstuff.getUserRoleForGroups(auth_user, need_group_perms + ['empty'])
+            write_roles = {'admin', 'owner', 'contributor'}
+            read_roles = {'admin', 'owner', 'contributor', 'curator', 'view'}
             if resp:
                 for row in resp:
                     if write_requires_auth:

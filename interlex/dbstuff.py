@@ -202,12 +202,12 @@ VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh,
         return list(self.session_execute(sql, args))
 
     def getUserRoleForGroups(self, user, groups):
-        args = dict(user=user, groups=groups)
+        args = dict(user=user, groups=tuple(groups))
         sql = '''
-select g.groupname, g.own_role, p.user_role
-from user_permissions as p
-join groups as g on g.id = p.group_id
-where g.groupname in :groups and p.user_id = idFromGroupname(:user)
+select gg.groupname, gg.own_role, up.user_role
+from user_permissions as up
+join groups as gg on gg.id = up.group_id
+where gg.groupname in :groups and up.user_id = idFromGroupname(:user)
 '''
         return list(self.session_execute(sql, args))
 

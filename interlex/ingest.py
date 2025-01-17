@@ -1054,12 +1054,18 @@ def process_post(
     irels = ((graph_combined_identity, 'hasNamedGraph', graph_named_identity),
              (graph_combined_identity, 'hasBnodeGraph', graph_bnode_identity),)
 
-    if local_conventions_identity is not None:
-        graph_combined_local_conventions_identity = oid(local_conventions_identity, graph_combined_identity)  # yes the order is confusing but lc first
-        dout['graph_combined_local_conventions_identity'] = graph_combined_local_conventions_identity
-        idents += (('graph_combined_local_conventions', graph_combined_local_conventions_identity, record_count),)
-        irels += ((graph_combined_local_conventions_identity, 'hasGraph', graph_combined_identity),
-                  (graph_combined_local_conventions_identity, 'hasLocalConventions', local_conventions_identity),)
+    if local_conventions_identity is None:
+        # for sanity if there were no local conventions just make the
+        # identity null so that we don't have to add yet another layer
+        # to reconstruct a something from a name because the identity
+        # might be a gci instead of gclci
+        local_conventions_identity = _hbn.null_identity
+
+    graph_combined_local_conventions_identity = oid(local_conventions_identity, graph_combined_identity)  # yes the order is confusing but lc first
+    dout['graph_combined_local_conventions_identity'] = graph_combined_local_conventions_identity
+    idents += (('graph_combined_local_conventions', graph_combined_local_conventions_identity, record_count),)
+    irels += ((graph_combined_local_conventions_identity, 'hasGraph', graph_combined_identity),
+                (graph_combined_local_conventions_identity, 'hasLocalConventions', local_conventions_identity),)
 
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */', idents, ocdn)
     yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
@@ -2190,8 +2196,10 @@ def main():
     debug = '--debug' in sys.argv
     check = '--check' in sys.argv
     if check:
+        log.debug(f'check {uri}')
         recons_uri(uri, debug=True)
     else:
+        log.debug(f'start {uri}')
         ingest_uri(uri, user, commit=commit, force=force, debug=debug)
 
 
