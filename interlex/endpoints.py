@@ -3,7 +3,7 @@ import re
 import json
 import base64
 import secrets
-from datetime import timedelta
+from datetime import timedelta, timezone
 from functools import wraps
 from urllib.parse import urlparse
 import requests
@@ -670,6 +670,15 @@ class Endpoints(EndBase):
         """ The terminal ontologies query does go on endpoints """
         dbstuff = Stuff(self.session)
         resp = dbstuff.getGroupOntologies(group)
+        if group == 'base':
+            # FIXME see if this makes sense
+            resp = dbstuff.getFreeOntologies()
+            onts = [
+                {'uri': row.name,
+                 'first_seen': isoformat(row.first_seen.astimezone(timezone.utc))}
+                for row in resp]
+            return json.dumps(onts), 200, ctaj
+
         # TODO
         return json.dumps('your list sir'), 501
 

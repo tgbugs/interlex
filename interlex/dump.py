@@ -1214,6 +1214,9 @@ and t.subgraph_identity is not null
 
         #li = self.getLatestIdentityByName(spec)  # already done internally in getGraphByName
         spec_graph_rows = list(self.getGraphByName(spec))  # XXX TODO for now there should be no blanknodes in here
+        if not spec_graph_rows:
+            return
+
         pred = ilxtr['include-subject']  # FIXME TODO ilxr:includesSubject -> current ilx for includesTerm
         spred = str(pred)
         # TODO other config options if relevant

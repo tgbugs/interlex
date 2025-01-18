@@ -335,6 +335,18 @@ where o.group_id = idFromGroupname(:group)
 '''
         return list(self.session_execute(sql, args))
 
+    def getFreeOntologies(self):
+        # FIXME TODO dedupe when there are multiple loads probably
+        sql = '''
+select n.name, n.first_seen from names as n
+join name_to_identity as nti on n.name = nti.name
+join identities as ids on nti.identity = ids.identity
+join identity_relations as irs on irs.s = ids.identity
+where nti.type = 'bound' and uri_host(n.name) != reference_host()
+and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serialization')
+'''
+        return list(self.session_execute(sql))
+
     def subjectsObjects(self, predicate, subjects):
         args = dict(subjects=tuple(subjects), predicate=predicate)
         sql = 'select t.s, t.o from triples as t where t.p = :predicate and t.s in :subjects'
