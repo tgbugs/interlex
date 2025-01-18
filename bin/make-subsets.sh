@@ -1,5 +1,10 @@
 set -e
 set -o xtrace
+# why do we LC_COLLATE=C because LC_COLLATE=en_us.UTF-8 only uses case AFTER considering the rest of the string
+# if you want to see why I am anti-unicode, check out the absolutely bonkers complexity in tr10
+# https://forums.freebsd.org/threads/is-unicode-case-insensitive.81029/
+# https://unicode.org/reports/tr10/
+export LC_COLLATE=C
 path=${1}
 wd=$(dirname "${path}")
 fn=$(basename "${path}")
