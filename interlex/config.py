@@ -27,6 +27,8 @@ class QuietString(str):
 # basics
 debug = auth.get('debug')
 ilx_pattern = auth.get('ilx-pattern')
+orcid_sandbox = auth.get('orcid-sandbox')
+email_verify = auth.get('email-verify')
 
 # ports
 port_api = auth.get('port-api')
@@ -62,5 +64,19 @@ broker_backend = auth.get('mq-broker-backend')
 accept_content = auth.get('mq-accept-content')
 
 # orcid
-orcid_client_id = auth.get('orcid-client-id')  # isn't secret, gets passed in url visible to user
-orcid_client_secret = QuietString(auth.get('orcid-client-secret'))
+orcid_prod_client_id = auth.get('orcid-client-id')  # isn't secret, gets passed in url visible to user
+orcid_prod_client_secret = QuietString(auth.get('orcid-client-secret'))
+orcid_sandbox_client_id = auth.get('orcid-sandbox-client-id')
+orcid_sandbox_client_secret = QuietString(auth.get('orcid-sandbox-client-secret'))
+
+
+def _set_orcid():
+    # FIXME TODO figure out if there is some sane way to reload the whole config ...
+    global orcid_host, orcid_client_id, orcid_client_secret
+    orcid_host = 'sandbox.orcid.org' if orcid_sandbox else 'orcid.org'
+    orcid_client_id = orcid_sandbox_client_id if orcid_sandbox else orcid_prod_client_id
+    orcid_client_secret = orcid_sandbox_client_secret if orcid_sandbox else orcid_prod_client_secret
+
+
+orcid_host, orcid_client_id, orcid_client_secret = None, None, None
+_set_orcid()

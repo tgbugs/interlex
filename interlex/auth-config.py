@@ -6,6 +6,14 @@
          'environment-variables': 'INTERLEX_DEBUG',},
      'ilx-pattern': '<regex("((ilx|cde|fde)_[0-9]{7})|(pde_[0-9]{8})"):frag_pref_id>',
 
+     'orcid-sandbox': {
+         'default': True,
+         'environment-variables': 'INTERLEX_ORCID_SANDBOX',},
+
+     'email-verify': {
+         'default': True,
+         'environment-variables': 'INTERLEX_EMAIL_VERIFY',},
+
      'interlex-api-key': {
          'default': None,
          'environment-variables': 'INTERLEX_API_KEY',},
@@ -90,5 +98,11 @@
      'orcid-client-secret':{
          'default': None,
          'environment-variables': 'INTERLEX_ORCID_CLIENT_SECRET',},
+     'orcid-sandbox-client-id': {
+         'default': None,
+         'environment-variables': 'INTERLEX_ORCID_SANDBOX_CLIENT_ID',},
+     'orcid-sandbox-client-secret':{
+         'default': None,
+         'environment-variables': 'INTERLEX_ORCID_SANDBOX_CLIENT_SECRET',},
 
  }}

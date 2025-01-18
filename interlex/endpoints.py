@@ -731,7 +731,8 @@ class Endpoints(EndBase):
 
 def _sigh_insert_orcid_meta(session, orcid_meta, user=None):
     dbstuff = Stuff(session)
-    orcid = idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri,
+    kls = idlib.systems.orcid.OrcidSandbox if config.orcid_sandbox else idlib.Orcid
+    orcid = kls._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri,
     dbstuff.insertOrcidMetadata(
         orcid,
         orcid_meta['name'],
@@ -757,7 +758,7 @@ def _sigh_orcid_login_user_temp(orcid_meta):
         is_anonymous = False
         is_authenticated = True
         via_auth = 'orcid'
-        orcid = 'https://orcid.org/' + orcid_meta['orcid']
+        orcid = f'https://{config.orcid_host}/' + orcid_meta['orcid']
         id = orcid_meta['orcid']  # XXX NOTE THE ASYMMETRY
         # we put the orcid as an id on issue but when we load
         # it we move it to orcid and set id = None
@@ -814,7 +815,7 @@ class Ops(EndBase):
         prompt = '&prompt=login' if refresh else ''
         scope = 'openid'  # /read-limited
         redirect_uri = f'{request.scheme}://{request.host}{url_orcid_land}'  # FIXME request.host can be spoofed ya? TODO figure out if it can be abused in combination with next= ...
-        reiri = (f'https://sandbox.orcid.org/oauth/authorize?client_id={config.orcid_client_id}'
+        reiri = (f'https://{config.orcid_host}/oauth/authorize?client_id={config.orcid_client_id}'
                  f'&response_type=code&scope={scope}{prompt}&redirect_uri={redirect_uri}')
         return redirect(reiri, code=302)
 
@@ -871,7 +872,7 @@ class Ops(EndBase):
         headers = {'Accept': 'application/json',
                    'Content-Type': 'application/x-www-form-urlencoded',}
         resp = requests.post(
-            'https://sandbox.orcid.org/oauth/token',
+            f'https://{config.orcid_host}/oauth/token',
             headers=headers,
             data=data)
 
@@ -935,7 +936,8 @@ class Ops(EndBase):
             fl.login_user(tuser())  # TODO I don't think there is an easy way to remember this stuff
 
     def _orcid_check_already(self, orcid_meta):
-        orcid = idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
+        kls = idlib.systems.orcid.OrcidSandbox if config.orcid_sandbox else idlib.Orcid
+        orcid = kls._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
         dbstuff = Stuff(self.session)
         return orcid, dbstuff.getUserByOrcid(orcid)
 
@@ -1189,9 +1191,10 @@ receive quite a few during periods of active development.
 
 
         argon2_string = None if password is None else iauth.hash_password(password)
+        email_verify = config.email_verify  # FIXME find the right place to query for this
         dbstuff = Stuff(self.session)
         try:
-            user_id = dbstuff.user_new(username, email, argon2_string, orcid)
+            user_id = dbstuff.user_new(username, email, argon2_string, orcid, email_verify=email_verify)
             self.session.commit()
         except Exception as e:
             # username format
@@ -1226,13 +1229,14 @@ receive quite a few during periods of active development.
             return 'something went wrong TODO better messages', 422
 
 
-        try:
-            self._start_email_verify(username, email)
-        except Exception as e:
-            # it is very bad for the user if we error out here because they
-            # don't get their updated login token but their account exists on
-            # the system, so they can't even logout
-            log.exception(e)
+        if email_verify:
+            try:
+                self._start_email_verify(username, email)
+            except Exception as e:
+                # it is very bad for the user if we error out here because they
+                # don't get their updated login token but their account exists on
+                # the system, so they can't even logout
+                log.exception(e)
 
         _orcid = orcid
         class tuser:
@@ -1261,9 +1265,12 @@ receive quite a few during periods of active development.
             return redirect(url_next, 303)
         else:
             if 'application/json' in dict(request.accept_mimetypes):  # FIXME not the best way i think
-                out = {'message': ('Account creation and association with orcid successful. '
-                                   f'Confirmation email sent to {email}'),
-                       'email': email}
+                msg = 'Account creation and association with orcid successful.'
+                out = {'message': msg}
+                if email_verify:
+                    msg += f' Confirmation email sent to {email}'
+                    out['email'] = email
+
                 return json.dumps(out), 201, ctaj
             else:
                 if 'freiri' in request.args:
@@ -1278,8 +1285,11 @@ receive quite a few during periods of active development.
                         # e.g. someone went to orcid-new directly without coming from anywhere else
                         return redirect(f'/{username}/priv/settings?from=orcid-new-success', 303)
 
-                return ('Account creation and association with orcid successful. '
-                        f'As a final step a verification email has been sent to {email}'), 201
+                msg = 'Account creation and association with orcid successful.'
+                if email_verify:
+                    msg += f' As a final step a verification email has been sent to {email}'
+
+                return msg, 201
 
     def _start_email_verify(self, username, email):
         # this is usually a priv operation, but we call it
@@ -1604,7 +1614,7 @@ class Privu(EndBase):
                 # e.g. someone went to user-new directly without coming from anywhere else
                 return redirect(f'/{user}/priv/settings?from=user-new-success', 302)
 
-        orcid = 'https://orcid.org/' + orcid_meta['orcid']
+        orcid = f'https://{config.orcid_host}/' + orcid_meta['orcid']
         # FIXME vs 303 -> interlex.org ...
         return f'orcid {orcid} successfully associated with user account {user}', 200
 
@@ -1954,8 +1964,11 @@ class Priv(EndBase):
         if row.email_validated:
             return f'{email} already verified'
         else:
-            self._start_email_verify(group, email)
-            return f'a new verification email has been sent to {email}'
+            if config.email_verify:  # FIXME find the right place to query for this
+                self._start_email_verify(group, email)
+                return f'a new verification email has been sent to {email}'
+            else:
+                return 'this instance of interlex does not require email verification'
 
     @basic
     @fl.fresh_login_required

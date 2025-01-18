@@ -5,6 +5,7 @@ import binascii
 import flask_login as fl
 from flask import abort, url_for
 from idlib.utils import makeEnc
+from interlex import config
 from interlex.utils import log
 from interlex.dbstuff import Stuff
 
@@ -224,7 +225,7 @@ class Auth:
         dbstuff = Stuff(self.session)
         if not isinstance(user_id, int):
             if isinstance(user_id, str):
-                orcid = 'https://orcid.org/' + user_id
+                orcid = f'https://{config.orcid_host}/' + user_id
                 rows = dbstuff.getOrcidMetadataUserByOrcid(orcid)
                 if not rows:
                     # somehow someone got a session cookie but we didn't record

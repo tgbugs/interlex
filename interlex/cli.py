@@ -80,6 +80,8 @@ Options:
     -o --local              run against local
     -c --gunicorn           run against local gunicorn
     -d --debug              enable debug mode
+    --orcid-prod            run against orcid prod
+    --email-no-verify       do not require email verification
     --proxy=N               number of proxies you are behind [default: 0]
 
     --do-cdes               when running sync include the cdes
@@ -589,6 +591,15 @@ def main():
     elif options.database:
         #os.environ.update({'INTERLEX_DATABASE':args['<database>']})
         os.environ['INTERLEX_DATABASE'] = args['<database>']#.update({'INTERLEX_DATABASE':args['<database>']})
+
+    if options.orcid_prod:
+        from interlex import config
+        config.orcid_sandbox = False
+        config._set_orcid()
+
+    if options.email_no_verify:
+        from interlex import config
+        config.email_verify = False
 
     main = Main(options)
     if main.options.debug:

@@ -227,7 +227,9 @@ CREATE FUNCTION email_complete() RETURNS trigger AS $email_complete$
        END;
 $email_complete$ language plpgsql;
 
-CREATE TRIGGER email_complete AFTER UPDATE ON user_emails FOR EACH row execute procedure email_complete();
+CREATE TRIGGER email_complete AFTER INSERT OR UPDATE ON user_emails
+       FOR EACH ROW WHEN (NEW.email_validated IS NOT NULL)
+       EXECUTE PROCEDURE email_complete();
 
 CREATE TABLE emails_validating(
        -- TODO consider using something like pg_cron to periodically cull these

@@ -28,7 +28,7 @@ class Stuff:
         sql = base + values_template
         return self.session_execute(sql, params)
 
-    def user_new(self, username, email, argon2_string=None, orcid=None):
+    def user_new(self, username, email, argon2_string=None, orcid=None, email_verify=True):
         params = dict(groupname=username, email=email)
 
         if orcid is not None:
@@ -43,10 +43,18 @@ class Stuff:
         else:
             sql_pass = 'SELECT user_id FROM gre'
 
+        if email_verify:
+            ever, ever_val = '', ''
+        else:
+            ever = ', email_validated'
+            ever_val = ', CURRENT_TIMESTAMP'
+            # using CURRENT_TIMESTAMP means we can detect unvalidated emails,
+            # also user email_validated will be true but no email will be
+
         sql = f'''
 WITH grow AS (INSERT INTO groups (groupname) VALUES (:groupname) RETURNING id),
 {sql_users}
-gre AS (INSERT INTO user_emails (user_id, email, email_primary) SELECT id, :email, TRUE FROM gru RETURNING user_id)
+gre AS (INSERT INTO user_emails (user_id, email, email_primary{ever}) SELECT id, :email, TRUE{ever_val} FROM gru RETURNING user_id)
 {sql_pass}
 '''
         # FIXME TODO wrap all of these functions in an error handler that

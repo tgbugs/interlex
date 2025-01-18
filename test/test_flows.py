@@ -22,6 +22,7 @@ import idlib
 from urllib.parse import quote as url_quote
 from sqlalchemy import create_engine
 from sqlalchemy.sql import text as sql_text
+from interlex import config
 from interlex import endpoints
 from interlex.uri import make_paths, uriStructure, route_methods, run_uri
 from interlex.auth import hash_password
@@ -289,7 +290,8 @@ def combinatorics():
             if scen_type in 'reg':
                 return database, orcid_meta, this_scen_id
 
-            orcid = idlib.Orcid._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
+            kls = idlib.systems.orcid.OrcidSandbox if config.orcid_sandbox else idlib.Orcid
+            orcid = kls._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
             if scen['register'].startswith('orcid-first'):
                 # this tests partially completely workflows in the database
                 # we also want to run scen_reg through the app as well
@@ -507,14 +509,15 @@ def combinatorics():
 
                     # 3
                     ever_same = True
-                    client2 = client if ever_same else app.test_client()
-                    token = endpoints._email_mock_tokens[email]
-                    url = url_prefix + '/u/ops/email-verify?t=' + token
-                    resp3 = do_get(client2, url)
-                    if not resp3.ok:
-                        with app.app_context():
-                            breakpoint()
-                            ''
+                    if config.email_verify:
+                        client2 = client if ever_same else app.test_client()
+                        token = endpoints._email_mock_tokens[email]
+                        url = url_prefix + '/u/ops/email-verify?t=' + token
+                        resp3 = do_get(client2, url)
+                        if not resp3.ok:
+                            with app.app_context():
+                                breakpoint()
+                                ''
 
                 if scen['register'] == 'orcid-second':
                     # 1
@@ -551,16 +554,17 @@ def combinatorics():
 
                     # 3
                     ever_same = False
-                    client2 = client if ever_same else app.test_client()
-                    token = endpoints._email_mock_tokens[email]
-                    url = url_prefix + '/u/ops/email-verify?t=' + token
-                    # TODO inserting random delays between steps is fun if you
-                    # do it here the 10 second mock lifetime will trigger!
-                    resp3 = do_get(client2, url)
-                    if not resp3.ok:
-                        with app.app_context():
-                            breakpoint()
-                            ''
+                    if config.email_verify:
+                        client2 = client if ever_same else app.test_client()
+                        token = endpoints._email_mock_tokens[email]
+                        url = url_prefix + '/u/ops/email-verify?t=' + token
+                        # TODO inserting random delays between steps is fun if you
+                        # do it here the 10 second mock lifetime will trigger!
+                        resp3 = do_get(client2, url)
+                        if not resp3.ok:
+                            with app.app_context():
+                                breakpoint()
+                                ''
 
                 # start common flow
 
@@ -697,6 +701,7 @@ def combinatorics():
 
 
 if __name__ == '__main__':
+    # config.email_verify = False
     try:
         combinatorics()
     finally:
