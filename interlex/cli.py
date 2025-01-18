@@ -80,6 +80,7 @@ Options:
     -o --local              run against local
     -c --gunicorn           run against local gunicorn
     -d --debug              enable debug mode
+    --proxy=N               number of proxies you are behind [default: 0]
 
     --do-cdes               when running sync include the cdes
 
@@ -99,7 +100,14 @@ log = _log.getChild('cli')
 
 
 class Options(clif.Options):
-    pass
+
+    @property
+    def proxy(self):
+        n = int(self._args['--proxy'])
+        if n < 0:
+            raise ValueError('proxy >= 0')
+
+        return n
 
 
 class Main(clif.Dispatcher):
@@ -220,7 +228,7 @@ class Server(clif.Dispatcher):
     def uri(self):
         from interlex.config import port_uri
         from interlex.uri import run_uri, __file__
-        app = run_uri(echo=self.options.debug)
+        app = run_uri(echo=self.options.debug, proxy_n=self.options.proxy)
         port = port_uri
         self._server(app, port, __file__)
 

@@ -83,3 +83,8 @@ class TestMakeParamsValues(unittest.TestCase):
 
     def test_False_0(self):
         list(makeParamsValues(((0, False),)))
+
+    def test_vsplit(self):
+        vin = [('a', 'b', 'c', 'd', 'e', 'f'),
+               ('g', 'h', 'i', 'j', 'k', 'l'),]
+        vout = list(makeParamsValues(vin, vsplit=((0, None), (3, None))))

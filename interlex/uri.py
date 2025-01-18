@@ -6,6 +6,7 @@ from flask_restx import Api, Resource, apidoc
 from flask_restx.api import SwaggerView
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
+from werkzeug.middleware.proxy_fix import ProxyFix
 from interlex import config
 from interlex.core import dbUri, mqUri, diffCuries, remove_terminals, TERMINAL
 from interlex.core import RegexConverter, make_paths, makeParamsValues
@@ -477,7 +478,8 @@ def setup_runonce(app, endpoints, echo):
     return runonce
 
 
-def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, dbonly=False, db_kwargs=None):
+def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
+               echo=False, dbonly=False, db_kwargs=None, proxy_n=0):
     if db_kwargs is None:
         db_kwargs = {k:config.auth.get(f'db-{k}')  # TODO integrate with cli options
                 for k in ('user', 'host', 'port', 'database')}
@@ -566,7 +568,17 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure, echo=False, db
         #printD(k, v)
 
     runonce()
+
+    if proxy_n > 0:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_n, x_proto=proxy_n, x_host=proxy_n)
+        #'X-Real-Ip':
+        #'X-Forwarded-For':
+        #'X-Forwarded-Host':
+        #'X-Forwarded-Proto':
+
     return app
 
-def run_uri(echo=False, dbonly=False, db_kwargs=None):
-    return server_uri(db=SQLAlchemy(), mq=cel, lm=LoginManager(), echo=echo, dbonly=dbonly, db_kwargs=db_kwargs)
+
+def run_uri(echo=False, dbonly=False, db_kwargs=None, proxy_n=0):
+    return server_uri(db=SQLAlchemy(), mq=cel, lm=LoginManager(),
+                      echo=echo, dbonly=dbonly, db_kwargs=db_kwargs, proxy_n=proxy_n)

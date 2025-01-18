@@ -363,13 +363,15 @@ class InterLexLoad:
         log.debug(gidmap)
         values = [(ilx_prefix, ilx_id, gidmap[g], uri_path)
                   for ilx_prefix, ilx_id, g, uri_path in _values]
-        sql_base = 'INSERT INTO uris (ilx_prefix, ilx_id, group_id, uri_path) VALUES '
+        sql_uri = 'INSERT INTO uris (group_id, uri_path) VALUES '
+        sql_uri_mapping = 'INSERT INTO uri_mapping (ilx_prefix, ilx_id, group_id, uri_path) VALUES '
 
         self.uid_sql = []
         self.uid_params = []
+        ocdn = ' ON CONFLICT DO NOTHING'
         for chunk in chunk_list(values, self.batchsize):
-            values_template, params = makeParamsValues(chunk)
-            sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # FIXME BAD
+            vt_uri, vt_uri_mapping, params = makeParamsValues(chunk, vsplit=((2, None), (0, None)))
+            sql = (sql_uri + vt_uri + ocdn + ';' + sql_uri_mapping + vt_uri_mapping + ocdn)
             self.uid_sql.append(sql)
             self.uid_params.append(params)
 

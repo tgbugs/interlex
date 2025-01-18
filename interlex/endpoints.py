@@ -817,6 +817,7 @@ class Ops(EndBase):
     @staticmethod
     def _make_orcid_code():
         return base64.urlsafe_b64encode(secrets.token_bytes(4))[:-2].decode()
+
     @staticmethod
     def _make_orcid_meta():
         import uuid

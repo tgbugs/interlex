@@ -128,7 +128,7 @@ class getName:
             return name
 
 
-def makeParamsValues(*value_sets, constants=tuple(), types=tuple()):
+def makeParamsValues(*value_sets, constants=tuple(), types=tuple(), vsplit=tuple()):
     # TODO variable sized records and
     # common value names
     if constants and not all(':' in c for c in constants):
@@ -145,11 +145,22 @@ def makeParamsValues(*value_sets, constants=tuple(), types=tuple()):
         # values will be reduced when we create params as a dict
         proto_params = [(tuple(getname(value) for value in row), row) for row in values]
 
-        values_template = ', '.join('(' + ', '.join(constants +
-                                                    tuple(':' + name
-                                                          for name in names)) + ')'
-                                    for names, _ in proto_params)
-        yield values_template
+        if vsplit:
+            for start, stop in vsplit:
+                vt = ', '.join('(' + ', '.join(constants +
+                                                tuple(':' + name
+                                                        for name in names[start:stop])) + ')'
+                                for names, _ in proto_params)
+                yield vt
+
+        else:
+            values_template = ', '.join('(' + ', '.join(constants +
+                                                        tuple(':' + name
+                                                              for name in names)) + ')'
+                                        for names, _ in proto_params)
+
+            yield values_template
+
         for names, values in proto_params:
             for name, value in zip(names, values):
                 params[name] = value
