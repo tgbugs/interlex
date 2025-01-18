@@ -1638,7 +1638,9 @@ class BasicDBFactory:
     def check_group(self, group):
         if group not in self._cache_groups:
             sql = ('SELECT * FROM groups '
-                   "WHERE own_role < 'pending' AND groupname = :name")
+                   # <= 'pending' here because pending needs some
+                   # access and we screen out before we get here
+                   "WHERE own_role <= 'pending' AND groupname = :name")
             try:
                 res = next(self.session_execute(sql, dict(name=group)))
                 self._cache_groups[group] = res.id, res.own_role
@@ -2702,7 +2704,7 @@ class FileFromPostFactory(FileFromIRIFactory):
                 name_type = 'name'
             elif self.reference_host in self.Loader.bound_name:
                 raise LoadError(f'Group does not match bound name group!\n'
-                                '{self.group} not in {self.Loader.bound_name}')
+                                f'{self.group} not in {self.Loader.bound_name}')
             else:
                 name_type = 'expected_bound_name'
 
