@@ -891,9 +891,9 @@ def process_name_metadata(metadata_to_fetch,
         if bound_name:
             name_rows.append(bound_name)
             if serialization_identity is not None:
-                name_to_idents.append((name, serialization_identity, 'bound'))
+                name_to_idents.append((bound_name, serialization_identity, 'bound'))
             elif graph_combined_local_conventions_identity is not None:
-                name_to_idents.append((name, graph_combined_local_conventions_identity, 'bound'))
+                name_to_idents.append((bound_name, graph_combined_local_conventions_identity, 'bound'))
 
         bound_version_name = metadata.identifier_version
         if bound_version_name:
