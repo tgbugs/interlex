@@ -2185,48 +2185,48 @@ class Ontologies(Endpoints):
 
     @basic
     def ontologies_dns(self, group, dns_host, ont_path='', db=None):
-        return self.ontologies(group=group,
-                               filename=filename,
-                               extension=extension,
-                               ont_path=ont_path,
-                               host=dns_host,
-                               dns=True,
-                               db=db)
+        return self._ontologies(group=group,
+                                filename=filename,
+                                extension=extension,
+                                ont_path=ont_path,
+                                host=dns_host,
+                                dns=True,
+                                db=db)
 
     @basic
     def ontologies_dns_version(self, group, dns_host, ont_path, epoch_verstr_ont, filename_terminal,
                                extension=None, db=None):
-        return self.ontologies_version(group=group,
-                                       filename=filename,
-                                       epoch_verstr_ont=epoch_verstr_ont,
-                                       filename_terminal=filename_terminal,
-                                       extension=extension,
-                                       ont_path=ont_path,
-                                       host=dns_host,
-                                       dns=True,
-                                       db=db)
+        return self._ontologies_version(group=group,
+                                        filename=filename,
+                                        epoch_verstr_ont=epoch_verstr_ont,
+                                        filename_terminal=filename_terminal,
+                                        extension=extension,
+                                        ont_path=ont_path,
+                                        host=dns_host,
+                                        dns=True,
+                                        db=db)
 
     @basic
     def ontologies_uris(self, group, filename, extension=None, ont_path='', db=None):
         # probably just slap a /uris/ on the front of the path
-        return self.ontologies(group=group,
-                               filename=filename,
-                               extension=extension,
-                               ont_path=ont_path,
-                               uris=True,
-                               db=db)
+        return self._ontologies(group=group,
+                                filename=filename,
+                                extension=extension,
+                                ont_path=ont_path,
+                                uris=True,
+                                db=db)
 
     @basic
     def ontologies_uris_version(self, group, filename, epoch_verstr_ont, filename_terminal,
                                 extension=None, ont_path='', db=None):
-        return self.ontologies_version(group=group,
-                                       filename=filename,
-                                       epoch_verstr_ont=epoch_verstr_ont,
-                                       filename_terminal=filename_terminal,
-                                       extension=extension,
-                                       ont_path=ont_path,
-                                       uris=True,
-                                       db=db)
+        return self._ontologies_version(group=group,
+                                        filename=filename,
+                                        epoch_verstr_ont=epoch_verstr_ont,
+                                        filename_terminal=filename_terminal,
+                                        extension=extension,
+                                        ont_path=ont_path,
+                                        uris=True,
+                                        db=db)
 
     @basic
     def ontologies_contributions(self, group, db=None):
@@ -2234,10 +2234,13 @@ class Ontologies(Endpoints):
 
     @basic
     def ontologies_ilx_spec(self, group, frag_pref_id, extension=None, db=None):
-        return self.ontologies_spec(group, frag_pref_id, extension=extension, from_ilx=True, db=db)
+        return self._ontologies_spec(group, frag_pref_id, extension=extension, from_ilx=True, db=db)
 
     @basic
-    def ontologies_spec(self, group, filename, ont_path='', extension=None, from_ilx=False, db=None):
+    def ontologies_spec(self, *args, **kwargs):
+        return self._ontologies_spec(*args, **kwargs)
+
+    def _ontologies_spec(self, group, filename, ont_path='', extension=None, from_ilx=False, db=None):
         # FIXME uris vs non-uris currently this assumes we are coming from uris
         # TODO figure out of /{group}/ontologies/{ilx_*,dns,etc.} also need specs ...
         # I'm leaving them off for now
@@ -2330,8 +2333,11 @@ class Ontologies(Endpoints):
             return 'TODO', 501
 
     @basic
-    def ontologies(self, group, filename, extension=None, ont_path='', host=None, dns=False, uris=False, spec=False, from_ilx=False,
-                   nocel=False, db=None):
+    def ontologies(self, *args, **kwargs):
+        return self._ontologies(*args, **kwargs)
+
+    def _ontologies(self, group, filename, extension=None, ont_path='', host=None,
+                    dns=False, uris=False, spec=False, from_ilx=False, nocel=False, db=None):
         """ the main ontologies endpoint """
         # on POST for new file check to make sure that that the ontology iri matches the post endpoint
         # response needs to include warnings about any parts of the file that could not be lifted to interlex
@@ -2412,6 +2418,7 @@ class Ontologies(Endpoints):
 
                 graph = OntGraph()
                 if spec:
+                    # TODO check that there is an ontology at all before trying to get triples
                     curies = {p: n for p, n in self.queries.getCuriesByName(spec_uri)}
                     graph_rows = self.queries.getGraphByName(spec_uri)
                     title = f'spec for {ont_uri}'
@@ -2422,6 +2429,9 @@ class Ontologies(Endpoints):
                     # for now we pull everything from the triples table
                     curies = self.queries.getGroupCuries(group)  # TODO derive from spec if spec has rules for it
                     graph_rows = self.queries.generateOntologyFromSpec(spec_uri)
+                    if not graph_rows:
+                        abort(404)
+
                     title = 'TODO derive from dc:title or the ontologies table'
 
                 graph.namespace_manager.populate_from(curies)
@@ -2542,13 +2552,15 @@ class Ontologies(Endpoints):
         return request.path + '\n'
 
     @basic
-    def ontologies_version(self, group, filename, epoch_verstr_ont,
+    def ontologies_version(self, *args, **kwargs):
+        return self._ontologies_versions(*args, **kwargs)
+
+    def _ontologies_version(self, group, filename, epoch_verstr_ont,
                             filename_terminal, extension=None, ont_path='', host=None, dns=False, uris=False, db=None):
         if filename != filename_terminal:
             abort(404)  # 400 maybe ?
         else:
             return request.path, 501
-
 
 
 class Versions(Endpoints):
