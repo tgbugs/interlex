@@ -784,6 +784,9 @@ class Ops(EndBase):
         return self._orcid(url_orcid_land)
 
     def _orcid(self, url_orcid_land, refresh=False):
+        if fl.current_user is not None and hasattr(fl.current_user, 'orcid') and fl.current_user.orcid:
+            abort(409, f'orcid already associated {fl.current_user.orcid}')  # FIXME TODO check error code on this
+
         if 'from' in request.args:
             c = '&' if '?' in url_orcid_land else '?'  # XXX I'm sure this is a bad assumption ...
             url_orcid_land += ('?from=' + request.args['from'])
@@ -934,7 +937,9 @@ class Ops(EndBase):
 
         if group_resp:
             self._orcid_login(orcid, group_resp)
-            return redirect(f'/{group_resp}/priv/settings?from=orcid-landing-new')
+            group_row = group_resp[0]
+            groupname = group_row.groupname
+            return redirect(f'/{groupname}/priv/settings?from=orcid-landing-new', code=302)
             #return 'you already have an InterLex account and have been logged in'
 
         self._insert_orcid_meta(self.session, orcid_meta)
