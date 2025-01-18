@@ -1914,7 +1914,7 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
             _serialization_identity).rstrip(b'=').decode()
         working_path = base / f'local-file-system{url.path}' / b64cs
     else:
-        resp = requests.get(uri_string, stream=True)
+        resp = requests.get(uri_string, stream=True, timeout=5)
         resp.close()
         # note that a compressed etag will not matches metadata to fetch if that points to an uncompressed stream
         etag = resp.headers['etag']  # we can't trust etags not to be malformed so b64 them before sticking them on the fs

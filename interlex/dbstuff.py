@@ -266,6 +266,24 @@ where up.group_id = idFromGroupname(:group)
     def getOrgSettings(self, group):
         pass
 
+    def getUserOverview(self, group):
+        args = dict(group=group)
+        sql = '''
+select g.groupname, u.orcid, om.name, g.created_datetime,
+ARRAY(select gp.groupname from groups as gp
+        join user_permissions as up on gp.id = up.group_id
+       where up.user_id = idFromGroupname(:group) and up.user_role < 'view') as member_of,
+ARRAY(select (psup.subject, psup.user_role) from perspective_subject_user_permissions as psup
+      -- TODO likely need the perspective as well
+       where psup.user_id = idFromGroupname(:group)
+        ) as edrev_of
+from groups as g
+join users as u on g.id = u.id
+join orcid_metadata as om on om.orcid = u.orcid
+where g.id = idFromGroupname(:group)
+'''
+        return list(self.session_execute(sql, args))
+
     def getUserSettings(self, group):
         # FIXME move to dbstuff
         args = dict(group=group)

@@ -251,6 +251,7 @@ class Endpoints(EndBase):
 
     def get_func(self, nodes):
         mapping = {
+            'group_': self.group_,
             'ilx': self.ilx,
             'other': self.other,
             '*versions': self.versions,
@@ -358,6 +359,29 @@ class Endpoints(EndBase):
             _, _, func = tripleRender.check(request)
         except exc.UnsupportedType as e:
             abort(e.code, {'message': e.message})
+
+    @basic
+    def group_(self, group, db=None):
+        '''overview page for group (user/org)'''
+        dbstuff = Stuff(self.session)
+        resp = dbstuff.getUserOverview(group)
+        if resp:
+            row = resp[0]
+            stuff = {
+                'groupname': row.groupname,
+                'fullname': row.name,  # 'Place Holder' # lol
+                'orcid': row.orcid,
+                'group_created_datetime': isoformat(row.created_datetime.astimezone(timezone.utc)),
+            }
+            if row.member_of:
+                stuff['member_of'] = row.member_of
+
+            if row.edrev_of:
+                stuff['edrev_of'] = row.edrev_of
+
+            return json.dumps(stuff), 200, ctaj
+
+        abort(404)
 
     def _ilx(self, group, frag_pref, id, func):
         PREFIXES, graph = self.getGroupCuries(group)
@@ -1625,6 +1649,7 @@ class Priv(EndBase):
 
     def get_func(self, nodes):
         mapping = {
+            'logout': self.logout,
             'upload': self.upload,
             'request-ingest': self.request_ingest,
             'pull-new': self.pull_new,  # FIXME TODO may need pull-ont-new pull-ent-new pull-ext-new pull-uri-new

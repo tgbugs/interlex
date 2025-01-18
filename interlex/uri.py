@@ -98,7 +98,7 @@ def uriStructure():
     ilx_spec_ext = ['*spec', '*spec.<extension>']
     # reminder: None is used to mark branches that are also terminals
     parent_child = {
-        '<group>':             basic + ['*ilx_get', 'lexical'] + branches + compare + [
+        '<group>':             [None] + basic + ['*ilx_get', 'lexical'] + branches + compare + [
             'priv', 'pulls', 'contributions', 'prov', 'external',],
         'u':                   ['ops', '*priv'],
         'ops':                 ['login',
@@ -115,7 +115,8 @@ def uriStructure():
                                 'orcid-land-assoc',  # currently null case
                                 'orcid-land-change',  # currently not null case
                                 ],
-        'priv':                ['role',  # note that priv -> privileged NOT private!
+        'priv':                ['logout',
+                                'role',  # note that priv -> privileged NOT private!
                                 'role-other',  # this the summary of current users role in other groups
                                 'upload',
                                 'request-ingest',
@@ -171,6 +172,7 @@ def uriStructure():
         'versions':            ['<epoch_verstr_id>'],  # FIXME version vs versions!?
         '<epoch_verstr_id>':   versioned_ids + version_compare,
         #'ontologies':          [2, ilx_get, '*uris_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
+        #'entities':            [None, ''],  TODO need something like /terms /predicates /types etc.
         'ontologies':          ['*ont_ilx_pattern', '*ont_ilx_get', '*dns_ont', '*uris_ont', '*contributions_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
         '*ont_ilx_pattern':    ilx_spec_ext,  # needed to support existing termsets
         #'collections':         [2, '<path:ont_path>'] + intermediate_filename,  # TODO more general than files, ontologies, or resources
@@ -279,6 +281,7 @@ _known_default = (
     #'*ilx_get'
     #'',  # unhandled terminal case
     #TERMINAL,  # unhandled terminal case FIXME these aren't unhandled ... it is a path/route mismatch
+    '<group>',
     'other',
     '*ilx_get',
     '<label>',
@@ -307,7 +310,9 @@ _known_default = (
 def add_leafbranches(nodes):
     if nodes[-1] == TERMINAL:
         prefix = tuple(nodes[:-2])
-        if 'curies' in nodes:
+        if nodes == ('', '<group>', TERMINAL):
+            nodes = prefix + ('group_',)
+        elif 'curies' in nodes:
             nodes = prefix + ('curies_',)
         #elif nodes == ('', '<group>', 'ontologies', TERMINAL):  # only at depth 2
             #breakpoint()
