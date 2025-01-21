@@ -1879,9 +1879,10 @@ class Priv(EndBase):
              f'key:type "{k.key_type}" ;\n'
              f'key:scope "{k.key_scope}" ;\n'
              f'key:created "{isoformat(k.created_datetime)}" ') +
+            (f';\nkey:note {json.dumps(k.note)} ' if k.note else '') +
             (f';\nkey:lifetime-seconds {k.lifetime_seconds} ' if k.lifetime_seconds else '') +
             (f';\nkey:revoked "{isoformat(k.revoked_datetime)}" ' if k.revoked_datetime else '') + '.'
-            for k in keys])) if keys else ''
+            for k in sorted(keys, key=(lambda r: r.created_datetime), reverse=True)])) if keys else ''
 
         orcid_line = '' if user.orcid is None else f'settings:orcid <{user.orcid}> ;\n'
         out = (
@@ -2126,13 +2127,22 @@ class Priv(EndBase):
         # even though it should be impossible to get through the @basic checks with the
         # auth_user not matching the group, making doubly sure is probably a good idea
         # HOWEVER that means we need to set fl.current_user on api key auth as well
-        dbstuff.insertApiKey(group, key, token_type, scope, lifetime_seconds, note)
+        try:
+            dbstuff.insertApiKey(group, key, token_type, scope, lifetime_seconds, note)
+        except sa.exc.InternalError as e:
+            if (e.orig.diag.source_function == 'exec_stmt_raise' and
+                e.orig.diag.context.startswith('PL/pgSQL function api_keys_ensure_invars()')):
+                abort(409, e.orig.diag.message_primary)
+            else:
+                log.exception(e)
+                abort(500, 'something went wrong')
+
         self.session.commit()
         # since this is a critical path, close the loop and make sure the key
         # actually went in, because sometimes we for get that before insert
         # tiggers need to return new not null (derp)
         double_check = dbstuff.getGroupApiKeys(group)
-        if double_check and double_check[0].key == key:
+        if double_check and key in set(r.key for r in double_check):
             return {'key': key}, 201, ctaj
         else:
             msg = f'{key} -/-> {double_check}'
