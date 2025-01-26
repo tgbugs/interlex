@@ -9,13 +9,15 @@ while [ -h "$SOURCE" ]; do # resolve all symlinks
 done
 ABS_PATH="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
 
-SQL="${ABS_PATH}/../sql/"
+SQL="${ABS_PATH}/../sql"
 RESOURCES="${ABS_PATH}/../resources/"
+PATH_TEST="${ABS_PATH}/../test"
 
 if [ ! -d "${SQL}" ]; then
   # installed outside of git
-  SQL="${ABS_PATH}/../share/interlex/sql/"
+  SQL="${ABS_PATH}/../share/interlex/sql"
   RESOURCES="${ABS_PATH}/../share/interlex/resources/"
+  PATH_TEST="${ABS_PATH}/../share/interlex/test"
 fi
 
 if [ -z $1 ]; then
@@ -52,8 +54,7 @@ export DBSETUPTEST=1
 export INTERLEX_TEST_PORT=${PORT}
 export INTERLEX_TEST_DATABASE=${DATABASE}
 echo running python tests 
-cd ${ABS_PATH}/../
-pytest test/test_constraints.py
+pytest "${PATH_TEST}"/test_constraints.py
 unset DBSETUPTEST
 unset INTERLEX_TEST_PORT
 unset INTERLEX_TEST_DATABASE

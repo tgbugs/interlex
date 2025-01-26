@@ -14,3 +14,5 @@ recursive-exclude * *.swp
 recursive-exclude * *.swo
 recursive-include resources *.confd
 recursive-include resources *.rc
+include resources/schemaspy.ini.example
+include resources/uri.interlex.org.conf
