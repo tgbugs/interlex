@@ -72,7 +72,8 @@ setup(name='interlex',
                   ('share/interlex/resources', [
                       f'resources/{f}' for f in
                       ('reserved-usernames-len-gt-4.txt',)]),
-                  ('share/interlex/test', [f.as_posix() for f in Path('test').iterdir()]),
+                  ('share/interlex/test', [f.as_posix() for f in Path('test').iterdir()
+                                           if not f.is_dir()]),
                   ('share/interlex/test/data', [f.as_posix() for f in Path('test/data').iterdir()]),
                   ]  # FIXME package_data
      )
