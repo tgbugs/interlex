@@ -392,6 +392,9 @@ def ilxbin(subpath):
     # we may need to translate these to python because finding locations of non-python files
     # from python is a non-specified nightmare
     up = (pathlib.Path('~/git/interlex/bin/') / subpath).expanduser()
+    if not up.exists():  # try /usr/bin as well
+        up = (pathlib.Path('/usr/bin/') / subpath)
+
     return up.as_posix()
 
 cmd_sh = shutil.which('sh')

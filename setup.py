@@ -63,7 +63,9 @@ setup(name='interlex',
                       'elasticsearch': ['elasticsearch'],
                       'test': tests_require,
                      },
-      scripts=['bin/interlex-uri', 'bin/interlex-curies', 'bin/interlex-dbsetup'],
+      scripts=['bin/interlex-uri', 'bin/interlex-curies', 'bin/interlex-dbsetup',
+               'bin/make-ntriples-xz.sh',
+               'bin/make-subsets.sh',],
       entry_points={
           'console_scripts': [
               'interlex=interlex.cli:main',
