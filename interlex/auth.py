@@ -1,13 +1,19 @@
 from datetime import datetime, timedelta
+import uuid
 import argon2
 import secrets
 import binascii
+import jwt
+from jwt import exceptions as jwtexc
 import flask_login as fl
-from flask import abort, url_for
+from flask import abort, url_for, g as flask_context_globals, session as fsession
 from idlib.utils import makeEnc
 from interlex import config
 from interlex.utils import log
 from interlex.dbstuff import Stuff
+
+_orcid_mock_public_key = None
+_orcid_mock_private_key = None
 
 ph = argon2.PasswordHasher(
     # want this to run a bit slower than default
@@ -154,22 +160,25 @@ class Auth:
 
     def __init__(self, session, rules_req_auth):
         self.session = session  # this is always needed now
+        self.orcid_openid_jwkc = jwt.PyJWKClient(f'https://{config.orcid_host}/oauth/jwks')
+        self.orcid_openid_sk = self.orcid_openid_jwkc.get_signing_keys()[0]
+
         # we do need two things to improve this though
         # 1 swap out of this class every 30 mins or something
         # 2 a secured admin api endpoint that will revoke
         # the key
         # or the current secret
         # and immediately reup this needs to use an orthogonal auth system
-        self.scopes = ('read-only', 'group-read-only', 'group-auto-pull'
+        #self.scopes = ('read-only', 'group-read-only', 'group-auto-pull'
                        # FIXME from db please
-                       'issued-user-only', 'check-group', 'admin')
+                       #'issued-user-only', 'check-group', 'admin')
         # there isn't such a thing as a group write for prov reasons, and group-auto-pull
         # is only useful for reducing the computational load on interlex
         # admin gives you the ability to wipe whole qualifiers from existence
         # check group is probably the only one we need for the most part
-        self.private_key = 'a;lskdjfa;slkdjf;alksdjf;alkjg;aslkdjf;alskdfjas;dlkfj'
-        self.current_secret = 'LOL-PLEASE-GET-ME-FROM-THE-DATABASE'
-        self.revoked_secrets = 'i was leaked by some idiot', 'whoops data went everywhere'
+        #self.private_key = 'a;lskdjfa;slkdjf;alksdjf;alkjg;aslkdjf;alskdfjas;dlkfj'
+        #self.current_secret = 'LOL-PLEASE-GET-ME-FROM-THE-DATABASE'
+        #self.revoked_secrets = 'i was leaked by some idiot', 'whoops data went everywhere'
 
         self.rules_req_auth = rules_req_auth
         #if not rules_maybe_auth:
@@ -177,14 +186,15 @@ class Auth:
             #raise ValueError(msg)
 
     def decrypt(self, token):
+        raise NotImplementedError('old do not use')
         # do not implement this yourself, is this coming from orcid?
         # all tokens should be encrypted with the 'public' key?
         # and then the private used to verify or something like that
         fake_expand = token + ' ' + token + ' 1701912161 check-group ' + 'LOL-PLEASE-GET-ME-FROM-THE-DATABASE'  # XXX XXX XXX XXX FIXME TODO
         return fake_expand
 
-
     def decodeToken(self, request, token):
+        raise NotImplementedError('old do not use')
         assert isinstance(token, str)
         plain_text = self.decrypt(token)
 
@@ -211,6 +221,7 @@ class Auth:
         return group, auth_user, scope, issued_utc_epoch
 
     def decodeTokenSimple(self, token):
+        raise NotImplementedError('old do not use')
         irequest = self.InternalRequest()
         try:
             group, auth_user, scope, issued_utc_epoch = self.decodeToken(irequest, token)
@@ -221,12 +232,52 @@ class Auth:
             # downstream logger will deal with this
             return None, None
 
-    def load_user(self, user_id):
+    def _orcid_jwt(self, openid_token):
+        # TODO so much lurking complexity in here :/
+        # retrieve the signing key at start up or similar
+        # if the token we receive was not signed by that key
+        # then we abort and tell the user to sign in again
+        # orcid tokens expire in 24 hrs it seems
+        # audience is the client id
+
+        # i think that we don't actually need to store the token in the
+        # database, because what we will do is use it as the session id
+        # so orcid sessions can last at most 24 hrs but without the ability
+        # to revoke (for now until I can figure out how to deal with that)
+        # looks like that is what jti is for? https://stackoverflow.com/a/29946630
+
+        # https://github.com/ORCID/ORCID-Source/blob/main/orcid-web/ORCID_AUTH_WITH_OPENID_CONNECT.md
+        # the openid public key for openid_token is a https://orcid.org/oauth/jwks
+        # see also https://orcid.org/.well-known/openid-configuration
+
+        sk = self.orcid_openid_sk
+        if _orcid_mock_public_key is None:
+            key = sk.key
+        else:
+            key = _orcid_mock_public_key
+
+        detok = jwt.decode(openid_token, key, sk.algorithm_name, audience=config.orcid_client_id)
+
+        return detok
+
+    def load_user(self, surrogate):
         dbstuff = Stuff(self.session)
-        if not isinstance(user_id, int):
-            if isinstance(user_id, str):
-                orcid = f'https://{config.orcid_host}/' + user_id
-                rows = dbstuff.getOrcidMetadataUserByOrcid(orcid)
+        if not isinstance(surrogate, uuid.UUID):
+            if isinstance(surrogate, str):  # this is now the orcid openid jwt
+                try:
+                    detok = self._orcid_jwt(surrogate)  # TODO error handling
+                except jwtexc.ExpiredSignatureError as e:
+                    # FIXME TODO this needs to redirect to a login page and clear the session
+                    msg = 'please log in again'
+                    raise self.ExpiredTokenError(msg) from e
+
+                orcid = f'https://{config.orcid_host}/' + detok['sub']
+                orcid_pending = '_orcid_only' in fsession and fsession['_orcid_only'] == 'true'
+                if orcid_pending:
+                    rows = dbstuff.getOrcidMetadataUserByOrcid(orcid)
+                else:
+                    rows = dbstuff.getUserByOrcid(orcid)
+
                 if not rows:
                     # somehow someone got a session cookie but we didn't record
                     # their orcid, which either means we have a bug or our
@@ -235,7 +286,7 @@ class Auth:
                     return
 
                 orcid_row = rows[0]
-                if orcid_row.id is not None:
+                if orcid_pending and orcid_row.id is not None:
                     # FIXME do we send the user a header to tell the user agent
                     # to clear cookies or something along with the new cookie?
                     msg = ('attempt to connect with orcid only session cookie '
@@ -249,24 +300,28 @@ class Auth:
                     is_authenticated = True
                     via_auth = 'orcid'
                     orcid = orcid_row.orcid
-                    id = None
-                    own_role = None
-                    groupname = None
+                    id = surrogate
+                    own_role = None if orcid_pending else orcid_row.own_role
+                    groupname = None if orcid_pending else orcid_row.groupname
                     def get_id(self):
                         return self.id
 
                 return tuser()
             else:
-                msg = f'{user_id!r} is a {type(user_id)}'
+                msg = f'{surrogate!r} is a {type(surrogate)}'
                 raise TypeError(msg)
 
-        rows = dbstuff.getUserById(user_id)
+        rows = dbstuff.getUserBySurrogate(surrogate)
         if not rows:
             # similar logic as with the orcid above, if we make it this far
             # and there is a valid session cookie that we can decode that
             # decodes to something that could be mistaken for a valid user
             # id but that somehow does not exist then something is VERY wrong
-            log.critical(f'decoded cookie but no user for {user_id}')
+            log.critical(f'decoded cookie but no user for {surrogate}')
+            # FIXME TODO so the other case where this can happen is when
+            # a user has been banned, also, we need to implement alternative tokens
+            # so that we can invalidate other sessions e.g. on password change
+            # see https://flask-login.readthedocs.io/en/latest/#alternative-tokens
             return
         else:
             class tuser:
@@ -277,7 +332,7 @@ class Auth:
                 is_authenticated = True
                 via_auth = 'interlex'
                 orcid = rows[0].orcid
-                id = rows[0].id
+                id = rows[0].surrogate
                 own_role = rows[0].own_role
                 groupname = rows[0].groupname
                 def get_id(self):
@@ -286,15 +341,18 @@ class Auth:
             return tuser()
 
     def refresh_login(self):
+        orcid_login = '_via_auth' in fsession and fsession['_via_auth'] == 'orcid'
         if orcid_login:
             base = url_for('Ops.login /u/ops/orcid-login')
         else:
             base = url_for('Ops.login /u/ops/login')
 
-        get_back_here = ''
+        get_back_here = ''  # TODO
         return redirect(base + '?from=refresh' + '&next=' + get_back_here, 302)
 
     def authenticate_request(self, request):
+        # FIXME this should almost certainly be decorated with
+        # @lm.request_loader at a later stage ...
         now = datetime.utcnow()
         # unauthed requests don't really need this
         request._auth_datetime = now
@@ -402,6 +460,7 @@ class Auth:
         else:
             return None, None, None, None, None
 
+        user_meta = None
         dbstuff = Stuff(self.session)
         if auth_value is not None:
             if not auth_value.startswith('Bearer '):
@@ -421,7 +480,7 @@ class Auth:
                 msg = 'the provided token is not known to this system'
                 raise self.UnknownTokenError(request, msg)
 
-            row = resp[0]
+            user_meta = row = resp[0]
             if row.revoked_datetime is not None:
                 # XXX DO NOT RETURN ANY INFORMATION ABOUT REVOCATION TIME
                 # it can be used by an attacker to estimate response time
@@ -546,5 +605,28 @@ class Auth:
                 auth_user = maybe_auth_user
                 group = maybe_group
                 token = maybe_token
+
+        if (auth_user is not None and
+            (fl.current_user is None or
+             not hasattr(fl.current_user, 'groupname'))):
+            #fl.login_user()
+            # can't use login_user because that sets a session cookie which we don't want
+            # though the docs do mention something about this e.g.
+            # see https://flask-login.readthedocs.io/en/latest/#disabling-session-cookie-for-apis
+            class tuser:
+                is_active = True
+                is_anonymous = False
+                is_authenticated = True
+                via_auth = 'api'
+                orcid = user_meta.orcid
+                id = 'from-api-key'
+                own_role = user_meta.own_role
+                groupname = auth_user
+                def get_id(self):
+                    return self.id
+
+            flask_context_globals.api_login = True
+            fsession['_via_auth'] = tuser.via_auth
+            fl.login_user(tuser())
 
         return group, auth_user, scope, token, read_private

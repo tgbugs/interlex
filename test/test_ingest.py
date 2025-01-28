@@ -71,7 +71,12 @@ class TestIngestIdentityFunction(unittest.TestCase):
         self._doit(trips)
 
     def test_nometa(self):
-        path = working_dir / 'test/data/nometa.ttl'
+        if working_dir is None:
+            # FIXME hardcoded to docker install path
+            path = '/usr/share/interlex/test/data/nometa.ttl'
+        else:
+            path = working_dir / 'test/data/nometa.ttl'
+
         ingest_path(path, 'tgbugs', debug=True)
 
     def test_nasty(self):

@@ -22,8 +22,7 @@ import idlib
 from urllib.parse import quote as url_quote
 from sqlalchemy import create_engine
 from sqlalchemy.sql import text as sql_text
-from interlex import config
-from interlex import endpoints
+from interlex import config, endpoints, auth as iauth
 from interlex.uri import make_paths, uriStructure, route_methods, run_uri
 from interlex.auth import hash_password
 from interlex.core import dbUri, getScopedSession, remove_terminals
@@ -70,6 +69,10 @@ def cleanup_dbs(dbs):
 def combinatorics():
     endpoints._email_mock = True
     endpoints._orcid_mock = True
+    import rsa
+    _pub, _priv = rsa.newkeys(2048)  # keep it short for testing
+    iauth._orcid_mock_public_key = _pub.save_pkcs1()
+    iauth._orcid_mock_private_key = _priv.save_pkcs1()
     #session = getSession(echo=False)
     _session = None
     user = 'tgbugs-test-1', 'tgbugs-test-2'

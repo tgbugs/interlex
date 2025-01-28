@@ -1,7 +1,8 @@
 from pathlib import Path
 from datetime import timedelta
 from collections import OrderedDict as od
-from flask import Flask, url_for, abort
+from flask import Flask, url_for, abort, g as flask_context_globals
+from flask.sessions import SecureCookieSessionInterface
 from flask_restx import Api, Resource, apidoc
 from flask_restx.api import SwaggerView
 from flask_sqlalchemy import SQLAlchemy
@@ -483,6 +484,13 @@ def setup_runonce(app, endpoints, echo):
     return runonce
 
 
+class NoSessionForToken(SecureCookieSessionInterface):
+    def save_session(self, *args, **kwargs):
+        if flask_context_globals.get('api_login'):
+            return
+        return super().save_session(*args, **kwargs)
+
+
 def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
                echo=False, dbonly=False, db_kwargs=None, proxy_n=0):
     if db_kwargs is None:
@@ -505,6 +513,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
     app.config['REMEMBER_COOKIE_SECURE'] = True
     app.config['REMEMBER_COOKIE_HTTPONLY'] = True  # XXX see how this interacts with the frontend
     app.url_map.converters['regex'] = RegexConverter
+    app.session_interface = NoSessionForToken()
 
     db.init_app(app)
     mq.init_app(app)

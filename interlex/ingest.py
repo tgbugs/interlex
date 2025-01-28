@@ -377,7 +377,8 @@ def run_cmd(argv, cwd, logfile):
                 stderr=subprocess.STDOUT, stdout=logfd)
             out1 = p1.communicate()
             if p1.returncode != 0:
-                raise exc.SubprocessException(f'oops retr return code was {p1.returncode}')
+                log.debug('\n' + out1.decode())
+                raise exc.SubprocessException(f'oops return code was {p1.returncode}')
         except KeyboardInterrupt as e:
             p1.send_signal(signal.SIGINT)
             raise e

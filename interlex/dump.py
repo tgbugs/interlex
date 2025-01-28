@@ -921,7 +921,7 @@ select * from gclc_idtys
 '''
 
         else:
-            args = dict(serialization_identity=serialization_identity)
+            args = dict(serialization_identity=serialization_identity, type=None, name=None)
             _sql_ser_idtys = 'select :serialization_identity'
 
 
@@ -961,9 +961,8 @@ where c.local_conventions_identity in (select * from lc_idtys)
 '''
 
         else:
-            args = dict(serialization_identity=serialization_identity)
+            args = dict(serialization_identity=serialization_identity, name=None, type=None)
             _sql_ser_idtys = 'select :serialization_identity'
-
 
         _sql_common = f'''
 with ser_idtys as (

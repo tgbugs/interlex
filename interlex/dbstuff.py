@@ -39,6 +39,14 @@ class Stuff:
 
         if argon2_string is not None:
             params['argon2_string'] = argon2_string
+            # plpgsql cte insert trigger
+            # https://www.postgresql.org/message-id/CAHzbRKf3fXdOeway0yQ5+XJz3vObe_T6C=TYMdh6tFw33jUxcA@mail.gmail.com
+            # https://www.postgresql.org/message-id/CAKFQuwYsCPJwNwSjvsP-FVEiojCgLoWpeir%3Dczuk311MKTs69w%40mail.gmail.com
+            # https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-MODIFYING
+            # The sub-statements in WITH are executed concurrently with each
+            # other and with the main query. Therefore, when using
+            # data-modifying statements in WITH, the order in which the
+            # specified updates actually happen is unpredictable.
             sql_pass = 'INSERT INTO user_passwords (user_id, argon2_string) SELECT user_id, :argon2_string FROM gre RETURNING user_id'
         else:
             sql_pass = 'SELECT user_id FROM gre'
@@ -55,7 +63,8 @@ class Stuff:
 WITH grow AS (INSERT INTO groups (groupname) VALUES (:groupname) RETURNING id),
 {sql_users}
 gre AS (INSERT INTO user_emails (user_id, email, email_primary{ever}) SELECT id, :email, TRUE{ever_val} FROM gru RETURNING user_id)
-{sql_pass}
+{sql_pass};
+SELECT uss.user_id, uss.surrogate FROM user_session_surrogates AS uss LEFT JOIN groups AS g ON g.id = uss.user_id WHERE g.groupname = :groupname;
 '''
         # FIXME TODO wrap all of these functions in an error handler that
         # translates the sql error
@@ -122,11 +131,13 @@ RETURNING created_datetime, delay_seconds, lifetime_seconds
 SELECT * FROM groups AS g
 JOIN users AS u ON g.id = u.id
 JOIN user_passwords AS up ON up.user_id = u.id
+JOIN user_session_surrogates AS uss ON uss.user_id = u.id
 WHERE g.groupname = :groupname AND g.own_role <= 'pending'
 '''
         return list(self.session_execute(sql, dict(groupname=group)))
 
-    def insertOrcidMetadata(self, orcid, name, token_type, token_scope, token_access, token_refresh, lifetime_seconds, openid_token=None, user=None):
+    def insertOrcidMetadata(self, orcid, name, token_type, token_scope, token_access, token_refresh, lifetime_seconds,
+                            openid_token=None, user=None):
         args = dict(
             orcid=orcid,
             name=name,
@@ -181,6 +192,15 @@ VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh,
         sql = "SELECT * FROM groups AS g JOIN users AS u ON g.id = u.id WHERE g.own_role <= 'pending' AND u.id = :user_id"
         return list(self.session_execute(sql, args))
 
+    def getUserBySurrogate(self, surrogate):
+        args = dict(surrogate=surrogate)
+        sql = ("SELECT * "
+               "FROM groups AS g "
+               "JOIN users AS u ON g.id = u.id "
+               "JOIN user_session_surrogates AS uss ON u.id = uss.user_id "
+               "WHERE g.own_role <= 'pending' AND uss.surrogate = :surrogate")
+        return list(self.session_execute(sql, args))
+
     def insertApiKey(self, group, key, token_type, scope, lifetime_seconds=None, note=None):
         nnopts = {k: v for k, v in dict(lifetime_seconds=lifetime_seconds, note=note).items() if v is not None}
         args = dict(group=group, key=key, key_type=token_type, scope=scope, **nnopts)
@@ -229,9 +249,10 @@ where gg.groupname in :groups and up.user_id = idFromGroupname(:user)
         args = dict(api_key=api_key)
         sql = (
             'select a.key_scope, a.created_datetime, a.lifetime_seconds, '
-            'a.revoked_datetime, g.groupname '
+            'a.revoked_datetime, g.groupname, g.own_role, u.orcid '
             'from api_keys as a '
             'join groups as g on g.id = a.user_id '
+            'join users as u on g.id = u.id '
             'where a.key = :api_key '
             # note that you won't be able to get api keys at all
             # until email and orcid workflows are done

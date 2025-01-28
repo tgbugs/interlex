@@ -181,8 +181,8 @@ class TestRoutes(RouteTester, unittest.TestCase):
     def test_post_ontspec(self):
         self.app.debug = True
         client = self.app.test_client()
-        tuser = 'tgbugs'  # FIXME
-        token = auth.user_config.secrets('interlex', tuser, 'test')
+        tuser = auth.get('test-api-user')
+        token = auth.get('interlex-test-api-key')
         headers = {'Authorization': f'Bearer {token}'}
         data = {'title': 'test ontology',
                 'subjects': [
@@ -205,6 +205,27 @@ class TestRoutes(RouteTester, unittest.TestCase):
             client3 = self.app.test_client()
             #resp3 = client3.get(url + '.html')  # FIXME .html breaks url matcher TODO
             resp3 = client3.get(url, headers={'Accept': 'text/html'})
+
+        with self.app.app_context():
+            #breakpoint()
+            ''
+
+    def test_post_user_new(self):
+        self.app.debug = True
+        client = self.app.test_client()
+        url = f'{self.prefix}/u/ops/user-new'
+        diff = secrets.token_hex(6)
+        username = f'some-user-{diff}'
+        data = {
+            'username': username,
+            'password': 'passwordpassword',
+            'email': f'email-{diff}@example.org',}
+        resp = client.post(url, data=data)
+        #if resp.status_code == 303:  # don't do this because it goes to orcid reg step
+            #resp2 = client.get(resp.location)# url_settings)
+
+        url_settings = f'{self.prefix}/{username}/priv/settings'
+        resp2 = client.get(url_settings)
 
         with self.app.app_context():
             breakpoint()

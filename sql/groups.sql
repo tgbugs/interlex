@@ -681,6 +681,22 @@ CREATE TABLE user_passwords(
        CONSTRAINT fk__user_passwords__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
 );
 
+CREATE TABLE user_session_surrogates(
+       user_id integer PRIMARY KEY references users (id),
+       surrogate uuid unique not null default gen_random_uuid()
+);
+
+CREATE FUNCTION change_password_change_surrogate() RETURNS trigger AS $$
+BEGIN
+    DELETE FROM user_session_surrogates AS uss WHERE uss.user_id = NEW.user_id;
+    INSERT INTO user_session_surrogates (user_id) VALUES (NEW.user_id);
+    RETURN NULL;
+END;
+$$ language plpgsql;
+
+CREATE TRIGGER change_password_change_surrogate AFTER INSERT OR UPDATE ON user_passwords
+       FOR EACH ROW EXECUTE PROCEDURE change_password_change_surrogate();
+
 -- some overly simplified abuse control mechanisms
 
 CREATE TYPE quota_types AS ENUM (

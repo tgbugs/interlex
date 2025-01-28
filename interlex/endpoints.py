@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import requests
 import sqlalchemy as sa
 import flask_login as fl
-from flask import request, redirect, url_for, abort, Response
+from flask import request, redirect, url_for, abort, Response, session as fsession
 from rdflib import URIRef  # FIXME grrrr
 from htmlfn import atag, btag, h2tag, htmldoc
 from htmlfn import table_style, render_table, redlink_style
@@ -57,9 +57,14 @@ def getBasicDB(self, group, request):
         # authenticate_request
         auth_group, auth_user, scope, auth_token, read_private = self.auth.authenticate_request(request)
     except self.auth.ExpiredTokenError:
-        abort(401, {'message': (
-            'Your token has expired, please get a '
-            f'new one at {self.link_to_new_token}')})
+        # FIXME are the cases where we want to redirect to login?
+        if '_via_auth' in fsession and fsession['_via_auth'] == 'orcid':
+            abort(401, {'message': 'orcid login expired, please login again'})
+        else:
+            newtokl = url_for('Priv /<group>/priv/api-token-new')
+            abort(401, {'message': (
+                'Your token has expired, please get a '
+                f'new one at {newtokl}')})
     except (self.auth.MissingTokenError, self.auth.InvalidScopeError, self.auth.HasNotCompletedVerificationError) as e:
         # it is ok to return a 401 for missing token because it is returned for
         # particular methods or well known endpoints, never for scratch space
@@ -94,7 +99,7 @@ def getBasicDB(self, group, request):
 
     return db, auth_user, read_private
 
-
+pass_db = False  # new permissions model means we don't need this anymore
 def basic(function):
     @wraps(function)
     def basic_checks(self, *args, **kwargs):
@@ -117,7 +122,8 @@ def basic(function):
             else:
                 db = maybe_db
 
-            kwargs['db'] = db
+            if pass_db:
+                kwargs['db'] = db
 
             if 'read_private' in kwargs:
                 breakpoint()
@@ -154,7 +160,8 @@ def basic2(function):
             else:
                 db = maybe_db
 
-            kwargs['db'] = db
+            if pass_db:
+                kwargs['db'] = db
 
             if 'read_private' in kwargs:
                 breakpoint()
@@ -270,6 +277,7 @@ class Endpoints(EndBase):
             '*ontologies': self.ontologies_,  # Endpoints only
             'ontologies': self.ontologies,
             'version': self.ontologies_version,  # FIXME collision prone?
+            '*dns_version': self.ontologies_dns_version,
 
             '*ont_ilx_pattern': self.ontologies_ilx,
             '*ont_ilx_get': self.ontologies_ilx,
@@ -293,10 +301,6 @@ class Endpoints(EndBase):
             'mapped': self.mapped,
         }
         return super().get_func(nodes, mapping)
-
-    @property
-    def link_to_new_token(self):
-        return 'TODO url_for', 501
 
     def getGroupCuries(self, group, epoch_verstr=None,
                        default=default_prefixes):
@@ -430,12 +434,12 @@ class Endpoints(EndBase):
         #return tripleRender(request, g, group, id, object_to_existing, title)
 
     @basic
-    def other(self, group, frag_pref_id, db=None):
-        return 'NOT IMPLEMENTED', 400
+    def other(self, group, frag_pref_id, epoch_verstr_id=None, db=None):
+        abort(501, 'TODO')
 
     @basic
-    def versions(self, group, frag_pref_id, db=None):
-        return 'NOT IMPLEMENTED', 400
+    def versions(self, group, frag_pref_id, epoch_verstr_id=None, db=None):
+        abort(501, 'TODO')
 
     @basic
     def lexical(self, group, label, db=None):
@@ -728,6 +732,11 @@ class Endpoints(EndBase):
         raise NotImplementedError('should not be hitting this')
 
     @basic
+    def ontologies_dns_version(self, *args, **kwargs):
+        """ needed because ontologies appear under other routes """
+        raise NotImplementedError('should not be hitting this')
+
+    @basic
     def ontologies_uris(self, *args, **kwargs):
         """ needed because ontologies appear under other routes """
         raise NotImplementedError('should not be hitting this')
@@ -754,6 +763,9 @@ class Endpoints(EndBase):
 
 
 def _sigh_insert_orcid_meta(session, orcid_meta, user=None):
+    # FIXME are new access tokens generated every single time we request that a user log in?
+    # FIXME also the id_token for openid seems like something that could be used to invalidate orcid sessions
+    # FIXME do we need to store access tokens for every single login we receive i.e. from different computers
     dbstuff = Stuff(session)
     kls = idlib.systems.orcid.OrcidSandbox if config.orcid_sandbox else idlib.Orcid
     orcid = kls._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri,
@@ -783,7 +795,7 @@ def _sigh_orcid_login_user_temp(orcid_meta):
         is_authenticated = True
         via_auth = 'orcid'
         orcid = f'https://{config.orcid_host}/' + orcid_meta['orcid']
-        id = orcid_meta['orcid']  # XXX NOTE THE ASYMMETRY
+        id = orcid_meta['id_token']  # XXX NOTE THE ASYMMETRY
         # we put the orcid as an id on issue but when we load
         # it we move it to orcid and set id = None
         # however at this point if id = None then the token
@@ -793,6 +805,8 @@ def _sigh_orcid_login_user_temp(orcid_meta):
         def get_id(self):
             return self.id
 
+    fsession['_via_auth'] = tuser.via_auth
+    fsession['_orcid_only'] = 'true'
     fl.login_user(tuser())
 
 
@@ -857,15 +871,44 @@ class Ops(EndBase):
 
     @staticmethod
     def _make_orcid_meta():
-        import uuid
-        return dict(
+        import time, uuid
+        from hashlib import sha256
+        import jwt
+        om = dict(
             orcid=idlib.systems.orcid.genorcid(),
             name='Test Person',
             token_type='bearer',
             scope='openid',
             access_token=uuid.uuid4(),
             refresh_token=uuid.uuid4(),
-            expires_in=631138518)
+            expires_in=631138518,)
+
+        def get_at_hash(access_token):
+            # see comment https://github.com/ORCID/ORCID-Source/blob/0f95b8b5951bbfbb285684bae2eee46b1ca932ca/orcid-core/src/main/java/org/orcid/core/oauth/openid/OpenIDConnectTokenEnhancer.java#L137-L146
+            at = str(access_token)
+            m = sha256()
+            m.update(at.encode())
+            hrm = m.digest()
+            at_hash = base64.urlsafe_b64encode(hrm[:16])[:-2]
+            return at_hash.decode()
+
+        nowish = int(time.time())
+        exp = nowish + (24 * 60 * 60)
+        tdat = dict(
+            at_hash=get_at_hash(om['access_token']),
+            aud=config.orcid_client_id,
+            sub=om['orcid'],
+            auth_time=nowish,
+            iss='interlex-test-code',
+            exp=exp,
+            given_name=om['name'].split()[0],
+            iat=nowish,
+            family_name=om['name'].split()[-1],
+            jti=str(uuid.uuid4()),
+        )
+        id_token = jwt.encode(tdat, iauth._orcid_mock_private_key, algorithm='RS256')
+        om['id_token'] = id_token
+        return om
 
     def _orcid_landing(self):
         if 'code' not in request.args:
@@ -938,10 +981,10 @@ class Ops(EndBase):
             return redirect(reiri, code=302)
 
         else:
-            self._orcid_login(orcid, group_resp)
+            self._orcid_login(orcid, orcid_meta['id_token'], group_resp)
             return 'orcid-login successful, check your cookies (use requests.Session)'
 
-    def _orcid_login(self, orcid, group_resp):
+    def _orcid_login(self, orcid, openid_token, group_resp):
             group_row = group_resp[0]
 
             _orcid = orcid
@@ -951,12 +994,13 @@ class Ops(EndBase):
                 is_authenticated = True
                 via_auth = 'orcid'
                 orcid = _orcid
-                id = group_row.id
+                id = openid_token
                 own_role = group_row.own_role
                 groupname = group_row.groupname
-                def get_id(self, __id=group_row.id):
+                def get_id(self, __id=openid_token):
                     return __id
 
+            fsession['_via_auth'] = tuser.via_auth
             fl.login_user(tuser())  # TODO I don't think there is an easy way to remember this stuff
 
     def _orcid_check_already(self, orcid_meta):
@@ -971,7 +1015,7 @@ class Ops(EndBase):
         orcid, group_resp = self._orcid_check_already(orcid_meta)  # FIXME ideally we wouldn't have to do this ... and just handle the error but ...
 
         if group_resp:
-            self._orcid_login(orcid, group_resp)
+            self._orcid_login(orcid, orcid_meta['id_token'], group_resp)
             group_row = group_resp[0]
             groupname = group_row.groupname
             return redirect(f'/{groupname}/priv/settings?from=orcid-landing-new', code=302)
@@ -1225,7 +1269,10 @@ receive quite a few during periods of active development.
             # orcid non-unique # we don't allow robot bot users right now
             # email non-unqiue
             self.session.rollback()
-            if e.orig.diag.constraint_name.startswith('groups_groupname_check'):
+            if not e.orig.diag.constraint_name:
+                log.exception(e)
+                errors['unhandled'] = ['unhandled']
+            elif e.orig.diag.constraint_name.startswith('groups_groupname_check'):
                 args = (
                     e.orig.diag.schema_name,
                     e.orig.diag.table_name,
@@ -1263,19 +1310,24 @@ receive quite a few during periods of active development.
                 log.exception(e)
 
         _orcid = orcid
+        _id = fl.current_user.id if password is None else user_id[0].surrogate
         class tuser:
             is_active = True  # TODO translate from the permission model
             is_anonymous = False
             is_authenticated = True
             via_auth = 'orcid' if password is None else 'interlex'
             orcid = _orcid
-            id = user_id[0].user_id
+            id = _id
             own_role = 'pending'
             groupname = username
-            def get_id(self, __id=user_id[0].user_id):
+            def get_id(self, __id=_id):
                 return __id
 
         # FIXME do we need to call logout on the orcid only user?
+        if '_orcid_only' in fsession:
+            fsession.pop('_orcid_only')
+
+        fsession['_via_auth'] = tuser.via_auth
         fl.login_user(tuser())
 
         if orcid is None:
@@ -1559,13 +1611,14 @@ Alternately send an HTTP GET request with headers containing <br>
                     is_authenticated = True  # FIXME but is it true?
                     via_auth = 'interlex'
                     orcid = group_row.orcid
-                    id = group_row.id
+                    id = group_row.surrogate
                     own_role = group_row.own_role  # FIXME could change ?
                     groupname = group_row.groupname
-                    def get_id(self, __id=group_row.id):
+                    def get_id(self, __id=group_row.surrogate):
                         return __id
 
                 remember = 'remember' in request.args and request.args['remember'].lower() == 'true'
+                fsession['_via_auth'] = tuser.via_auth
                 fl.login_user(tuser(), remember=remember)
                 if 'freiri' in request.args:
                     freiri = check_reiri(request.args['freiri'])
@@ -1791,7 +1844,8 @@ class Priv(EndBase):
         # only POST
         # TODO auth
 
-        dbuser = db.user
+        dbuser = fl.current_user.groupname if hasattr(fl.current_user, 'groupname') else None
+        #dbuser = db.user
 
         # TODO load stats etc
         raise NotImplementedError('todo use new way')
@@ -2212,21 +2266,27 @@ class Pulls(EndBase):
         }
         return super().get_func(nodes, mapping=mapping)
 
-    def pulls(self, group, pull):
+    @basic
+    def pulls(self, group):
         return 'TODO', 501
 
+    @basic
     def pull(self, group, pull):
         return 'TODO', 501
 
+    @basic
     def merge(self, group, pull):
         return 'TODO', 501
 
+    @basic
     def close(self, group, pull):
         return 'TODO', 501
 
+    @basic
     def reopen(self, group, pull):
         return 'TODO', 501
 
+    @basic
     def lock(self, group, pull):
         return 'TODO', 501
 
@@ -2243,8 +2303,8 @@ class Ontologies(Endpoints):
     @basic
     def ontologies_dns(self, group, dns_host, ont_path='', db=None):
         return self._ontologies(group=group,
-                                filename=filename,
-                                extension=extension,
+                                filename=None,
+                                extension=None,
                                 ont_path=ont_path,
                                 host=dns_host,
                                 dns=True,
@@ -2254,7 +2314,7 @@ class Ontologies(Endpoints):
     def ontologies_dns_version(self, group, dns_host, ont_path, epoch_verstr_ont, filename_terminal,
                                extension=None, db=None):
         return self._ontologies_version(group=group,
-                                        filename=filename,
+                                        filename=None,
                                         epoch_verstr_ont=epoch_verstr_ont,
                                         filename_terminal=filename_terminal,
                                         extension=extension,
@@ -2297,7 +2357,9 @@ class Ontologies(Endpoints):
     def ontologies_spec(self, *args, **kwargs):
         return self._ontologies_spec(*args, **kwargs)
 
-    def _ontologies_spec(self, group, filename, ont_path='', extension=None, from_ilx=False, db=None):
+    def _ontologies_spec(self, group, filename=None, ont_path='', extension=None,
+                         dns_host=None, epoch_verstr_ont=None, filename_terminal=None,
+                         from_ilx=False, db=None):
         # FIXME uris vs non-uris currently this assumes we are coming from uris
         # TODO figure out of /{group}/ontologies/{ilx_*,dns,etc.} also need specs ...
         # I'm leaving them off for now
@@ -2312,8 +2374,8 @@ class Ontologies(Endpoints):
         # FIXME bug in rounting is that if you have //p1/p2/filename/spec that
         # will match the non-uris version with uris, when it should 404 due to
         # empty path
-        if request.method == 'GET':
-            return self.ontologies(
+        if request.method in ('GET', 'HEAD'):
+            return self._ontologies(
                 group=group, filename=filename, ont_path=ont_path, extension=extension,
                 uris=not from_ilx, spec=True, from_ilx=from_ilx, db=db)
 
@@ -2387,7 +2449,9 @@ class Ontologies(Endpoints):
             return redirect(iri, 303)
 
         elif request.method == 'PATCH':
-            return 'TODO', 501
+            abort(501, 'TODO')
+        else:
+            abort(405)
 
     @basic
     def ontologies(self, *args, **kwargs):
@@ -2401,7 +2465,8 @@ class Ontologies(Endpoints):
         # TODO for ?iri=external-iri validate that uri_host(external-iri) and /ontologies/... ... match
         # we should be able to track file 'renames' without too much trouble
         #log.debug(group, filename, extension, ont_path)
-        dbuser = db.user  # FIXME make sure that the only way that db.user can be set is if it was an auth user
+        dbuser = fl.current_user.groupname if hasattr(fl.current_user, 'groupname') else None
+        #dbuser = db.user  # FIXME make sure that the only way that db.user can be set is if it was an auth user
                         # the current implementation does not gurantee that, probably easiest to pass the token
                         # again for insurance ...
         #if user not in getUploadUsers(group):
@@ -2409,7 +2474,19 @@ class Ontologies(Endpoints):
 
         if request.method == 'HEAD':
             # TODO return bound_name + metadata
-            return 'HEAD TODO\n'
+            # XXX that probably violates http semantics though
+            # and because these are dynamic in size we don't
+            # actually know the content length or anything like that
+            try:
+                ext, mime, f = tripleRender.check(request)
+            except exc.UnsupportedType:
+                if extension is None:
+                    abort(406)
+                else:
+                    abort(404)
+
+            headers = {'Content-Type': mime}
+            return '', 200, headers
 
         elif request.method == 'GET':
             if filename == 'scigraph-export':
@@ -2610,7 +2687,7 @@ class Ontologies(Endpoints):
 
     @basic
     def ontologies_version(self, *args, **kwargs):
-        return self._ontologies_versions(*args, **kwargs)
+        return self._ontologies_version(*args, **kwargs)
 
     def _ontologies_version(self, group, filename, epoch_verstr_ont,
                             filename_terminal, extension=None, ont_path='', host=None, dns=False, uris=False, db=None):
@@ -2666,6 +2743,10 @@ class Own(Ontologies):
         return request.path, 501
 
     @basic2
+    def ontologies_(self, *args, **kwargs):
+        abort(501)
+
+    @basic2
     def ontologies(self, group, other_group, filename, extension=None, ont_path='', db=None):
         # this is useful for some auto generated ontologies that could be different
         # consider that you want to see /tgbugs/own/sparc/ontologies/community-terms
@@ -2699,7 +2780,27 @@ class Own(Ontologies):
 
     @basic2
     def ontologies_contributions(self, *args, **kwargs):
-        return abort(404)  # doesn't exist but hard to remove from generation
+        abort(404)  # doesn't exist but hard to remove from generation
+
+    @basic2
+    def ontologies_spec(self, *args, **kwargs):
+        abort(501)
+
+    @basic2
+    def ontologies_dns(self, *args, **kwargs):
+        abort(501)
+
+    @basic2
+    def ontologies_dns_version(self, *args, **kwargs):
+        abort(501)
+
+    @basic2
+    def other(self, *args, **kwargs):
+        abort(404)  # FIXME ideally remove from uri generation
+
+    @basic2
+    def versions(self, *args, **kwargs):
+        abort(404)  # FIXME ideally remove from uri generation
 
 
 class OwnVersions(Own, Versions):
@@ -2801,6 +2902,10 @@ class Diff(Ontologies):
         return request.path, 501
 
     @basic2
+    def ontologies_(self, *args, **kwargs):
+        abort(501)
+
+    @basic2
     def ontologies(self, group, other_group_diff, filename, extension=None, ont_path='', db=None):
         return request.path, 501
 
@@ -2831,6 +2936,26 @@ class Diff(Ontologies):
     @basic2
     def ontologies_contributions(self, *args, **kwargs):
         return abort(404)  # doesn't exist but hard to remove from generation
+
+    @basic2
+    def ontologies_spec(self, *args, **kwargs):
+        abort(501)
+
+    @basic2
+    def ontologies_dns(self, *args, **kwargs):
+        abort(501)
+
+    @basic2
+    def ontologies_dns_version(self, *args, **kwargs):
+        abort(501)
+
+    @basic2
+    def other(self, *args, **kwargs):
+        abort(404)  # FIXME ideally remove from uri generation
+
+    @basic2
+    def versions(self, *args, **kwargs):
+        abort(404)  # FIXME ideally remove from uri generation
 
 
 class DiffVersions(Diff, Versions):

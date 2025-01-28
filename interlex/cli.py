@@ -447,13 +447,21 @@ class Ops(clif.Dispatcher):
 
     def api_key(self):
         """ set user api key manually to simplify testing """
-        scheme, host, group, headers = self._post()
-
-        from .core import getScopedSession
+        from .core import getScopedSession, dbUri
         from .dbstuff import Stuff
         from .config import auth
-        key = auth.user_config.secrets('interlex', group, 'test')
-        session = getScopedSession(echo=False)
+        if self.options.production:
+            scheme, host, group, headers = self._post()
+            key = auth.get('interlex-api-key')
+            dburi = dbUri()
+        else:
+            group = auth.get('test-api-user')
+            key = auth.get('interlex-test-api-key')
+            kwargs = {k:auth.get(f'test-{k}') for k in ('host', 'port', 'database')}
+            kwargs['dbuser'] = auth.get(f'db-user')
+            dburi = dbUri(**kwargs)
+
+        session = getScopedSession(dburi=dburi, echo=False)
         dbstuff = Stuff(session)
         dbstuff.insertApiKey(group, key, 'personal', 'settings-all')
         key = None

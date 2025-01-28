@@ -18,6 +18,10 @@
          'default': None,
          'environment-variables': 'INTERLEX_API_KEY',},
 
+     'interlex-test-api-key': {
+         'default': None,
+         'environment-variables': 'INTERLEX_TEST_API_KEY',},
+
      # ports
      'port-api': 8500,
      'port-uri': 8505,
@@ -31,6 +35,9 @@
      'dev-remote-hosts': [],
 
      # testing
+     'test-api-user': {
+         'default': None,
+         'environment-variables': 'INTERLEX_TEST_API_USER',},
      'test-host': 'localhost',
      'test-database': {
          'default': '__interlex_testing',
