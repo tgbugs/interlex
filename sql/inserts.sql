@@ -52,6 +52,7 @@ INSERT INTO groups (groupname) VALUES
        -- orgs
        ('NIF'),
        ('SciCrunch'),
+       ('MetaCell'),
        ('scibot'),
        ('uberon'),
        ('obo'),
@@ -199,6 +200,10 @@ UPDATE user_emails SET email_validated = CURRENT_TIMESTAMP WHERE user_id = idFro
 --UPDATE users SET orcid_validated = CURRENT_TIMESTAMP WHERE id = idFromGroupname('tgbugs'); -- shouldn't actually be able to do this directly?
 
 INSERT INTO user_permissions (group_id, user_id, user_role) VALUES (0, idFromGroupname('tgbugs'), 'admin');
+
+-- development orgs
+INSERT INTO orgs (id, creator_id) VALUES (idFromGroupname('MetaCell'), idFromGroupname('tgbugs'));
+INSERT INTO user_permissions (group_id, user_id, user_role) VALUES (idFromGroupname('MetaCell'), idFromGroupname('tgbugs'), 'owner');
 
 -- need the null identity in to avoid conficts
 INSERT INTO identities (identity, type, record_count) VALUES (digest('', 'sha256'), 'empty', 0);
