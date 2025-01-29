@@ -80,6 +80,7 @@ Options:
     -o --local              run against local
     -c --gunicorn           run against local gunicorn
     -d --debug              enable debug mode
+    --remember              remember login
     --orcid-prod            run against orcid prod
     --email-no-verify       do not require email verification
     --proxy=N               number of proxies you are behind [default: 0]
@@ -230,7 +231,7 @@ class Server(clif.Dispatcher):
     def uri(self):
         from interlex.config import port_uri
         from interlex.uri import run_uri, __file__
-        app = run_uri(echo=self.options.debug, proxy_n=self.options.proxy)
+        app = run_uri(echo=self.options.debug, test=self.options.test, proxy_n=self.options.proxy)
         port = port_uri
         self._server(app, port, __file__)
 
@@ -458,7 +459,7 @@ class Ops(clif.Dispatcher):
             group = auth.get('test-api-user')
             key = auth.get('interlex-test-api-key')
             kwargs = {k:auth.get(f'test-{k}') for k in ('host', 'port', 'database')}
-            kwargs['dbuser'] = auth.get(f'db-user')
+            kwargs['dbuser'] = auth.get('db-user')
             dburi = dbUri(**kwargs)
 
         session = getScopedSession(dburi=dburi, echo=False)

@@ -206,6 +206,9 @@ CREATE TABLE user_emails(
        CONSTRAINT fk__user_emails__user_id__users FOREIGN key (user_id) REFERENCES users (id) match simple
 );
 
+-- ensure only users have a most one primary email (ensuring more than zero primary emails requires a trigger)
+CREATE UNIQUE INDEX email_primary_index ON user_emails (user_id) WHERE email_primary;
+
 CREATE UNIQUE INDEX email_lower_index ON user_emails (lower(email));
 
 CREATE FUNCTION email_complete() RETURNS trigger AS $email_complete$
@@ -230,6 +233,44 @@ $email_complete$ language plpgsql;
 CREATE TRIGGER email_complete AFTER INSERT OR UPDATE ON user_emails
        FOR EACH ROW WHEN (NEW.email_validated IS NOT NULL)
        EXECUTE PROCEDURE email_complete();
+
+CREATE OR REPLACE FUNCTION user_email_row_invars() RETURNS trigger AS $$
+/*
+1. at least one primary email at all times outside a single transaction i.e. where they are switched (at most one is enforced by unique index)
+2. if there is an existing validated email any new primary email must also be validated, if the primary is not validated this is not required
+*/
+
+DECLARE
+max_total integer;
+BEGIN
+
+    IF EXISTS (SELECT * FROM user_emails WHERE user_id = NEW.user_id AND email_validated IS NOT NULL) THEN
+       -- note that this checks for ANY validated email, not just a primary validated, if there is ANY validated
+       -- email and the new primary email is not validated then something very strange is going on
+        IF (NEW.email_primary AND NEW.email_validated IS NULL) THEN
+            RAISE EXCEPTION 'new primary emails must be validated if the current primary email has been validated';
+        END IF;
+    ELSIF (NOT NEW.email_primary) THEN
+        RAISE EXCEPTION 'first email must always be primary';
+    END IF;
+
+    -- ensure that non-admin users don't have more than quota total emails
+    SELECT greatest(uq.maxv, q.maxv) INTO max_total
+    FROM quotas AS q
+    LEFT JOIN user_quotas AS uq ON uq.qtype = q.qtype AND uq.user_id = NEW.user_id
+    WHERE q.qtype = 'email-total';
+
+    IF ((SELECT count(*) FROM user_emails WHERE user_id = NEW.user_id) >= max_total) THEN
+       RAISE EXCEPTION 'User has max total email addresses = %.', max_total;
+    END IF;
+
+    RETURN NEW;
+
+END;
+$$ language plpgsql;
+
+CREATE TRIGGER user_email_row_invars BEFORE INSERT OR UPDATE ON user_emails
+       FOR EACH ROW EXECUTE PROCEDURE user_email_row_invars();
 
 CREATE TABLE emails_validating(
        -- TODO consider using something like pg_cron to periodically cull these
@@ -264,9 +305,9 @@ BEGIN
        AND CURRENT_TIMESTAMP > ev.created_datetime + make_interval(secs := ev.delay_seconds)
        AND CURRENT_TIMESTAMP < ev.created_datetime + make_interval(secs := ev.lifetime_seconds)) THEN
 
-           WITH evs AS (SELECT * FROM emails_validating AS ev WHERE ev.token = email_verify_complete.token)
-           UPDATE user_emails AS ue SET email_validated = CURRENT_TIMESTAMP FROM evs WHERE ue.email = evs.email AND ue.user_id = evs.user_id;
-           DELETE FROM emails_validating AS ev WHERE ev.token = email_verify_complete.token;
+           WITH evs AS (SELECT * FROM emails_validating AS ev WHERE ev.token = email_verify_complete.token
+           ), uue AS (UPDATE user_emails AS ue SET email_validated = CURRENT_TIMESTAMP FROM evs WHERE ue.email = evs.email AND ue.user_id = evs.user_id)
+           DELETE FROM emails_validating AS ev WHERE ev.email IN (SELECT email FROM evs);
 
            RETURN out_groupname;
     ELSIF EXISTS (
@@ -288,6 +329,15 @@ BEGIN
     END IF;
 END;
 $email_verify_complete$ language plpgsql;
+
+CREATE TABLE users_recovering(
+       user_id integer NOT NULL references users (id),
+       token text PRIMARY KEY,
+       created_datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+       delay_seconds integer NOT NULL DEFAULT 60,
+       lifetime_seconds integer NOT NULL DEFAULT 300, -- default to 5 minutes
+       CHECK (delay_seconds <= lifetime_seconds)
+);
 
 CREATE TABLE orgs(
        id integer PRIMARY KEY,
@@ -346,6 +396,9 @@ CREATE OR REPLACE FUNCTION idFromGroupname(groupname text, OUT group_id integer)
 $idFromGroupname$ language plpgsql;
 
 CREATE TABLE user_permissions(
+       -- TODO owners of groups cannot give up their owner unless there is another owner that is owner of their user group (verified)
+       -- AND has accepted the ownership role explicitly
+
        -- TODO need a way to check that the users are validated ... which is why I did it the old way... (ah well)
        group_id integer NOT NULL,  -- user or org, initially only granted curator in their user group
        user_id integer NOT NULL,  -- the fkey prevents groups from having any permissions which is important since can't log in as group
@@ -713,9 +766,9 @@ CREATE TABLE quotas( -- default quota values
 );
 
 INSERT INTO quotas (qtype, maxv) VALUES
-       ('api-key-active', 20),
-       ('api-key-total', 100),
-       ('email-total', 10); -- really even 5 is is probably overkill
+       ('api-key-active', 10),
+       ('api-key-total', 50),
+       ('email-total', 5); -- really even 5 is is probably overkill
 
 CREATE TABLE user_quotas(
        user_id integer references users (id),

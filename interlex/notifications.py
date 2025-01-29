@@ -49,14 +49,18 @@ def isofnm(dt):
     return isoformat(dt, timespec='seconds')
 
 
+_email_test_target = None
+
+
 def msg_email_verify(
         user_email, now, start, delay_seconds, minutes, expires,
         verification_link, reverify_link):
     to = Address(addr_spec=user_email)
+    real_to = to if _email_test_target is None else Address(addr_spec=_email_test_target)
     inow, istart, iexpires = [isofnm(dt).replace('T', ' ') for dt in (now, start, expires)]
     return make_message(
         Address('InterLex', addr_spec='noreply@interlex.org'),
-        to,
+        real_to,
         'InterLex account email address verification',
         # FIXME TODO if we direct people through the orcid workflow immediately
         # then we might be able to extend the email verification time since
@@ -88,6 +92,64 @@ If this confirmation link has expired please request another at
 {reverify_link}
 
 If something has gone wrong please email support@interlex.org
+
+Thanks!
+''',
+    )
+
+
+def msg_user_recover(
+        user_email, now, start, delay_seconds, minutes, expires,
+        reset_link):
+    to = Address(addr_spec=user_email)
+    real_to = to if _email_test_target is None else Address(addr_spec=_email_test_target)
+    inow, istart, iexpires = [isofnm(dt).replace('T', ' ') for dt in (now, start, expires)]
+    return make_message(
+        Address('InterLex', addr_spec='noreply@interlex.org'),
+        real_to,
+        'InterLex account recovery',
+        f'''Hi!
+
+Someone (hopefully you) issued a request to recover the
+InterLex account associated with this email
+address ({to.addr_spec})
+
+If it wasn't you, please ignore this email and do not click any of the links.
+
+If it was you, click the following link in about {delay_seconds} seconds
+to reset your account password.
+
+{reset_link}
+
+The reset link will work starting at {istart}
+approximately {delay_seconds} seconds after this email was sent
+and will expire at {iexpires}
+approximately {minutes} minutes after this email was sent.
+
+Sent   {inow}
+Start  {istart}
+Expire {iexpires}
+
+If something has gone wrong please email support@interlex.org
+
+Thanks!
+''',
+    )
+
+
+def msg_user_recover_alt(user_email):
+    to = Address(addr_spec=user_email)
+    real_to = to if _email_test_target is None else Address(addr_spec=_email_test_target)
+    inow, istart, iexpires = [isofnm(dt).replace('T', ' ') for dt in (now, start, expires)]
+    return make_message(
+        Address('InterLex', addr_spec='noreply@interlex.org'),
+        real_to,
+        'InterLex account activity',
+        f'''Hi!
+
+Someone (hopefully you) issued a request to recover the InterLex
+account associated with this alternate email address. A separate
+email with a recovery link was sent to the primary email account.
 
 Thanks!
 ''',

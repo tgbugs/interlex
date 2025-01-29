@@ -106,6 +106,7 @@ def uriStructure():
                                 'user-new',
                                 'user-login',
                                 'user-recover',
+                                'password-reset', 'pwrs',  # this one goes here because the user is technically not logged in so special handling is needed
                                 'email-verify', 'ever',
                                 'orcid-new',
                                 'orcid-login',
@@ -265,7 +266,7 @@ def uriStructure():
                     'orcid-assoc': ['GET'],
                     'orcid-change': ['POST'],
                     'orcid-dissoc': ['POST'],
-                    'email-add': ['POST'],
+                    'email-add': ['GET', 'POST'],
                     'email-del': ['POST'],
                     '*email-verify': ['GET'],  # use query parameters
                     'email-primary': ['POST'],
@@ -305,6 +306,8 @@ _known_default = (
     'orcid-land-assoc',
     'orcid-land-change',
 
+    'pwrs',
+    'password-reset',
 )
 
 
@@ -492,13 +495,20 @@ class NoSessionForToken(SecureCookieSessionInterface):
 
 
 def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
-               echo=False, dbonly=False, db_kwargs=None, proxy_n=0):
+               echo=False, dbonly=False, db_kwargs=None, test=False, proxy_n=0):
     if db_kwargs is None:
-        db_kwargs = {k:config.auth.get(f'db-{k}')  # TODO integrate with cli options
-                for k in ('user', 'host', 'port', 'database')}
-        db_kwargs['dbuser'] = db_kwargs.pop('user')
+        if test:
+            db_kwargs = {k:config.auth.get(f'test-{k}') for k in ('host', 'port', 'database')}
+            db_kwargs['dbuser'] = config.auth.get('db-user')
+        else:
+            db_kwargs = {k:config.auth.get(f'db-{k}')  # TODO integrate with cli options
+                    for k in ('user', 'host', 'port', 'database')}
+            db_kwargs['dbuser'] = db_kwargs.pop('user')
+
         if db_kwargs['database'] is None:
             raise ValueError('db-database is None, did you remember to set one?')
+
+    log.debug(f'running InterLex with database: {dbUri(**db_kwargs)}')
 
     # app setup and database binding
     app = Flask('InterLex uri server')
@@ -593,6 +603,6 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
     return app
 
 
-def run_uri(echo=False, dbonly=False, db_kwargs=None, proxy_n=0):
+def run_uri(echo=False, dbonly=False, db_kwargs=None, test=False, proxy_n=0):
     return server_uri(db=SQLAlchemy(), mq=cel, lm=LoginManager(),
-                      echo=echo, dbonly=dbonly, db_kwargs=db_kwargs, proxy_n=proxy_n)
+                      echo=echo, dbonly=dbonly, db_kwargs=db_kwargs, test=test, proxy_n=proxy_n)

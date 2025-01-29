@@ -2,10 +2,12 @@ import os
 import re
 import json
 import base64
+import random
 import secrets
+from time import time, sleep
 from datetime import timedelta, timezone
 from functools import wraps
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote as url_quote
 import requests
 import sqlalchemy as sa
 import flask_login as fl
@@ -31,7 +33,7 @@ from interlex.config import ilx_pattern  # FIXME pull from database probably
 from interlex.ingest import ingest_ontspec
 from interlex.dbstuff import Stuff
 from interlex.render import TripleRender  # FIXME need to move the location of this
-from interlex.notifications import send_message, get_smtp_spec, msg_email_verify
+from interlex.notifications import send_message, get_smtp_spec, msg_email_verify, msg_user_recover, msg_user_recover_alt
 
 log = _log.getChild('endpoints')
 log_ver = _log.getChild('verification')
@@ -45,6 +47,9 @@ _email_mock_tokens = {}
 
 _orcid_mock = False
 _orcid_mock_codes = {}
+
+_reset_mock = False
+_reset_mock_tokens = {}
 
 
 def getBasicDB(self, group, request):
@@ -824,6 +829,8 @@ class Ops(EndBase):
             'orcid-land-login': self.orcid_landing_login,
             'ever': self.email_verify,
             'email-verify': self.email_verify,
+            'pwrs': self.password_reset,
+            'password-reset': self.password_reset,
         }
         return super().get_func(nodes, mapping=mapping)
 
@@ -871,7 +878,7 @@ class Ops(EndBase):
 
     @staticmethod
     def _make_orcid_meta():
-        import time, uuid
+        import uuid
         from hashlib import sha256
         import jwt
         om = dict(
@@ -892,7 +899,7 @@ class Ops(EndBase):
             at_hash = base64.urlsafe_b64encode(hrm[:16])[:-2]
             return at_hash.decode()
 
-        nowish = int(time.time())
+        nowish = int(time())
         exp = nowish + (24 * 60 * 60)
         tdat = dict(
             at_hash=get_at_hash(om['access_token']),
@@ -1294,11 +1301,10 @@ receive quite a few during periods of active development.
                 log.exception(e)
                 errors['unhandled'] = ['unhandled']
 
-            if errors:
-                return json.dumps({'errors': errors}), 422, ctaj
+            if not errors:
+                raise ValueError('we broke something')
 
-            return 'something went wrong TODO better messages', 422
-
+            return json.dumps({'errors': errors}), 422, ctaj
 
         if email_verify:
             try:
@@ -1395,13 +1401,13 @@ receive quite a few during periods of active development.
         nowish = row.created_datetime
         startish = nowish + timedelta(seconds=row.delay_seconds)
         thenish = nowish + timedelta(seconds=row.lifetime_seconds)
-        scheme = 'https'  # FIXME ...
-        reference_host = self.reference_host  # FIXME vs actual host for testing
+        #scheme = 'https'  # FIXME ...
+        #reference_host = self.reference_host  # FIXME vs actual host for testing
         #verification_link = f'{scheme}://{reference_host}/u/ops/email-verify?{token}'
         #verification_link = f'{scheme}://{reference_host}/u/ops/ever?t={token_str}'
         verification_link = f'{request.scheme}://{request.host}/u/ops/ever?t={token_str}'
         # FIXME TODO is it safe to use request.host for this? is it safe?
-        reverify_link = f'{request.scheme}://{request.host}/{username}/priv/email-verify?email={email}'
+        reverify_link = f'{request.scheme}://{request.host}/{username}/priv/email-verify?email={url_quote(email)}'
         msg = msg_email_verify(
             email, nowish, startish, row.delay_seconds, minutes, thenish,
             verification_link, reverify_link)
@@ -1413,7 +1419,127 @@ receive quite a few during periods of active development.
             send_message(msg, get_smtp_spec())
 
     def user_recover(self):
-        abort(501)
+        already_logged_in = fl.current_user is not None and hasattr(fl.current_user, 'groupname') and fl.current_user.groupname is not None
+        if request.method == 'GET':
+            _alog = f' You are already logged in as {fl.current_user.groupname}. <br>' if already_logged_in else ''
+            _recovery_form = f'''
+<form action="" method="post" class="recovery">
+
+  <div class="recovery">
+    <label for="username">Username: </label>
+    <input type="text" name="username" id="username" required />{_alog}
+  </div>
+
+  <div class="recovery">
+    <input type="submit" value="Recover Account" />
+  </div>
+
+</form>
+'''
+            body = f'''
+InterLex Account Recovery <br>
+{_recovery_form}
+<br>
+'''
+            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex Account Recovery</title></head>
+<body>
+{body}
+</body>
+</html>'''
+
+        elif request.method == 'POST':
+            nowish = time()
+            fixed = 1  # FIXME this has to deal with 99th percentile latency probably? so better to inject noise?
+            then = nowish + fixed
+            if already_logged_in:
+                abort(409, f'Already logged in as {fl.current_user.groupname}')
+
+            if not request.form or not request.form['username'].strip():
+                abort(422, 'no username provided')
+
+            username = request.form['username'].strip()
+            # TODO check that notification service is responsive and do it up
+            # here for timing consistency
+            noti_responsive = True  # TODO
+            if not noti_responsive:
+                log.critical('notification system is not responsive')
+                abort(503)
+
+            dbstuff = Stuff(self.session)
+            resp = dbstuff.getUserVerifiedEmails(username)
+            generic_msg = (
+                'If this account exists a recovery email has been sent '
+                'to the primary email address associated with the account.')
+
+            if not resp:
+                sleep(then - time())
+                return generic_msg, 200
+
+            self._start_user_recover(username, resp)
+            sleep(then - time())
+            return generic_msg, 200
+        else:
+            abort(405)
+
+    def _start_user_recover(self, username, emails):
+        #breakpoint()
+        # based heavily on _start_email_verify
+        primaries = [r for r in emails if r.email_primary]
+        if not primaries:
+            # this should never happen
+            log.critical(f'no primary verified email, something has gone very wrong {emails}')
+            abort(500)
+
+        primary_row = primaries[0]
+        email = primary_row.email
+        alts = [r.email for r in emails if not r.email_primary]
+
+        # going with 33 instead of 24 for this one since it is for password reset
+        token = base64.urlsafe_b64encode(secrets.token_bytes(33))
+        token_str = token.decode()
+        dbstuff = Stuff(self.session)
+        if _reset_mock:
+            resp = dbstuff.user_recover_start(username, token_str, 0, 10)
+        else:
+            resp = dbstuff.user_recover_start(username, token_str)
+
+        self.session.commit()
+        row = resp[0]
+
+        minutes = row.lifetime_seconds // 60
+        nowish = row.created_datetime
+        startish = nowish + timedelta(seconds=row.delay_seconds)
+        thenish = nowish + timedelta(seconds=row.lifetime_seconds)
+
+        # FIXME TODO is it safe to use request.host for this? is it safe?
+        reset_link = f'{request.scheme}://{request.host}/u/ops/pwrs?t={token_str}'
+        msg = msg_user_recover(
+            email, nowish, startish, row.delay_seconds, minutes, thenish, reset_link)
+        alt_msgs = [msg_user_recover_alt(alt) for alt in alts]
+
+        # TODO this is quite similar to the ever workflow
+        # store token in database
+
+        if _reset_mock:
+            _reset_mock_tokens[username] = token_str
+        else:
+            # NONBLOCKING send reset email link to email primary
+            # FIXME TODO figure out how to sub this out for testing too
+            send_message(msg, get_smtp_spec())
+            for alt_msg in alt_msgs:
+                # NONBLOCKING send notification email to any other emails
+                # TODO but only once per 24hr period or something?
+                send_message(alt_msg, get_smtp_spec())
+
+    def password_reset(self):
+        # this is the back half of the user recover process
+        # TODO
+        # on success send an email confirming the change
+        # do not automatically log the user in
+        abort(501, 'TODO')
 
     def email_verify(self):
         """ callback point for email with token not to be confused with priv/email-verify """
@@ -1921,32 +2047,46 @@ class Priv(EndBase):
         def ev(dt):
             return 'null' if dt is None else f'"{isoformat(dt)}"'
 
+        if 'from' in request.args:
+            frm = request.args['from']
+            if frm == 'orcid-landing-new':
+                prefix = f'# you already have an InterLex account associated with {fl.current_user.orcid}\n'
+            elif frm == 'email-verify-success':
+                _vrow = sorted(emails, key=(lambda e: (e.email_validated is None, e.email_validated)))[-1]
+                _email = _vrow.email
+                prefix = f'# email address {_email} successfully validated\n'
+            else:
+                log.error(f'TODO {frm} not handled')
+                prefix = ''
+        else:
+            prefix = ''
+
         emails_str = '\n\n' + '\n'.join([
             (f'<mailto:{e.email}> a ilxtr:interlex-email-record ;\n'
-             f'email:primary {e.email_primary};\n'
-             f'email:verified {ev(e.email_validated)} .')
+             f'  email:primary {e.email_primary};\n'
+             f'  email:verified {ev(e.email_validated)} .')
                    for e in emails])
 
         keys_str = ('\n\n' + '\n'.join([
             ('[] a ilxtr:api-key-record ;\n'
-             f'key:key "{k.key}" ;\n'
-             f'key:type "{k.key_type}" ;\n'
-             f'key:scope "{k.key_scope}" ;\n'
-             f'key:created "{isoformat(k.created_datetime)}" ') +
-            (f';\nkey:note {json.dumps(k.note)} ' if k.note else '') +
-            (f';\nkey:lifetime-seconds {k.lifetime_seconds} ' if k.lifetime_seconds else '') +
-            (f';\nkey:revoked "{isoformat(k.revoked_datetime)}" ' if k.revoked_datetime else '') + '.'
+             f'  key:key "{k.key}" ;\n'
+             f'  key:type "{k.key_type}" ;\n'
+             f'  key:scope "{k.key_scope}" ;\n'
+             f'  key:created "{isoformat(k.created_datetime)}" ') +
+            (f';\n  key:note {json.dumps(k.note)} ' if k.note else '') +
+            (f';\n  key:lifetime-seconds {k.lifetime_seconds} ' if k.lifetime_seconds else '') +
+            (f';\n  key:revoked "{isoformat(k.revoked_datetime)}" ' if k.revoked_datetime else '') + '.'
             for k in sorted(keys, key=(lambda r: r.created_datetime), reverse=True)])) if keys else ''
 
-        orcid_line = '' if user.orcid is None else f'settings:orcid <{user.orcid}> ;\n'
-        out = (
+        orcid_line = '' if user.orcid is None else f'  settings:orcid <{user.orcid}> ;\n'
+        out = prefix + (
             f'ilx:{group}/priv/settings a ilxtr:interlex-settings ;\n'
-            'skos:comment "completely fake ttlish representation of settings" ;\n'
-            f'settings:groupname "{group}" ;\n'
-            f'settings:email [ <mailto:{ep.email}> {ev(ep.email_validated)} ] ;\n'  # implicitly primary email
+            '  skos:comment "completely fake ttlish representation of settings" ;\n'
+            f'  settings:groupname "{group}" ;\n'
+            f'  settings:email [ <mailto:{ep.email}> {ev(ep.email_validated)} ] ;\n'  # implicitly primary email
             f'{orcid_line}'
-            'settings:notification-prefs "email" ;\n'
-            f'settings:own-role "{user.own_role}" .'
+            '  settings:notification-prefs "email" ;\n'
+            f'  settings:own-role "{user.own_role}" .'
         ) + emails_str + keys_str + '\n'
         return out, 200, {'Content-Type': 'text/turtle'}
 
@@ -2015,7 +2155,93 @@ class Priv(EndBase):
     @basic
     @fl.fresh_login_required
     def email_add(self, group, db=None):
-        return 'TODO', 501
+        if request.method == 'GET':
+            email_add_form = '''
+<form action="" method="post" class="email-add">
+
+  <div class="email-add">
+    <label for="email">Email: </label>
+    <input type="email" name="email" id="email" size="40" required />
+  </div>
+
+  <div class="email-add">
+    <input type="submit" value="Add Email" />
+  </div>
+
+</form>
+'''
+            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex Add Email</title></head>
+<body>
+{email_add_form}
+</body>
+</html>'''
+
+        if request.method != 'POST':
+            # should not get here because the router should have handled it already
+            abort(405)
+
+        # see user_new, TODO refactor so this is shared with user_new
+        errors = {}
+        if 'email' not in request.form or not request.form['email']:
+            email = None
+            errors['email'] = ['required']
+        else:
+            email = request.form['email']
+            def email_check(e):
+                return (e.count('@') == 1 and
+                        not e.startswith('@') and
+                        not e.endswith('@') and
+                        len(e.split()) == 1  # FIXME hack to detect whitespace
+                        )
+
+            email_ok = email_check(email)
+            if not email_ok:
+                errors['email'] = ['malformed']
+
+        if errors:
+            return json.dumps({'errors': errors}), 422, {'Content-Type': 'application/json'}
+
+        email_verify = config.email_verify  # FIXME find the right place to query for this
+        dbstuff = Stuff(self.session)
+        try:
+            resp = dbstuff.email_add(group, email, email_verify=email_verify)
+            self.session.commit()
+        except Exception as e:
+            self.session.rollback()
+
+            if (e.orig.diag.source_function == 'exec_stmt_raise' and
+                e.orig.diag.context.startswith('PL/pgSQL function user_email_row_invars()')):
+                if e.orig.diag.message_primary.startswith('User has max'):
+                    code = 409
+                else:
+                    code = 422
+
+                abort(code, e.orig.diag.message_primary)
+
+            if not e.orig.diag.constraint_name:
+                log.exception(e)
+                errors['unhandled'] = ['unhandled']
+            elif e.orig.diag.constraint_name in ('user_emails_email_key', 'pk__user_emails'):
+                errors['email'] = ['exists']
+            else:
+                log.exception(e)
+                errors['unhandled'] = ['unhandled']
+
+            if not errors:
+                raise ValueError('we broke something')
+
+            return json.dumps({'errors': errors}), 422, ctaj
+
+        if email_verify:
+            try:
+                self._start_email_verify(group, email)
+            except Exception as e:
+                log.exception(e)
+
+        return f'email {email} added', 200  # FIXME TODO unify with user_new code
 
     @basic
     @fl.fresh_login_required
@@ -2037,6 +2263,10 @@ class Priv(EndBase):
         dbstuff = Stuff(self.session)
         emet = dbstuff.getUserEmailMeta(group, email)
         if not emet:
+            _, url_param_string = request.url.rsplit('?', 1)
+            if ' ' in email and '+' in url_param_string:
+                return 'email contained a + sign that needs to be encoded as %2B because + means space in a url query string', 422
+
             return f'unknown email {email}'
 
         row = emet[0]

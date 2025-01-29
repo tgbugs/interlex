@@ -84,6 +84,20 @@ INSERT INTO user_passwords (user_id, argon2_string) SELECT user_id, :argon2_stri
 '''
         return list(self.session_execute(sql, params=params))
 
+    def email_add(self, group, email, email_verify=True):
+        args = dict(group=group, email=email)
+
+        if email_verify:
+            ever, ever_val = '', ''
+        else:
+            ever = ', email_validated'
+            ever_val = ', CURRENT_TIMESTAMP'
+            # using CURRENT_TIMESTAMP means we can detect unvalidated emails,
+            # also user email_validated will be true but no email will be
+
+        sql = f'INSERT INTO user_emails (user_id, email, email_primary{ever}) VALUES (idFromGroupname(:group), :email, FALSE{ever_val}) RETURNING email'
+        return list(self.session_execute(sql, args))
+
     def getUserEmailMeta(self, group, email):
         # need group to prevent cross group requests for email validation
         args = dict(group=group, email=email)
@@ -125,6 +139,37 @@ RETURNING created_datetime, delay_seconds, lifetime_seconds
         args = dict(token=token)
         sql = 'SELECT email_verify_complete(:token)'
         return list(self.session_execute(sql, args))  # FIXME this can and will error on token ver failure
+
+    def user_recover_start(self, group, token, delay_seconds=None, lifetime_seconds=None):
+        if lifetime_seconds is not None and delay_seconds is None:
+            msg = 'delay_seconds cannot be None if lifetime_seconds is not None'
+            raise TypeError(msg)
+
+        args = dict(group=group, token=token)
+
+        if delay_seconds is None:
+            sql = '''
+INSERT INTO users_recovering (user_id, token) VALUES
+(idFromGroupname(:group), :token)
+RETURNING created_datetime, delay_seconds, lifetime_seconds
+'''
+
+        else:
+            args['delay_seconds'] = delay_seconds
+            if lifetime_seconds is None:
+                sql = '''
+INSERT INTO users_recovering (user_id, token, delay_seconds) VALUES
+(idFromGroupname(:group), :token, :delay_seconds)
+RETURNING created_datetime, delay_seconds, lifetime_seconds
+'''
+            else:
+                args['lifetime_seconds'] = lifetime_seconds
+                sql = '''
+INSERT INTO users_recovering (user_id, token, delay_seconds, lifetime_seconds) VALUES
+(idFromGroupname(:group), :token, :delay_seconds, :lifetime_seconds)
+RETURNING created_datetime, delay_seconds, lifetime_seconds
+'''
+        return list(self.session_execute(sql, args))
 
     def getUserPassword(self, group):
         sql = '''
@@ -302,6 +347,17 @@ from groups as g
 join users as u on g.id = u.id
 join orcid_metadata as om on om.orcid = u.orcid
 where g.id = idFromGroupname(:group)
+'''
+        return list(self.session_execute(sql, args))
+
+    def getUserVerifiedEmails(self, group):
+        args = dict(group=group)
+        sql = '''
+SELECT *
+FROM users AS u
+JOIN groups AS g ON g.id = u.id
+JOIN user_emails AS ue on ue.user_id = u.id AND ue.email_validated IS NOT NULL
+WHERE g.groupname = :group
 '''
         return list(self.session_execute(sql, args))
 

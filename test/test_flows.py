@@ -69,6 +69,7 @@ def cleanup_dbs(dbs):
 def combinatorics():
     endpoints._email_mock = True
     endpoints._orcid_mock = True
+    endpoints._reset_mock = True
     import rsa
     _pub, _priv = rsa.newkeys(2048)  # keep it short for testing
     iauth._orcid_mock_public_key = _pub.save_pkcs1()

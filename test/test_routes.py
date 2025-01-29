@@ -3,6 +3,7 @@ import pytest
 import requests
 import secrets
 from pyontutils.ontutils import url_blaster
+from interlex import endpoints
 from interlex.uri import uriStructure, run_uri
 from interlex.core import make_paths, remove_terminals
 from interlex.config import ilx_pattern, auth
@@ -85,7 +86,7 @@ class RouteTester:
 
     @classmethod
     def setUpClass(cls):
-        cls.app = run_uri(echo=True)
+        cls.app = run_uri(echo=True, test=True)
         cls.client = cls.app.test_client()
         cls.runner = cls.app.test_cli_runner()
 
@@ -227,9 +228,31 @@ class TestRoutes(RouteTester, unittest.TestCase):
         url_settings = f'{self.prefix}/{username}/priv/settings'
         resp2 = client.get(url_settings)
 
-        with self.app.app_context():
-            breakpoint()
-            ''
+        if resp2.status_code != 200:
+            with self.app.app_context():
+                breakpoint()
+                ''
+
+    def test_post_user_recover(self):
+        try:
+            endpoints._reset_mock = True
+            self.app.debug = True
+            client = self.app.test_client()
+            url = f'{self.prefix}/u/ops/user-recover'
+            bads = []
+            for test_user, exists in (('tgbugs', True), ('not-registered-username', False)):
+                data = {'username': test_user}
+                resp = client.post(url, data=data)
+                if exists and test_user not in endpoints._reset_mock_tokens:
+                    bads.append(data)
+                elif not exists and test_user in endpoints._reset_mock_tokens:
+                    bads.append(data)
+
+            if bads:
+                breakpoint()
+
+        finally:
+            endpoints._reset_mock = False
 
 
 class TestApiDocs(RouteTester, unittest.TestCase):

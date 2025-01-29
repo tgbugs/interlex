@@ -283,6 +283,13 @@ class Auth:
                     # their orcid, which either means we have a bug or our
                     # flask session secret key got leaked
                     log.critical(f'decoded cookie but no orcid_metadata for {orcid}')
+                    # during development this can happen when we reset the
+                    # database so tell the other side to remove everything and
+                    # retry however no message is provided here because if this
+                    # happens in production we have bigger problems
+                    for k in ('_user_id', '_fresh', '_id'):
+                        if k in fsession:
+                            fsession.pop(k)
                     return
 
                 orcid_row = rows[0]
@@ -307,6 +314,19 @@ class Auth:
                         return self.id
 
                 return tuser()
+            elif isinstance(surrogate, int):
+                # a couple legacy testing cases, we don't use this anymore but
+                # automatically log them out if we hit this
+                log.critical(f'old session format {fsession}')
+                # manual modification of session since user doesn't exist anymore
+                # so calling fl.logout_user() call cause an infinite loop because this
+                # code is being called during _get_user
+                for k in ('_user_id', '_fresh', '_id'):
+                    if k in fsession:
+                        fsession.pop(k)
+
+                msg = 'old session implementation detected, you have been logged out, please login again or signup again'
+                abort(401, msg)
             else:
                 msg = f'{surrogate!r} is a {type(surrogate)}'
                 raise TypeError(msg)
@@ -322,7 +342,12 @@ class Auth:
             # a user has been banned, also, we need to implement alternative tokens
             # so that we can invalidate other sessions e.g. on password change
             # see https://flask-login.readthedocs.io/en/latest/#alternative-tokens
-            return
+            for k in ('_user_id', '_fresh', '_id'):
+                if k in fsession:
+                    fsession.pop(k)
+
+            msg = 'this session has expired, please login again'
+            abort(401, msg)
         else:
             class tuser:
                 is_active = True
