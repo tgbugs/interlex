@@ -179,6 +179,22 @@ class TestRoutes(RouteTester, unittest.TestCase):
         resp = self.get(url)
         assert self.host in resp.url
 
+    def test_post_entity_new(self):
+        self.app.debug = True
+        client = self.app.test_client()
+        tuser = auth.get('test-api-user')
+        token = auth.get('interlex-test-api-key')
+        headers = {'Authorization': f'Bearer {token}'}
+        data = {
+            'rdf-type': 'owl:Class',
+            'label': 'test term 1',
+            'exact': ['test term one', 'first test term'],
+        }
+        url = f'{self.prefix}/{tuser}/priv/entity-new'
+        resp = client.get(url, headers=headers)
+        resp1 = client.post(url, json=data, headers=headers)
+        breakpoint()
+
     def test_post_ontspec(self):
         self.app.debug = True
         client = self.app.test_client()

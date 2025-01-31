@@ -1,10 +1,11 @@
 {'config-search-paths': ['{:user-config-path}/interlex/config.yaml',],
  'auth-variables': {
      # basics
+     'use-real-frag-pref': False,  # when minting ids always use tmp_, only set this to true in a prod config
      'debug': {
          'default': False,
          'environment-variables': 'INTERLEX_DEBUG',},
-     'ilx-pattern': '<regex("((ilx|cde|fde)_[0-9]{7})|(pde_[0-9]{8})"):frag_pref_id>',
+     'ilx-pattern': '<regex("((ilx|cde|fde)_[0-9]{7})|(pde_[0-9]{8})|(tmp_[0-9]{9})"):frag_pref_id>',
 
      'orcid-sandbox': {
          'default': True,

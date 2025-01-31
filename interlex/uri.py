@@ -253,7 +253,7 @@ def uriStructure():
                     'upload':['HEAD', 'POST'],  # FIXME why did this need head?
                     'request-ingest': ['POST'],
 
-                    'entity-new': ['POST'],
+                    'entity-new': ['GET', 'POST'],
                     'modify-a-b': ['PATCH'],  # accepts add remove ban requires both add and remove but can be empty for either only for bulk
                     'modify-add-rem': ['PATCH'],  # takes a before and after so that the backend can generate the add and remove subset
 
@@ -548,7 +548,10 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
 
     @app.route('/favicon.ico')
     def route_fav():
-        return b'GO AWAY'
+        headers = {
+            'Cache-Control': 'public, max-age: 31536000',  # go away for 1 year
+        }
+        return b'GO AWAY', 200, headers
 
     @app.route('/api/job/<jobid>')
     def route_api_job(jobid):

@@ -2472,7 +2472,128 @@ class Priv(EndBase):
 
     @basic
     def entity_new(self, group, db=None):
-        return 'TODO', 501
+        """
+        The workflow we want for this is a bit more complex than a simple form.
+        minimally we need
+        0. rdf:type
+        0. rdfs:label
+
+        really want but can't require
+        0. rdfs:subClassOf/rdfs:subPropertyOf
+
+        usually we also want
+        0. definition:
+        0. exactSynonym:
+        0. synonyms:
+
+        utility
+        0. userUri:
+
+        everything else
+        0. any predicate
+
+        the bigger issue is how we deal with existing terms and matches
+        ideally search will be over the larger set of ontologies
+
+        the actual process goes more like this
+        0. if the user has an existing id see if we already have it, and if not ask them to request the upstream ontology for ingestion, if it is a small ontology this can be done quickly
+        0. if there is no existing id user types a label and any exact synonyms
+        0. display the elasticsearch results
+        0. check if an exact match exists in the current labels and exacts
+        0. if yes they have two options, go to their version of the exact match to edit, or modify the label so that it no longer matches
+        0. if they opt to edit their own term and there were additional exact synonyms then those should be added to their version of the existing term
+        0. if there is an exact match to a label for a term from an ontology that does NOT currently have a interlex id then ask whether they want to use that ontogy term as the basis for a new interlex record, if not they need to explain in a comment why the exact match to an existing ontology term does not fit (need to add friction to pervent blindly proceeding here)
+        0. at this point they should be flipped to the edit term page
+        0. on the edit term page subClassOf/subPropertyOf and definition should be presented to be filled in
+        0. sub*Of should be a text box that auto complete searches or takes a curie or iri, when they tab out an update is sent
+        0. definition is free text and when they tab out the update is sent
+        0. at this point they can start adding any predicates they want using the usual edit term page
+        0. for ObjectProperties we also allow additional types to be added for e.g. TransitiveProperty etc.
+
+        existing fields that need to be removed:
+        existing ids
+        is defined by
+        description
+
+        existing flow changes:
+        additional predicate object pairs should not be added as part of the interstitial page
+        after the label and exact synonyms are done an no matches confirmed the user should be taken to the edit term page for the new term NOT back to the page they were on previously
+        """
+
+        if False:
+            # TODO ideally we would derive these from the database as done here
+            # but in reality there are three major types from owl that we support
+            # and we likely will want separate types for cde, fde, and pde
+            # Ontology and OntologySpec should not be listed on this interface
+            rdf_types = self.queries.getTopLevelRdfTypes()
+            nm = OntGraph(bind_namespaces='none').namespace_manager
+            nm.populate_from(self.queries.getGroupCuries(group))
+            def _sigh(iri):
+                try:
+                    return nm.curie(iri, generate=False)
+                except KeyError:
+                    return iri
+
+            type_curies = [_sigh(t.o) for t in rdf_types]
+
+        type_curies = [  # FIXME hardcoded
+            'owl:Class',
+            'owl:AnnotationProperty',
+            'owl:ObjectProperty',
+            'TODO:CDE',
+            'TODO:FDE',
+            'TODO:PDE',
+        ]
+        if request.method == 'GET':
+            rdf_type_options = '\n      '.join([f'<option value="{t}">{t}</option>' for t in type_curies])
+            _entity_new_form = f'''
+<form action="" method="post" class="entity-new">
+
+  <div class="entity-new">
+    <label for="rdf-type">Type: </label>
+    <select name="rdf-type" id="rdf-type">
+      {rdf_type_options}
+    </select>
+  </div>
+
+  <div class="entity-new">
+    <label for="label">Label: </label>
+    <input type="text" name="label" id="label" required />
+  </div>
+
+  <div class="entity-new">
+    <input type="submit" value="New Entity" />
+  </div>
+
+</form>
+'''
+
+            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex New Api Token</title></head>
+<body>
+{_entity_new_form}
+</body>
+</html>'''
+
+        elif request.method == 'POST':
+            errors = {}
+            for arg, req in (('rdf-type', True), ('label', True), ('exact', False)):
+                if req and (arg not in request.json or not request.json[arg].strip()):
+                    errors[arg] = ['missing']
+            if errors:
+                od = {'errors': errors}
+                return json.dumps(od), 422, ctaj
+
+            dbstuff = Stuff(self.session)
+            exact = request.json['exact'] if 'exact' in request.json else []
+            resp = dbstuff.newEntity(request.json['rdf-type'], request.json['label'], exact)
+            new_uri = resp[0].newentity
+            self.session.commit()
+            return redirect(new_uri, 303)
+        else:
+            abort(405)
 
     @basic
     def modify_a_b(self, group, db=None):

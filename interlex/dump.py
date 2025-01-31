@@ -75,7 +75,7 @@ class MysqlExport:
             res = list(self.existing_mapped((i.u,)))
             if res:
                 # FIXME HACK ensures lowest first, common denominator last
-                def key(iri_ilx, fpr=('cde', 'fde', 'pde', 'set', 'ilx')):  # FIXME hardcoded
+                def key(iri_ilx, fpr=('cde', 'fde', 'pde', 'set', 'ilx', 'tmp')):  # FIXME hardcoded
                     iri, ilx = iri_ilx
                     for i, frag_pref in enumerate(fpr):
                         if frag_pref + '_' in ilx:
@@ -1289,6 +1289,19 @@ and t.subgraph_identity is not null
                               for id, iri in id_existing_iris]
 
         return base_to_existing
+
+    def getTopLevelRdfTypes(self):
+        sql = '''
+SELECT distinct t.o
+FROM triples AS t
+WHERE t.s IS NOT NULL AND t.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' AND t.o IS NOT NULL
+EXCEPT
+SELECT distinct ta.o
+FROM triples AS tn
+JOIN triples AS ta ON ta.s = tn.s AND ta.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' AND ta.o IS NOT NULL
+WHERE tn.s IS NOT NULL AND tn.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' AND tn.o = 'http://www.w3.org/2002/07/owl#NamedIndividual'
+'''
+        return list(self.session_execute(sql))
 
     def getObjectsForPredicates(self, iris, *predicates):
         args = dict(p=predicates, iris=tuple(iris))  # FIXME normalize here or there?

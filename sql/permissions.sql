@@ -6,6 +6,7 @@ GRANT USAGE ON SCHEMA interlex TO "interlex-user";
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA interlex TO "interlex-user";  -- tables includes views
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA interlex TO "interlex-user";
 
+GRANT UPDATE (suffix_max) ON fragment_prefix_sequences TO "interlex-user";
 GRANT UPDATE (orcid) ON interlex.users TO "interlex-user";
 GRANT UPDATE (own_role) ON interlex.groups TO "interlex-user";
 GRANT UPDATE (argon2_string) ON interlex.user_passwords TO "interlex-user";

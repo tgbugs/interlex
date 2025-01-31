@@ -4,6 +4,7 @@ stuff beyond dump and load
 """
 
 from sqlalchemy.sql import text as sql_text
+from interlex import config
 from interlex.core import makeParamsValues
 from interlex.utils import log
 
@@ -456,6 +457,27 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
     def subjectsObjects(self, predicate, subjects):
         args = dict(subjects=tuple(subjects), predicate=predicate)
         sql = 'select t.s, t.o from triples as t where t.p = :predicate and t.s in :subjects'
+        return list(self.session_execute(sql, args))
+
+    def newEntity(self, rdf_type, label, exacts=None):
+        if not config.use_real_frag_pref:
+            frag_pref = 'tmp'
+        elif rdf_type in ('owl:Class', 'owl:AnnotationProperty', 'owl:ObjectProperty'):
+            frag_pref = 'ilx'
+        elif rdf_type == 'TODO:CDE':
+            frag_pref = 'cde'
+        elif rdf_type == 'TODO:FDE':
+            frag_pref = 'fde'
+        elif rdf_type == 'TODO:PDE':
+            frag_pref = 'pde'
+        else:
+            raise TypeError(f'unknown rdf_type {rdf_type}')
+
+        if exacts is None:
+            exacts = []
+
+        args = dict(frag_pref=frag_pref, label=label, exacts=exacts)
+        sql = 'SELECT newEntity(:frag_pref, :label, :exacts)'
         return list(self.session_execute(sql, args))
 
     def createOntology(self, reference_host, group, path):

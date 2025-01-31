@@ -1,6 +1,7 @@
 -- fragment prefixes
 
 INSERT INTO fragment_prefix_sequences (prefix, suffix_max, current_pad) VALUES
+ ('tmp', 0, 9),
  ('ilx', 0, 7),
  ('fde', 0, 7),
  ('cde', 0, 7),

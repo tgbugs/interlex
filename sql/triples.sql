@@ -3,19 +3,19 @@
 CREATE TABLE fragment_prefix_sequences(
        prefix text PRIMARY KEY NOT NULL,
        suffix_max integer NOT NULL,
-       current_pad integer NOT NULL DEFAULT 7
+       current_pad integer NOT NULL DEFAULT 7 -- XXX NOTE when we overflow the current pad there is no point increasing the pad ...
 );
 
 -- FIXME TODO REMINDER rate limit on creating new terms to avoid abuse by regular users
 CREATE OR REPLACE FUNCTION incrementPrefixSequence(prefix_in text, OUT suffix_id integer) RETURNS integer AS $incrementPrefixSequence$
-       BEGIN
-           UPDATE fragment_prefix_sequences
-           SET suffix_max = 1 + (SELECT suffix_max
-                                 FROM fragment_prefix_sequences
-                                 WHERE prefix = prefix_in)
-           WHERE prefix = prefix_in
-           INTO suffix_id;
-       END;
+BEGIN
+    UPDATE fragment_prefix_sequences
+    SET suffix_max = 1 + (SELECT suffix_max
+                          FROM fragment_prefix_sequences
+                          WHERE prefix = prefix_in)
+    WHERE prefix = prefix_in;
+    SELECT suffix_max INTO suffix_id FROM fragment_prefix_sequences WHERE prefix = prefix_in;
+END;
 $incrementPrefixSequence$ language plpgsql;
 
 -- TODO implement this so that there will be no gaps
@@ -30,19 +30,65 @@ CREATE TABLE interlex_ids(
        CONSTRAINT pk__interlex_ids PRIMARY KEY (prefix, id),
        -- XXX if it looks like we are going to overflow the limit the padding rule will have to be changed changed, just bump it
        -- the check constraint here does not reference the current_pad because that can grow, in which case the check here should be updated
-       CHECK ((prefix = 'ilx' AND id ~ '[0-9]{7}') OR
+       CHECK ((original_label ~* '^\S+') AND (original_label ~* '\S+$')),
+       CHECK ((prefix = 'tmp' AND id ~ '[0-9]{9}') OR
+              (prefix = 'ilx' AND id ~ '[0-9]{7}') OR
               (prefix = 'cde' AND id ~ '[0-9]{7}') OR
               (prefix = 'fde' AND id ~ '[0-9]{7}') OR
               (prefix = 'pde' AND id ~ '[0-9]{8}'))
 );
 
--- TODO FIXME ideally minimal inserts need to happen in here to ensure metadata is preserved
-CREATE OR REPLACE FUNCTION newIdForPrefix(prefix_in text, original_label_in text) RETURNS integer AS $newIdForPrefix$
-       BEGIN
-            INSERT INTO interlex_ids (prefix, id, original_label)
-            VALUES (prefix_in, incrementPrefixSequence(prefix_in), original_label_in);
-       END;
+CREATE OR REPLACE FUNCTION newIdForPrefix(prefix_in text, original_label_in text) RETURNS text AS $newIdForPrefix$
+/* NEVER CALL THIS FUNCTION BY ITSELF! ALWAYS USE WITH newEntity to ensure constraints are satisfied */
+DECLARE
+new_id text;
+BEGIN
+    new_id := LPAD(cast(incrementPrefixSequence(prefix_in) AS text),
+                   (SELECT current_pad FROM fragment_prefix_sequences WHERE prefix = prefix_in),
+                   '0');
+    INSERT INTO interlex_ids (prefix, id, original_label) -- FIXME need to format with the leading zeros and plan for overflow
+    VALUES (prefix_in, new_id, original_label_in);
+    RETURN new_id;
+END;
 $newIdForPrefix$ language plpgsql;
+
+CREATE TYPE label_type AS ENUM ('label', 'exact');
+CREATE TABLE current_interlex_labels_and_exacts(
+/*
+used to enforce unique label and exact synonym mappings for all ilx terms
+TODO figure out whether we can relax this to be across perspectives ...
+this constraint is particularly tricky because ideally we want to enforce it
+uniformly for all users, but there are legitimate use cases where we might need
+to allow divergence
+*/
+       prefix text NOT NULL,
+       id text NOT NULL,
+       FOREIGN KEY (prefix, id) references interlex_ids (prefix, id),
+       p label_type NOT NULL,
+       o_lit text PRIMARY KEY,
+       CHECK ((o_lit ~* '^\S+') AND (o_lit ~* '\S+$'))
+       -- XXX NOTE we do not deal with datatype and lang here because
+       -- inside interlex label for ilx terms should be unique, always english (sciengtish?), and without specified data type
+);
+
+CREATE OR REPLACE FUNCTION newEntity(frag_pref text, label text, exacts text[]) RETURNS uri AS $$
+DECLARE
+id_suffix text;
+subject uri;
+BEGIN
+id_suffix := newIdForPrefix(frag_pref, label); -- FIXME wrong type
+INSERT INTO current_interlex_labels_and_exacts (prefix, id, p, o_lit) VALUES (frag_pref, id_suffix, 'label', label);
+INSERT INTO current_interlex_labels_and_exacts (prefix, id, p, o_lit) SELECT frag_pref, id_suffix, 'exact', exact FROM unnest(exacts) AS exact;
+subject := 'http://' || reference_host() || '/base/' || frag_pref || '_' || id_suffix;
+INSERT INTO triples (triple_identity, s, p, o_lit) VALUES
+       (tripleIdentity(subject, 'http://www.w3.org/2000/01/rdf-schema#label', null, label, null, null),
+        subject, 'http://www.w3.org/2000/01/rdf-schema#label', label);
+INSERT INTO triples (triple_identity, s, p, o_lit)
+       SELECT tripleIdentity(subject, 'http://uri.interlex.org/tgbugs/uris/readable/hasExactSynonym', null, exact, null, null),
+              subject, 'http://uri.interlex.org/tgbugs/uris/readable/hasExactSynonym', exact FROM unnest(exacts) AS exact; -- FIXME FIXME determine predicate
+RETURN subject;
+END;
+$$ language plpgsql;
 
 /*
 -- TODO figure out how this worked and use it to get prefix + and id
@@ -968,6 +1014,14 @@ CREATE UNIQUE INDEX un__triples_s_blank_rdf_first
        WHERE s_blank IS NOT NULL AND
              p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first';
 */
+
+CREATE INDEX triples_type_index
+       ON triples (o)
+       -- if you want an index on all types including those that only appear on bnodes
+       -- you need a separate index where the s IS NOT NULL restriction is not present
+       -- or might be able to manage using nulls not distinct? but then the index has to
+       -- be over (s, o) not just o
+       WHERE s IS NOT NULL AND p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' AND o IS NOT NULL;
 
 CREATE INDEX search_index ON triples USING GIN (to_tsvector('english', o_lit)) WHERE o_lit IS NOT NULL;
 

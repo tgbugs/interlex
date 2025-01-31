@@ -25,6 +25,7 @@ class QuietString(str):
 
 
 # basics
+use_real_frag_pref = auth.get('use-real-frag-pref')
 debug = auth.get('debug')
 ilx_pattern = auth.get('ilx-pattern')
 orcid_sandbox = auth.get('orcid-sandbox')
