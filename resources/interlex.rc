@@ -24,7 +24,6 @@ start_stop_daemon_args="
 --env BROKER_URL=${BROKER_URL}
 --env PYTHONPATH=${PYTHONPATH}
 --env PYTHONBREAKPOINT=0
---env PYONTUTILS_DEVCONFIG=${PYONTUTILS_DEVCONFIG}
 "
 command="/usr/bin/gunicorn"
 command_args="

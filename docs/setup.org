@@ -1,5 +1,8 @@
 # [[file:setup.pdf]]
 * Setting up a new InterLex
+If you want to set up a new InterLex from scratch the easiest way is to
+use the =tgbugs/musl:interlex= docker image defined at
+[[https://github.com/tgbugs/dockerfiles/blob/master/source.org#interlex]]
 ** Requirements
 See the ebuild in tgbugs-overlay.
 [[https://github.com/tgbugs/tgbugs-overlay/blob/master/dev-python/interlex/interlex-9999.ebuild]]
@@ -19,54 +22,31 @@ cd pguri
 make PG_CONFIG=/usr/bin/pg_config
 sudo make PG_CONFIG=/usr/bin/pg_config install
 #+end_src
-** Set up a virtual environment
-In the working directory of this repository (usually the 'outer' interlex folder)
-1. run =pipenv install= (may complain about version issues)
-2. run =pipenv shell=
-   NOTE: if you have a local development version of pyontutils installed
-   in =PYTHONPATH= pipenv will point to those files for the source, HOWEVER
-   the command line scripts installed by pipenv will point to the venv which
-   could cause major confusion. The simplest solution is to only run interlex
-   and interlex commands inside the venv and run any pyontutils commands outside
-   the venv.
+** Configuration
+See example configs in
+[[https://github.com/tgbugs/dockerfiles/blob/master/source.org#interlex]]
 ** Set up the database
 1. Set up postgres for your operating system.
-2. From the working directly run =interlex-dbsetup $PORT $DBNAME=
-   NOTE: if you change =$DBNAME= from =interlex_test= make sure you also
-   change it in the python code since this has not been abstracted yet.
-3. You will need to set the passwords for =interlex-admin= and =interlex-user= manually
-   and then run =interlex-dbsetup $PORT $DBNAME= again. To accomplish this run the following.
-   =su postgres= =psql= =\password interlex-admin= =\password interlex-user=.
+2. From the working directory run =bin/interlex-dbsetup $PORT $DBNAME=
+   NOTE: if =$PORT= or =$DBNAME= is not provided then auth-config
+   values for =test-port= and =test-database= will be used.
+3. The first time you run =interlex-dbsetup= you will need to set
+   the passwords for =interlex-admin= and =interlex-user= and then
+   run =interlex-dbsetup $PORT $DBNAME= again. To accomplish this
+   run =su postgres= then =psql= then =\password interlex-admin=
+   and finally =\password interlex-user=.
 4. Add the passwords for =interlex-admin= and =interlex-user= to =~/.pgpass=.
-5. Run =interlex dbsetup= to add an initial 'authenticated' user.
+# 5. Run =interlex dbsetup= to add an initial 'authenticated' user.
 ** Set up the message broker
 1. Install =rabbitmq= and add it and =epmd= to default services.
 2. See =interlex-mqsetup=
-* Bootstrapping a development environment on Gentoo
-It is possible to run InterLex as a service as the =interlex= user and
-use the =PYTHONPATH= option in [[file:/etc/conf.d/interlex]] (open as root)
-to use the development codebase to run the daemon. There are a few steps required
-to get everything working smoothly. *ONLY DO THIS IF YOU TRUST* =${DEV_USER}=.
-#+begin_src bash
-# become interlex (probably via root)
-su interlex
-cd
-# point interlex to dev packages
-export PYTHONPATH=~DEV_USER/git/pyontutils:~DEV_USER/git/ontquery:~DEV_USER/git/interlex:~DEV_USER/git/pyontutils/ttlser:~DEV_USER/git/pyontutils/htmlfn:
-# note that ~${DEV_USER} will not expand
 
-# set the location of devconfig.yaml
-export PYONTUTILS_DEVCONFIG=~/devconfig.yaml
-# create a new devconfig for the interlex user
-/home/${DEV_USER}/bin/ontutils devconfig --write
-#+end_src
 * Run tests
 1. From the working directory run
    =python -m unittest test/test_constraints.py=
    (this is also run by =interlex-dbsetup=)
 2. From the working directory run =pytest=
-   (you may need to install it first e.g. via =pipenv install pytest=)
-   NOTE: this will run stress tests.
+
 * Load content
 ** Dump mysql for load from dev or local
 This simplifies development and reduces the load of queries on the production database.
@@ -145,13 +125,88 @@ for example
 #+begin_src bash
 INTERLEX_DATABASE=__interlex_sync BROKER_URL=$(python -c 'from interlex.config import auth; print(auth.get("mq-broker-url"))') EPYTHON=pypy3 celery --app interlex.tasks worker
 #+end_src
+
 ** Load ontologies
-If you are running interlex via =interlex-uri= replace the =-o= from these commands with =-c=.
-1. In the venv run =interlex post resource http://purl.obolibrary.org/obo/bfo.owl -o -u $YOURUSERNAME=
-2. Repeat for as many ontologies as you want, for example =http://ontology.neuinfo.org/NIF/ttl/nif.ttl=
-   NOTE: currently this does not pull in the transitive closure.
+#+begin_src bash :noweb yes :results code
+uris=(
+<<&ont-uris>>
+)
+for uri in ${uris[@]}; do
+echo pypy3 -m interlex.ingest tgbugs "${uri}" --commit --debug '&&';
+done
+#+end_src
+
+#+begin_src bash :noweb yes :results code
+uris=(
+<<&ont-uris>>
+)
+for uri in ${uris[@]}; do
+echo pypy3 -m interlex.cli post resource --local --group tgbugs "${uri}";
+done
+#+end_src
+
+#+name: &ont-uris
+#+begin_src bash
+# basics
+http://www.w3.org/1999/02/22-rdf-syntax-ns
+http://www.w3.org/2000/01/rdf-schema
+http://www.w3.org/2002/07/owl
+http://www.w3.org/2004/02/skos/core
+https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_elements.ttl
+https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_terms.ttl
+http://protege.stanford.edu/plugins/owl/dc/dublincore.owl
+
+# obo core
+http://purl.obolibrary.org/obo/bfo.owl
+http://purl.obolibrary.org/obo/ro.owl
+http://purl.obolibrary.org/obo/iao.owl
+# TODO auto resolve import chain stuff
+https://raw.githubusercontent.com/SciCrunch/NIF-Ontology/dev/ttl/nif_backend.ttl
+https://raw.githubusercontent.com/SciCrunch/NIF-Ontology/dev/ttl/BIRNLex-OBO-UBO.ttl
+https://raw.githubusercontent.com/SciCrunch/NIF-Ontology/dev/ttl/BIRNLex_annotation_properties.ttl
+https://raw.githubusercontent.com/SciCrunch/NIF-Ontology/dev/ttl/OBO_annotation_properties.ttl
+http://www.geneontology.org/formats/oboInOwl
+
+http://purl.obolibrary.org/obo/pato.owl
+
+http://purl.obolibrary.org/obo/ncbitaxon/subsets/taxslim.owl
+
+# core community ontologies
+http://purl.obolibrary.org/obo/emapa.owl
+http://purl.obolibrary.org/obo/cl.owl
+http://purl.obolibrary.org/obo/hp.owl
+http://purl.obolibrary.org/obo/mp.owl
+http://purl.obolibrary.org/obo/upheno.owl
+http://purl.obolibrary.org/obo/mondo.owl
+http://purl.obolibrary.org/obo/doid.owl
+http://purl.obolibrary.org/obo/go.owl
+http://purl.obolibrary.org/obo/so.owl
+http://purl.obolibrary.org/obo/uberon.owl
+
+# large community ontologies
+http://purl.org/sig/ont/fma.owl
+
+http://ftp.ebi.ac.uk/pub/databases/chebi/ontology/chebi.owl.gz
+# http://ftp.ebi.ac.uk/pub/databases/chebi/ontology/nightly/chebi.owl.gz
+# insanely slow download on chebi
+# http://purl.obolibrary.org/obo/chebi.owl
+# https://lod.proconsortium.org/release.html
+
+http://purl.obolibrary.org/obo/pr.owl
+
+#http://ontology.neuinfo.org/NIF/ttl/external/pr.owl
+#https://raw.githubusercontent.com/SciCrunch/NIF-Ontology/dev/ttl/NIF-GrossAnatomy.ttl
+#+end_src
+
 ** Load curies
-1. In the venv run =interlex post curies --local --group base= and then =interlex post curies --local --group $YOURUSERNAME=
+1. In the venv run
+   src_bash[:eval never]{python -m interlex.cli post curies --local --group base}
+   and then
+   src_bash[:eval never]{python -m interlex.cli post curies --local --group ${YOURUSERNAME}}
+
+# XXX if this is not done then the rendering on the no file extension
+# pages is quite weird because there are no curies at all ... should
+# fail over to the url but doesn't
 * Performance notes
 ** load
 #+begin_src bash
