@@ -27,6 +27,10 @@ Usage:
     interlex ops resource  [options] <rdf-iri>
     interlex ops ontology  [options] <ontology-filename> ...
     interlex ops api-key   [options]
+    interlex ops curies    [options] [<curies-filename>]
+    interlex ops curies    [options] (<curie-prefix> <iri-namespace>) ...
+
+
 
 Commands:
     server api      start a server running the api endpoint (WARNING: OLD)
@@ -353,7 +357,10 @@ class Post(clif.Dispatcher):
         breakpoint()
         pass
 
-    def curies(self):  # FIXME post should smart update? or switch to patch?
+    def curies(self, client=None):  # FIXME post should smart update? or switch to patch?
+        if client is None:
+            client = requests
+
         scheme, host, group, headers = self._post()
         filename = self.options.curies_filename
         url = f'{scheme}://{host}/{group}/curies'  # https duh
@@ -371,21 +378,21 @@ class Post(clif.Dispatcher):
                     graph = orp.metadata().graph
                     #graph = OntGraph().parse(f, format='ttl')
                     # TODO allow <url> a ilxr:Curies typed record
-                    data = {k:str(v) for k, v in graph.namespaces()}
+                    data = dict(graph.namespace_manager)
                 elif ext == 'yml' or ext == 'yaml':
                     data = yaml.load(f)
                 else:
                     raise TypeError(f"Don't know how to handle {ext} files")
 
-            resp = requests.post(url, json=data, headers=headers)
+            resp = client.post(url, json=data, headers=headers)
         elif self.options.curie_prefix:
             # FIXME curie syntax validation? in the db?
             data = {cp:ip for cp, ip in zip(self.options.curie_prefix,
                                             self.options.iri_namespace)}
-            resp = requests.post(url, json=data, headers=headers)
+            resp = client.post(url, json=data, headers=headers)
 
         else:
-            resp = requests.post(url, json=uPREFIXES, headers=headers)
+            resp = client.post(url, json=uPREFIXES, headers=headers)
 
         printD(resp.status_code, resp.text)
 
@@ -448,23 +455,41 @@ class Ops(clif.Dispatcher):
 
     _post = Post._post
 
-    def api_key(self):
-        """ set user api key manually to simplify testing """
+    def _get_session_etc(self):
         from .core import getScopedSession, dbUri
-        from .dbstuff import Stuff
         from .config import auth
         if self.options.production:
             scheme, host, group, headers = self._post()
-            key = auth.get('interlex-api-key')
             dburi = dbUri()
+            kwargs = None
         else:
             group = auth.get('test-api-user')
-            key = auth.get('interlex-test-api-key')
             kwargs = {k:auth.get(f'test-{k}') for k in ('host', 'port', 'database')}
             kwargs['dbuser'] = auth.get('db-user')
             dburi = dbUri(**kwargs)
 
         session = getScopedSession(dburi=dburi, echo=False)
+        return session, group, kwargs
+
+    _curies = Post.curies
+    def curies(self):
+        session, group, db_kwargs = self._get_session_etc()
+        from interlex.uri import run_uri
+        app = run_uri(db_kwargs=db_kwargs)
+        app.debug = True
+        client = app.test_client()
+        self._curies(client=client)
+
+    def api_key(self):
+        """ set user api key manually to simplify testing """
+        from .dbstuff import Stuff
+        from .config import auth
+        if self.options.production:
+            key = auth.get('interlex-api-key')
+        else:
+            key = auth.get('interlex-test-api-key')
+
+        session, group, _ = self._get_session_etc()
         dbstuff = Stuff(session)
         dbstuff.insertApiKey(group, key, 'personal', 'settings-all')
         key = None
@@ -495,6 +520,7 @@ class Ops(clif.Dispatcher):
             resp = f(group=group, filename=u.path[:1], nocel=True)
 
     def ontology(self):
+        raise NotImplementedError('use interlex.ingest')
         if self.options.user is None:
             raise ValueError('need user')
 
