@@ -462,6 +462,7 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
     def newEntity(self, rdf_type, label, exacts=None):
         if not config.use_real_frag_pref:
             frag_pref = 'tmp'
+        # FIXME TODO need the expanded values for rdf_type
         elif rdf_type in ('owl:Class', 'owl:AnnotationProperty', 'owl:ObjectProperty'):
             frag_pref = 'ilx'
         elif rdf_type == 'TODO:CDE':
@@ -476,8 +477,8 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
         if exacts is None:
             exacts = []
 
-        args = dict(frag_pref=frag_pref, label=label, exacts=exacts)
-        sql = 'SELECT newEntity(:frag_pref, :label, :exacts)'
+        args = dict(rdf_type=rdf_type, frag_pref=frag_pref, label=label, exacts=exacts)
+        sql = 'SELECT newEntity(:rdf_type, :frag_pref, :label, :exacts)'
         return list(self.session_execute(sql, args))
 
     def createOntology(self, reference_host, group, path):

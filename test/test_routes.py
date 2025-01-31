@@ -185,14 +185,24 @@ class TestRoutes(RouteTester, unittest.TestCase):
         tuser = auth.get('test-api-user')
         token = auth.get('interlex-test-api-key')
         headers = {'Authorization': f'Bearer {token}'}
+        diff = secrets.token_hex(6)
         data = {
             'rdf-type': 'owl:Class',
-            'label': 'test term 1',
-            'exact': ['test term one', 'first test term'],
+            'label': f'test term 1 {diff}',
+            'exact': [f'test term one {diff}', f'first test term {diff}'],
         }
         url = f'{self.prefix}/{tuser}/priv/entity-new'
         resp = client.get(url, headers=headers)
         resp1 = client.post(url, json=data, headers=headers)
+        if resp1.status_code == 303:
+            headers = {'Accept': 'text/turtle'}
+            resp2 = client.get(resp1.location, headers=headers)
+            if resp2.status_code != 200:
+                breakpoint()
+                ''
+
+            print(resp2.data.decode())
+
         breakpoint()
 
     def test_post_ontspec(self):

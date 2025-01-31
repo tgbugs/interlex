@@ -71,7 +71,7 @@ to allow divergence
        -- inside interlex label for ilx terms should be unique, always english (sciengtish?), and without specified data type
 );
 
-CREATE OR REPLACE FUNCTION newEntity(frag_pref text, label text, exacts text[]) RETURNS uri AS $$
+CREATE OR REPLACE FUNCTION newEntity(rdf_type uri, frag_pref text, label text, exacts text[]) RETURNS uri AS $$
 DECLARE
 id_suffix text;
 subject uri;
@@ -80,6 +80,9 @@ id_suffix := newIdForPrefix(frag_pref, label); -- FIXME wrong type
 INSERT INTO current_interlex_labels_and_exacts (prefix, id, p, o_lit) VALUES (frag_pref, id_suffix, 'label', label);
 INSERT INTO current_interlex_labels_and_exacts (prefix, id, p, o_lit) SELECT frag_pref, id_suffix, 'exact', exact FROM unnest(exacts) AS exact;
 subject := 'http://' || reference_host() || '/base/' || frag_pref || '_' || id_suffix;
+INSERT INTO triples (triple_identity, s, p, o) VALUES
+       (tripleIdentity(subject, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', rdf_type, null, null, null),
+        subject, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', rdf_type);
 INSERT INTO triples (triple_identity, s, p, o_lit) VALUES
        (tripleIdentity(subject, 'http://www.w3.org/2000/01/rdf-schema#label', null, label, null, null),
         subject, 'http://www.w3.org/2000/01/rdf-schema#label', label);

@@ -1338,6 +1338,11 @@ WHERE tn.s IS NOT NULL AND tn.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#ty
             defs = [(s, _defs[s]) if s in _defs else (s, '') for s in results]
             return False, defs  # disambiguate
 
+    def getCurrentLabelExactIlx(self, *o_lits):
+        args = dict(o_lits=tuple(o_lits))
+        sql = 'SELECT distinct * FROM (SELECT prefix, id FROM current_interlex_labels_and_exacts WHERE o_lit in :o_lits)'
+        return list(self.session_execute(sql, args))
+
     def getTriplesById(self, *triples_ids):
         # when using IN directly we don't have to convert to a list first
         # unlike in the unnest case

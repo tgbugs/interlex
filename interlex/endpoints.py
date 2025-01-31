@@ -2520,14 +2520,14 @@ class Priv(EndBase):
         after the label and exact synonyms are done an no matches confirmed the user should be taken to the edit term page for the new term NOT back to the page they were on previously
         """
 
+        nm = OntGraph(bind_namespaces='none').namespace_manager
+        nm.populate_from(self.queries.getGroupCuries('base'))  # FIXME
         if False:
             # TODO ideally we would derive these from the database as done here
             # but in reality there are three major types from owl that we support
             # and we likely will want separate types for cde, fde, and pde
             # Ontology and OntologySpec should not be listed on this interface
             rdf_types = self.queries.getTopLevelRdfTypes()
-            nm = OntGraph(bind_namespaces='none').namespace_manager
-            nm.populate_from(self.queries.getGroupCuries(group))
             def _sigh(iri):
                 try:
                     return nm.curie(iri, generate=False)
@@ -2582,13 +2582,32 @@ class Priv(EndBase):
             for arg, req in (('rdf-type', True), ('label', True), ('exact', False)):
                 if req and (arg not in request.json or not request.json[arg].strip()):
                     errors[arg] = ['missing']
+                elif arg == 'rdf-type' and request.json['rdf-type'] not in type_curies:
+                    errors[arg] = [f'unknown rdf-type {request.json[arg]!r}']
+
             if errors:
                 od = {'errors': errors}
                 return json.dumps(od), 422, ctaj
 
             dbstuff = Stuff(self.session)
-            exact = request.json['exact'] if 'exact' in request.json else []
-            resp = dbstuff.newEntity(request.json['rdf-type'], request.json['label'], exact)
+            rdf_type = nm.expand_curie(request.json['rdf-type'])
+            label = request.json['label'].strip()
+            exact = [e.strip() for e in request.json['exact']] if 'exact' in request.json else []
+            try:
+                resp = dbstuff.newEntity(rdf_type, label, exact)
+            except sa.exc.IntegrityError as e:
+                if e.orig.diag.constraint_name == 'current_interlex_labels_and_exacts_pkey':
+                    self.session.rollback()
+                    # FIXME two db roundtrips, could be done in a single trip
+                    # by catching the exception in the db and adding the
+                    # relevant information there
+                    resp = self.queries.getCurrentLabelExactIlx(label, *exact)
+                    existing = ['http://' + self.reference_host + f'/base/{frag_pref}_{id}' for frag_pref, id in resp]
+                    return json.dumps(existing), 409, ctaj
+
+                log.exception(e)
+                abort(501, 'something went wrong')
+
             new_uri = resp[0].newentity
             self.session.commit()
             return redirect(new_uri, 303)
