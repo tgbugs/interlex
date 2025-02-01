@@ -147,13 +147,13 @@ class DbToEs:
     def allGraph(self, user='base', unmapped=False):
         # TODO qualifier etc
         prefixes = self.queries.getGroupCuries(user)
-        uri_base = 'http://uri.interlex.org/base/ilx_{}'
+        uri_base = 'http://uri.interlex.org/base/{}_{}'
         resp = [[uri_base.format(id) if 'http' not in id else id] + rest
                 for id, *rest in self.queries.getAll(unmapped=unmapped)]
         # FIXME getAll needs to use qualifiers, the current implementation has nasty issues with
         # conflating subjects in ways that are inappropriate and often extremely confusing
-        existing = [(uri_base.format(id), iri, group_id)
-                    for id, iri, group_id in self.queries.getExistingIris()]
+        existing = [(uri_base.format(frag_pref, id), iri, perspective)
+                    for frag_pref, id, iri, perspective in self.queries.getExistingIris()]
         # TODO merge with existing ids
         @profile_me
         def graphFromResp(resp, existing):

@@ -23,9 +23,9 @@ class Stuff:
 
         # FIXME impl in load pls
         values_template, params = makeParamsValues(values,
-                                                   constants=('idFromGroupname(:group)',))  # FIXME surely this is slow as balls
+                                                   constants=('persFromGroupname(:group)',))  # FIXME surely this is slow as balls
         params['group'] = group
-        base = 'INSERT INTO curies (group_id, curie_prefix, iri_namespace) VALUES '
+        base = 'INSERT INTO curies (perspective, curie_prefix, iri_namespace) VALUES '
         sql = base + values_template
         return self.session_execute(sql, params)
 
@@ -438,7 +438,7 @@ WHERE ak.user_id = idFromGroupname(:group)
         sql = '''
 select * from ontologies as o
 join triples as t on o.spec = t.s
-where o.group_id = idFromGroupname(:group)
+where o.perspective = persFromGroupname(:group)
 '''
         return list(self.session_execute(sql, args))
 
@@ -485,8 +485,8 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
         spec = f'http://{reference_host}/{group}/ontologies/uris{path}/spec'
         args = dict(group=group, path=path, spec=spec)
         sql = '''
-INSERT INTO ontologies (group_id, ont_path, spec) VALUES
-(idFromGroupname(:group), :path, :spec) RETURNING spec
+INSERT INTO ontologies (perspective, ont_path, spec) VALUES
+(persFromGroupname(:group), :path, :spec) RETURNING spec
 '''
         return list(self.session_execute(sql, args))
 

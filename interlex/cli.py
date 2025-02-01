@@ -134,7 +134,9 @@ class Main(clif.Dispatcher):
 
         kwargs = {k:auth.get(f'db-{k}') for k in ('user', 'host', 'port', 'database')}
         kwargs['dbuser'] = kwargs.pop('user')
-        _session = getScopedSession(dburi=dbUri(**kwargs), query_cache_size=0)
+        dburi = dbUri(**kwargs)
+        log.info(dburi)
+        _session = getScopedSession(dburi=dburi, query_cache_size=0)
         class db:
             session = _session
 

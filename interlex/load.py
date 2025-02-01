@@ -1988,12 +1988,12 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
             if self.reference_name_in_db:
                 sql = ('UPDATE reference_names SET expected_bound_name = :e WHERE name = :r')
             else:
-                sql = ('INSERT INTO reference_names (name, expected_bound_name, group_id) '
-                       'VALUES (:r, :e, :group_id)')
+                sql = ('INSERT INTO reference_names (name, expected_bound_name, perspective) '
+                       'VALUES (:r, :e, persFromGroupname(:group))')
 
             # FIXME this is not wrapped with a rollback because...
             # that shouldn't happen? are we sure?
-            self.session_execute(sql, dict(r=self.reference_name, e=value, group_id=self.group_id))
+            self.session_execute(sql, dict(r=self.reference_name, e=value, group=self.group))
             self._expected_bound_name = value
             self.reference_name_in_db = True  # ok to set again
             #breakpoint()
@@ -2302,8 +2302,8 @@ class TripleLoaderFactory(UnsafeBasicDBFactory):
         # we just need to get the value back out
 
         params_le = dict(si=si, g=self.group, u=self.user)
-        sql_le = ('INSERT INTO load_events (serialization_identity, group_id, user_id) '
-                  'VALUES (:si, idFromGroupname(:g), idFromGroupname(:u))')
+        sql_le = ('INSERT INTO load_events (serialization_identity, perspective, user_id) '
+                  'VALUES (:si, persFromGroupname(:g), idFromGroupname(:u))')
         log.debug(f'load load_events for {si.hex()}')
         self.session_execute(sql_le, params_le)  # FIXME why is the table always empty ?!?!??!
 

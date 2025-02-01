@@ -290,11 +290,11 @@ class InterLexLoad:
             # along with not storing it with the other values
             start_values = None
 
-        sql_base = 'INSERT INTO existing_iris (group_id, ilx_prefix, ilx_id, iri) VALUES '
+        sql_base = 'INSERT INTO existing_iris (perspective, ilx_prefix, ilx_id, iri) VALUES '
         self.eid_sql = []
         self.eid_params = []
         for chunk in chunk_list(values, self.batchsize):
-            values_template, params = makeParamsValues(chunk, constants=('idFromGroupname(:group)',))
+            values_template, params = makeParamsValues(chunk, constants=('persFromGroupname(:group)',))
             params['group'] = 'base'
             sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # TODO return id? (on conflict ok here)
             self.eid_sql.append(sql)
@@ -354,17 +354,17 @@ class InterLexLoad:
         if bads:
             raise ValueError('\n'.join(bads))
 
-        gidmap = self.queries.getGroupIds(*sorted(set(u for _, _, u, _ in _values)))
+        persmap = self.queries.getGroupPers(*sorted(set(u for _, _, u, _ in _values)))
         # XXX if you encounter an error here it is probably because
         # new groups were used by convention in the ontology and
         # loaded into interlex as existing ids and we don't have them
         # listed here
 
-        log.debug(gidmap)
-        values = [(ilx_prefix, ilx_id, gidmap[g], uri_path)
+        log.debug(persmap)
+        values = [(ilx_prefix, ilx_id, persmap[g], uri_path)
                   for ilx_prefix, ilx_id, g, uri_path in _values]
-        sql_uri = 'INSERT INTO uris (group_id, uri_path) VALUES '
-        sql_uri_mapping = 'INSERT INTO uri_mapping (ilx_prefix, ilx_id, group_id, uri_path) VALUES '
+        sql_uri = 'INSERT INTO uris (perspective, uri_path) VALUES '
+        sql_uri_mapping = 'INSERT INTO uri_mapping (ilx_prefix, ilx_id, perspective, uri_path) VALUES '
 
         self.uid_sql = []
         self.uid_params = []

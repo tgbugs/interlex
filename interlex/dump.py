@@ -736,10 +736,10 @@ class Queries:
         if epoch_verstr is not None:
             # TODO
             sql = ('SELECT curie_prefix, iri_namespace FROM curies as c '
-                   'WHERE c.group_id = idFromGroupname(:group)')
+                   'WHERE c.perspective = persFromGroupname(:group)')
         else:
             sql = ('SELECT curie_prefix, iri_namespace FROM curies as c '
-                   'WHERE c.group_id = idFromGroupname(:group)')  # FIXME idFromGroupname??
+                   'WHERE c.perspective = persFromGroupname(:group)')
         resp = self.session_execute(sql, params)
         PREFIXES = {cp:ip for cp, ip in resp}
         return PREFIXES
@@ -1242,7 +1242,7 @@ and t.subgraph_identity is not null
             return resp
 
         args = dict(group=group, path=path)
-        sql = ('SELECT uri FROM uris WHERE group_id = idFromGroupname(:group) '
+        sql = ('SELECT uri FROM uris WHERE perspective = persFromGroupname(:group) '
                'AND uri_path = :path')
 
         gen = self.session_execute(sql, args)
@@ -1256,7 +1256,7 @@ and t.subgraph_identity is not null
 
     def getByGroupUriPath(self, group, path, redirect=False):  # TODO bulk versions of these
         args = dict(group=group, path=path)
-        sql = ('SELECT ilx_id FROM uri_mapping WHERE group_id = idFromGroupname(:group) '
+        sql = ('SELECT ilx_id FROM uri_mapping WHERE perspective = persFromGroupname(:group) '
                'AND uri_path = :path')
         # TODO handle the unmapped case (currently literally all of them)
         gen = self.session_execute(sql, args)
