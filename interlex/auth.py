@@ -471,17 +471,21 @@ class Auth:
         elif write_requires_auth:
             if li_user:
                 msg = f'{request.method} requires token authorization, but login was provided'
+                # just allow session access, don't require api key, it is needless complexity
+                auth_value = None
             else:
                 msg = f'{request.method} requires authorization, but none was provided'
+                raise self.MissingTokenError(request, msg)
 
-            raise self.MissingTokenError(request, msg)
         elif read_requires_auth:
             if li_user:
                 msg = f'{request.url_rule.rule} requires token authorization, but login was provided'
+                # just allow session access, don't require api key, it is needless complexity
+                auth_value = None
             else:
                 msg = f'{request.url_rule.rule} requires authorization, but none was provided'
+                raise self.MissingTokenError(request, msg)
 
-            raise self.MissingTokenError(request, msg)
         else:
             return None, None, None, None, None
 
