@@ -61,7 +61,7 @@ CREATE TABLE comments(
        target integer not null references comment_targets (id),
        user_id integer not null references users (id),
        comment_text text not null,
-       CHECK ((comment_text ~* '^\S+') AND (comment_text ~* '\S+$') AND comment_text != ''),
+       CHECK ((comment_text ~* '^\S+') AND (comment_text ~* '\S+$')),
        UNIQUE (target, user_id, comment_text),  -- not quite r9k but prevent exact duplicates and oscillating between two versions of the same text, if the user wants to go back to the prior version they can note that
        created_datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
        replaced bool DEFAULT FALSE, -- replaced_datetime redundant as always matchs replacement created_datetime

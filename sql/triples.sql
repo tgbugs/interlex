@@ -4,7 +4,7 @@ CREATE TABLE fragment_prefix_sequences(
        prefix text PRIMARY KEY NOT NULL,
        suffix_max integer NOT NULL,
        current_pad integer NOT NULL DEFAULT 7, -- XXX NOTE when we overflow the current pad there is no point increasing the pad ...
-       CHECK ((prefix ~* '^\S+') AND (prefix ~* '\S+$') AND prefix != '')
+       CHECK ((prefix ~* '^\S+') AND (prefix ~* '\S+$'))
 );
 
 -- FIXME TODO REMINDER rate limit on creating new terms to avoid abuse by regular users
@@ -31,7 +31,7 @@ CREATE TABLE interlex_ids(
        CONSTRAINT pk__interlex_ids PRIMARY KEY (prefix, id),
        -- XXX if it looks like we are going to overflow the limit the padding rule will have to be changed changed, just bump it
        -- the check constraint here does not reference the current_pad because that can grow, in which case the check here should be updated
-       CHECK ((original_label ~* '^\S+') AND (original_label ~* '\S+$') AND original_label != ''),
+       CHECK ((original_label ~* '^\S+') AND (original_label ~* '\S+$')),
        CHECK ((prefix = 'tmp' AND id ~ '[0-9]{9}') OR
               (prefix = 'ilx' AND id ~ '[0-9]{7}') OR
               (prefix = 'cde' AND id ~ '[0-9]{7}') OR
@@ -67,7 +67,7 @@ to allow divergence
        FOREIGN KEY (prefix, id) references interlex_ids (prefix, id),
        p label_type NOT NULL,
        o_lit text PRIMARY KEY,
-       CHECK ((o_lit ~* '^\S+') AND (o_lit ~* '\S+$') AND o_lit != '')
+       CHECK ((o_lit ~* '^\S+') AND (o_lit ~* '\S+$'))
        -- XXX NOTE we do not deal with datatype and lang here because
        -- inside interlex label for ilx terms should be unique, always english (sciengtish?), and without specified data type
 );
