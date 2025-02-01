@@ -176,7 +176,7 @@ def uriStructure():
         #'ontologies':          [2, ilx_get, '*uris_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
         #'entities':            [None, ''],  TODO need something like /terms /predicates /types etc.
         'ontologies':          ['*ont_ilx_pattern', '*ont_ilx_get', '*dns_ont', '*uris_ont', '*contributions_ont'] + intermediate_filename + ['<path:ont_path>'],  # TODO /ontologies/external/<iri> ? how? where?
-        '*ont_ilx_pattern':    ilx_spec_ext,  # needed to support existing termsets
+        '*ont_ilx_pattern':    [None] + ilx_spec_ext,  # needed to support existing termsets
         #'collections':         [2, '<path:ont_path>'] + intermediate_filename,  # TODO more general than files, ontologies, or resources
         # TODO distinguish between ontology _files_ and 'ontologies' which are the import closure?
         # ya, identified vs unidentified imports, owl only supports unidentified imports

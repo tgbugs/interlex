@@ -268,7 +268,7 @@ class Endpoints(EndBase):
             'other': self.other,
             '*versions': self.versions,
             #ilx_get: self.ilx_get,
-            '*ilx_get': self.ilx_get,
+            '*ilx_get': self.ilx,
 
             'lexical': self.lexical,
             'readable': self.readable,
@@ -392,7 +392,7 @@ class Endpoints(EndBase):
 
         abort(404)
 
-    def _ilx(self, group, frag_pref, id, func):
+    def _ilx_impl(self, group, frag_pref, id, func):
         PREFIXES, graph = self.getGroupCuries(group)
         resp = self.queries.getById(frag_pref, id, group)
         #log.debug(resp)
@@ -423,19 +423,23 @@ class Endpoints(EndBase):
 
     # TODO PATCH
     @basic
-    def ilx(self, group, frag_pref_id, db=None):
+    def ilx(self, group, frag_pref_id, extension=None, db=None):
+        return self._ilx(group, frag_pref_id, extension=extension)
+
+    def _ilx(self, group, frag_pref_id, extension=None, db=None):
         frag_pref, id = frag_pref_id.split('_')
         # TODO allow PATCH here with {'add':[triples], 'delete':[triples]}
         func = self._even_more_basic(group, frag_pref, id, db)
-        graph, object_to_existing, title, labels = self._ilx(group, frag_pref, id, func)
+        graph, object_to_existing, title, labels = self._ilx_impl(group, frag_pref, id, func)
         return tripleRender(request, graph, group, frag_pref, id,
                             object_to_existing, title, labels=labels)
 
     @basic
     def ilx_get(self, group, frag_pref_id, extension, db=None):
+        raise NotImplementedError('use ilx directly ')
         # TODO these are not cool uris
         # TODO move this lookup to config?
-        return self.ilx(group=group, frag_pref_id=frag_pref_id, db=db)
+        return self._ilx(group=group, frag_pref_id=frag_pref_id, extension=extension)
         #return tripleRender(request, g, group, id, object_to_existing, title)
 
     @basic
@@ -716,10 +720,10 @@ class Endpoints(EndBase):
         return json.dumps('your list sir'), 501
 
     @basic
-    def ontologies_ilx(self, group, frag_pref_id, extension, db=None):
+    def ontologies_ilx(self, group, frag_pref_id, extension=None, db=None):
         # FIXME termset
         # FIXME TODO i think this dispatch is just wrong? should be on ontologies?
-        return self.ilx(group=group, frag_pref_id=frag_pref_id, db=db)
+        return self._ilx(group=group, frag_pref_id=frag_pref_id, extension=extension)
 
     @basic
     def ontologies(self, *args, **kwargs):
@@ -3079,12 +3083,12 @@ class Ontologies(Endpoints):
 class Versions(Endpoints):
     # TODO own/diff here could make it much easier to view changes
     @basic
-    def ilx(self, group, epoch_verstr_id, frag_pref_id, db=None):
+    def ilx(self, group, epoch_verstr_id, frag_pref_id, extension=None, db=None):
         # TODO epoch and reengineer how ilx is implemented
         # so that queries can be conducted at a point in time
         # sigh dataomic
         # or just give up on the reuseabilty of the query structure?
-        return super().ilx(group=group, frag_pref_id=frag_pref_id, db=db)  # have to use kwargs for basic
+        return super()._ilx(group=group, frag_pref_id=frag_pref_id, extension=extension)  # have to use kwargs for basic
 
     @basic
     def readable(self, group, epoch_verstr_id, word, db=None):
@@ -3134,7 +3138,7 @@ class Own(Ontologies):
         return request.path, 501
 
     @basic2
-    def ontologies_ilx(self, group, other_group, frag_pref_id, extension, db=None):
+    def ontologies_ilx(self, group, other_group, frag_pref_id, extension=None, db=None):
         abort(404)  # this doesn't really exist but would be a pain to remove from the path gen
 
     @basic2
@@ -3184,7 +3188,7 @@ class Own(Ontologies):
 
 class OwnVersions(Own, Versions):
     @basic2
-    def ilx(self, group, other_group, epoch_verstr_id, frag_pref_id, db=None):
+    def ilx(self, group, other_group, epoch_verstr_id, frag_pref_id, extension=None, db=None):
         return request.path, 501
 
     @basic2
@@ -3209,12 +3213,12 @@ class OwnVersions(Own, Versions):
 
 class Diff(Ontologies):
     @basic2
-    def ilx(self, group, other_group_diff, frag_pref_id, db=None):
+    def ilx(self, group, other_group_diff, frag_pref_id, extension=None, db=None):
         frag_pref, id = frag_pref_id.split('_')
         funcs = [self._even_more_basic(grp, frag_pref, id, db)
                  for grp in (group, other_group_diff)]
 
-        stuff = [self._ilx(grp, frag_pref, id, func) for grp, func in
+        stuff = [self._ilx_impl(grp, frag_pref, id, func) for grp, func in
                  zip((group, other_group_diff), funcs)]
 
         this = stuff[0][0]
@@ -3289,8 +3293,8 @@ class Diff(Ontologies):
         return request.path, 501
 
     @basic2
-    def ontologies_ilx(self, group, other_group_diff, frag_pref_id, extension, db=None):
-        return self.ilx(group=group, other_group_diff=other_group_diff, frag_pref_id=frag_pref_id, db=db)
+    def ontologies_ilx(self, group, other_group_diff, frag_pref_id, extension=None, db=None):
+        return self._ilx(group=group, other_group_diff=other_group_diff, frag_pref_id=frag_pref_id, extension=extension)
 
     @basic2
     def ontologies_version(self, group, other_group_diff, filename,
@@ -3339,7 +3343,7 @@ class Diff(Ontologies):
 
 class DiffVersions(Diff, Versions):
     @basic2
-    def ilx(self, group, other_group_diff, epoch_verstr_id, frag_pref_id, db=None):
+    def ilx(self, group, other_group_diff, epoch_verstr_id, frag_pref_id, extension=None, db=None):
         return request.path, 501
 
     @basic2
