@@ -2579,20 +2579,27 @@ class Priv(EndBase):
 
         elif request.method == 'POST':
             errors = {}
+            if request.content_type == 'application/x-www-form-urlencoded':
+                thing = request.form
+            elif request.content_type == 'application/json':
+                thing = request.json
+            else:
+                abort(415, 'json or form pls')
+
             for arg, req in (('rdf-type', True), ('label', True), ('exact', False)):
-                if req and (arg not in request.json or not request.json[arg].strip()):
+                if req and (arg not in thing or not thing[arg].strip()):
                     errors[arg] = ['missing']
-                elif arg == 'rdf-type' and request.json['rdf-type'] not in type_curies:
-                    errors[arg] = [f'unknown rdf-type {request.json[arg]!r}']
+                elif arg == 'rdf-type' and thing['rdf-type'] not in type_curies:
+                    errors[arg] = [f'unknown rdf-type {thing[arg]!r}']
 
             if errors:
                 od = {'errors': errors}
                 return json.dumps(od), 422, ctaj
 
             dbstuff = Stuff(self.session)
-            rdf_type = nm.expand_curie(request.json['rdf-type'])
-            label = request.json['label'].strip()
-            exact = [e.strip() for e in request.json['exact']] if 'exact' in request.json else []
+            rdf_type = nm.expand_curie(thing['rdf-type'])
+            label = thing['label'].strip()
+            exact = [e.strip() for e in thing['exact']] if 'exact' in thing else []
             try:
                 resp = dbstuff.newEntity(rdf_type, label, exact)
             except sa.exc.IntegrityError as e:
@@ -2603,14 +2610,16 @@ class Priv(EndBase):
                     # relevant information there
                     resp = self.queries.getCurrentLabelExactIlx(label, *exact)
                     existing = ['http://' + self.reference_host + f'/base/{frag_pref}_{id}' for frag_pref, id in resp]
-                    return json.dumps(existing), 409, ctaj
+                    return json.dumps({'error': 'already exists', 'existing': existing}), 409, ctaj
 
                 log.exception(e)
                 abort(501, 'something went wrong')
 
             new_uri = resp[0].newentity
+            #reiri = new_uri  # XXX this will double redirect in prod
+            reiri = new_uri.replace(self.reference_host, request.host).replace('http://', f'{request.scheme}://') + '.html'
             self.session.commit()
-            return redirect(new_uri, 303)
+            return redirect(reiri, 303)
         else:
             abort(405)
 
