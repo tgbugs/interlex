@@ -139,6 +139,12 @@ class InterLexLoad:
             rows = conn.execute(sql_text('SELECT DISTINCT ilx, label FROM terms ORDER BY ilx ASC'))
 
         values = [(row.ilx[:3], row.ilx[4:], row.label) for row in rows]
+        bads = [v for v in values if v[2] != v[2].strip() or not v[2].strip()]
+        if bads:
+            log.warning(bads)
+            values = [(v[0], v[1], v[2].strip()) for v in values]
+            values = [v for v in values if v[2]]
+
         self.ilx_sql = []
         self.ilx_params = []
         for chunk in chunk_list(values, self.batchsize):
@@ -418,11 +424,17 @@ class InterLexLoad:
         if not self.do_cdes:
             [addToIndex(row.id, row.ilx[:3], row.ilx[4:], owl.Class) for row in data['cde_ids']]
 
-        def norm_obj(o_raw):
+        def norm_obj(context, o_raw):
             o_strip = o_raw.strip()
             if o_strip != o_raw:
-                msg = f'FIXME this needs to be handled more formally than a debug message ... leading or trailing whitespace: {o_strip!r} != {o_raw!r}'
+                msg = ('FIXME this needs to be handled more formally than a debug message ... '
+                       f'leading or trailing whitespace in {context}: {o_strip!r} != {o_raw!r}')
                 log.debug(msg)
+
+            if not o_strip:
+                msg = f'empty value for {context}'
+                log.debug(msg)
+                return None
 
             return o_strip
 
@@ -434,6 +446,7 @@ class InterLexLoad:
         obsReason, termsMerged = makeURIs('obsReason', 'termsMerged')
         deprecated = set()
         bads = []
+        nolabs = []
         nodefs = []
         for row in data['terms']:
             #id, ilx_with_prefix, _, _, _, _, label, definition, comment, type_
@@ -451,8 +464,13 @@ class InterLexLoad:
 
             # TODO consider interlex internal? ilxi.label or something?
             triples.append((uri, rdf.type, class_))
-            triples.append((uri, rdfs.label, rdflib.Literal(row.label)))
-            if row.definition and (normed_definition := norm_obj(row.definition)):  # if you can't see the invisible assume it is always there
+
+            if row.label and (normed_label := norm_obj(uri, row.label)):
+                triples.append((uri, rdfs.label, rdflib.Literal(normed_label)))
+            else:
+                nolabs.append(uri)
+
+            if row.definition and (normed_definition := norm_obj(uri, row.definition)):  # if you can't see the invisible assume it is always there
                 triples.append((uri, definition, rdflib.Literal(normed_definition)))  # FIXME ilxr.definition and ilxr.label ? or /base/ ?
             elif row.definition:
                 log.debug(f'{uri} had a non-empty all whitespace definition')
@@ -549,8 +567,8 @@ class InterLexLoad:
                 WTF.append(row)
 
         re_https = re.compile('^https?://')
-        def normalize_annotation_property_object(o_raw):
-            o_strip = norm_obj(o_raw)
+        def normalize_annotation_property_object(context, o_raw):
+            o_strip = norm_obj(context, o_raw)
             if re.match(re_https, o_strip) and ' ' not in o_strip:
                 o = rdflib.URIRef(o_strip)
                 try:
@@ -570,12 +588,13 @@ class InterLexLoad:
         WTFa = []
         for row in data['annotation_properties']:  # oof knocks total triples to 12.5 mil
             _, s_id, p_id, o_value, comment, *rest = row
-            o = normalize_annotation_property_object(o_value)
             try:
-                t = baseUri(s_id), baseUri(p_id), o
+                s = baseUri(s_id)
+                o = normalize_annotation_property_object(s, o_value)
+                t = s, baseUri(p_id), o
                 triples.append(t)
                 if comment:
-                    cstrp = norm_obj(comment)
+                    cstrp = norm_obj(s, comment)
                     if cstrp:
                         ap_annos[t].append((ilxtr.comment, rdflib.Literal(cstrp)))  # FIXME TODO predicate
             except KeyError as e:

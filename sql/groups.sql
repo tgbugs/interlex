@@ -543,7 +543,7 @@ CREATE TABLE api_keys(
        CHECK (lifetime_seconds IS NULL OR lifetime_seconds > 60), -- minimum 1 mintue to avoid accidentally minting api keys the expire immediately
        revoked_datetime TIMESTAMP WITH TIME ZONE,
        note text,
-       CHECK ((note ~* '^\S+') AND (note ~* '\S+$')) -- no leading and no trailing whitespace
+       CHECK ((note ~* '^\S+') AND (note ~* '\S+$') AND note != '') -- no leading and no trailing whitespace
 );
 
 CREATE INDEX api_keys_user_id_index ON api_keys (user_id);

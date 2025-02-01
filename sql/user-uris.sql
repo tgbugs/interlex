@@ -12,7 +12,8 @@ CREATE TABLE uris(
        -- OR we may need to return the file with suggested mappings
        perspective integer NOT NULL references perspectives (id),
        uri_path text NOT NULL,
-       PRIMARY KEY (perspective, uri_path) -- groups may only map a uri path to a single ilx_id
+       PRIMARY KEY (perspective, uri_path), -- groups may only map a uri path to a single ilx_id
+       CHECK ((uri_path ~* '^\S+') AND (uri_path ~* '\S+$') AND uri_path != '')
        -- uri_full uri not null,  -- yes or no?
        -- branch_private default false  -- TOOD this needs to be managed elsewhere?
        -- terminal -> branch changes? one way to cope is always resolve /branch/ -> branch
@@ -32,6 +33,7 @@ CREATE TABLE uri_mapping(
        ilx_prefix text NOT NULL,
        ilx_id text NOT NULL, -- TODO how to enforce the 'no changing the ilx_id' block delete?
        PRIMARY KEY (perspective, uri_path), -- groups may only map a uri path to a single ilx_id
+       CHECK ((uri_path ~* '^\S+') AND (uri_path ~* '\S+$') AND uri_path != ''),
        -- UNIQUE (group_id, ilx_prefix, ilx_id),  -- groups may only map an ilx_id to a single readable XXX this may be true for readables, but in the general case what if I have two separate ontologies where i want to use the same local conventions but have different uris? I think the answer is that for that you should use a different perspective? but that does seem like overkill, probably better to warn in cases where multiple uris map to the same value, OR set the unique restriction to be only on /uris/readable/
        FOREIGN KEY (perspective, uri_path) REFERENCES uris (perspective, uri_path),
        FOREIGN KEY (ilx_prefix, ilx_id) REFERENCES interlex_ids (prefix, id) match simple
@@ -86,7 +88,9 @@ CREATE TABLE curies(
               (perspective IS     NULL AND local_conventions_identity IS NOT NULL)),
        curie_prefix text NOT NULL CHECK (curie_prefix NOT LIKE '%:%'),  -- is case sensitive, TODO validate against the w3c/ietf spec
        iri_namespace uri NOT NULL,
+       CHECK ((curie_prefix ~* '^\S+') AND (curie_prefix ~* '\S+$')),
        -- TODO what uniqueness constraints are we going to impose here?
+       -- CHECK (local_conventions_identity IS NOT NULL OR curie_prefix != '') -- XXX can't enforce this here unfortunately
        UNIQUE (perspective, curie_prefix, iri_namespace),
        UNIQUE (local_conventions_identity, curie_prefix, iri_namespace)
 );
@@ -101,6 +105,7 @@ CREATE TABLE ontologies(
        perspective integer references perspectives (id),
        ont_path text, -- we call these reference names elsewhere, XXX however they are sandboxed in /ontologies/uris/ NOT /ontologies/
        PRIMARY KEY (perspective, ont_path),
+       CHECK ((ont_path ~* '^\S+') AND (ont_path ~* '\S+$') AND ont_path != ''),
        spec_head_identity bytea, -- point to the identity that contains the latest head info -- TODO trigger to prevent renull after first insert, we don't need to e.g. start from the null identity because we can check all identities that include the type triple identity where there is no identity relation to a previous version
        -- identity relations should be able to hold the previous version of relation i think ?
        spec uri unique not null, -- the spec will be in the triples table and they will include the list of terms
