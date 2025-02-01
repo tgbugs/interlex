@@ -186,7 +186,7 @@ def server_alt(db=None, dburi=None, debug=False):
         try:
             # FIXME TODO
             return tripleRender(request, graph, group_rend, 'ilx', None, object_to_existing,
-                                title, ontid=ontid, **kwargs, redirect=False)
+                                title, ontid=ontid, **kwargs, redirect=False, for_alt=True)
         except BaseException as e:
             print(tc.red('ERROR'), e)
             raise e
