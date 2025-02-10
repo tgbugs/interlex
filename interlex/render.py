@@ -344,14 +344,14 @@ class TripleRender:
             title, mimetype, labels, ontid, ranking, ilx_stubs, for_alt):
         rgraph = self.graph(request, graph, group, frag_pref, id,
                             object_to_existing, title, mimetype, ontid, ranking,
-                            ilx_stubs)
+                            ilx_stubs, for_alt=for_alt)
         return rgraph.serialize(format='nifttl')
 
     def ttl_html(self, request, graph, group, frag_pref, id, object_to_existing,
                  title, mimetype, labels, ontid, ranking, ilx_stubs, for_alt):
         rgraph = self.graph(request, graph, group, frag_pref, id,
                             object_to_existing, title, mimetype, ontid, ranking,
-                            ilx_stubs)
+                            ilx_stubs, for_alt=for_alt)
         body = rgraph.serialize(format='htmlttl', labels=labels).decode()
         # TODO owl:Ontology -> <head><meta> prov see if there is a spec ...
         return htmldoc(body,
