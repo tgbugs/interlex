@@ -362,14 +362,14 @@ class TripleRender:
                 title, mimetype, labels, ontid, ranking, ilx_stubs, for_alt, **kwargs):
         rgraph = self.graph(request, graph, group, frag_pref, id,
                             object_to_existing, title, mimetype, ontid, ranking,
-                            ilx_stubs)
+                            ilx_stubs, for_alt)
         return rgraph.serialize(format=mimetype, **kwargs)
 
     def jsonld(self, request, graph, group, frag_pref, id, object_to_existing,
                title, mimetype, labels, ontid, ranking, ilx_stubs, for_alt):
         return self.rdf_ser(request, graph, group, frag_pref, id,
                             object_to_existing, title, mimetype, labels, ontid, ranking,
-                            ilx_stubs, auto_compact=True)
+                            ilx_stubs, for_alt, auto_compact=True)
 
     def json(self, request, graph, group, frag_pref, id, object_to_existing,
              title, mimetype, labels, ontid, ranking, ilx_stubs, for_alt):
