@@ -15,7 +15,7 @@ from flask import request, redirect, url_for, abort, Response, session as fsessi
 from rdflib import URIRef  # FIXME grrrr
 from htmlfn import atag, btag, h2tag, htmldoc
 from htmlfn import table_style, render_table, redlink_style
-from pyontutils.core import OntGraph, makeGraph
+from pyontutils.core import OntGraph, makeGraph, populateFromJsonLd
 from pyontutils.utils_fast import TermColors as tc, isoformat
 from pyontutils.namespaces import makePrefixes, definition, rdf, owl
 from sqlalchemy.sql import text as sql_text
@@ -429,10 +429,34 @@ class Endpoints(EndBase):
     def _ilx(self, group, frag_pref_id, extension=None, db=None):
         frag_pref, id = frag_pref_id.split('_')
         # TODO allow PATCH here with {'add':[triples], 'delete':[triples]}
-        func = self._even_more_basic(group, frag_pref, id, db)
-        graph, object_to_existing, title, labels = self._ilx_impl(group, frag_pref, id, func)
-        return tripleRender(request, graph, group, frag_pref, id,
-                            object_to_existing, title, labels=labels)
+        # TODO better to accept just modified jsonld
+        if request.method == 'PATCH':
+            # accepts jsonld or ttl coming back, but it must be well formed
+            # and must have the reference to the previous identity
+            jld = request.json
+            ont = [o for o in jld['@graph'] if o['@type'] == 'owl:Ontology'][0]
+            bound_frag_pref_id = ont['isAbout']['@id'].rsplit('/')[-1]
+            if bound_frag_pref_id != frag_pref_id:
+                abort(422, f'wrong id: {bound_frag_pref_id} != frag_pref_id')
+
+            # steps:
+            # 0. extract identity from ont
+            # 0. somewhere in here drop version related info to get something more invariant
+            # 0. use identity to retrieve what we sent (or the modifiable part of what we sent?)
+            # 0. compute the identity of what we received (or maybe just the modifiable record?)
+            # 0. make sure that what has changed is part of the ilx record they can modify
+            # 0. ingest the new version, update perspective head
+            # 0. return the full new record with the newly computed identity to track further changes
+            graph = OntGraph()
+            graph.namespace_manager.populate_from(jld['@context'])  # FIXME complex contexts
+            populateFromJsonLd(graph, jld)
+            abort(501)
+
+        else:
+            func = self._even_more_basic(group, frag_pref, id, db)
+            graph, object_to_existing, title, labels = self._ilx_impl(group, frag_pref, id, func)
+            return tripleRender(request, graph, group, frag_pref, id,
+                                object_to_existing, title, labels=labels)
 
     @basic
     def ilx_get(self, group, frag_pref_id, extension, db=None):

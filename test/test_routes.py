@@ -205,6 +205,31 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         breakpoint()
 
+    def test_patch_entity(self):
+        self.app.debug = True
+        client = self.app.test_client()
+        tuser = auth.get('test-api-user')
+        token = auth.get('interlex-test-api-key')
+        headers = {'Authorization': f'Bearer {token}'}
+        headers_get = {**headers, 'Accept': 'application/ld+json'}
+        headers_patch = {**headers, 'Content-Type': 'application/ld+json'}
+        diff = secrets.token_hex(6)
+
+        url = f'{self.prefix}/{tuser}/ilx_0101431'
+        resp = client.get(url, headers=headers_get)
+        jld = resp.json
+        ont = [o for o in jld['@graph'] if o['@type'] == 'owl:Ontology'][0]
+        frag_pref_id = ont['isAbout']['@id'].rsplit('/')[-1]
+        # FIXME isAbout iri mismatch somehow base vs group, not unexpected
+        # but is a rendering bug because we don't currently require the group
+        # because we are still using queries.getById instead of
+        # getPerspectiveHeadForId or however it will be named
+        ent = [o for o in jld['@graph'] if o['@id'].endswith(frag_pref_id)][0]
+        ent['ilxr:synonym'].append(f'lol test brain {diff}')
+
+        resp_patch = client.patch(url, headers=headers_patch, json=jld)
+        breakpoint()
+
     def test_post_ontspec(self):
         self.app.debug = True
         client = self.app.test_client()
