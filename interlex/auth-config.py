@@ -35,6 +35,9 @@
      # database connection logic XXX don't need once we use orthauth
      'dev-remote-hosts': [],
 
+     # allowed final redirect hosts (beyond same)
+     'redirect-allow-hosts': [],
+
      # testing
      'test-api-user': {
          'default': None,

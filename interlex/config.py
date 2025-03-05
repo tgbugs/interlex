@@ -45,6 +45,8 @@ port_guni_alt = auth.get('port-guni-alt')        # interlex-alt
 # dev
 dev_remote_hosts = auth.get_list('dev-remote-hosts')
 
+redirect_allow_hosts = auth.get_list('redirect-allow-hosts')
+
 # testing
 test_host = auth.get('test-host')
 test_port = port_uri

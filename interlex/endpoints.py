@@ -200,7 +200,9 @@ def basic2(function):
 def check_reiri(reiri):
     # seems like I'm not the only one https://github.com/lingthio/Flask-User/issues/119#issuecomment-610237001
     reurl = urlparse(reiri)
-    if reurl.scheme != request.scheme or reurl.netloc != request.host:  # FIXME uri.interlex.org vs interlex.org
+    if reurl.netloc in config.redirect_allow_hosts:
+        return reiri
+    elif reurl.scheme != request.scheme or reurl.netloc != request.host:  # FIXME uri.interlex.org vs interlex.org
         log.info(f'possibly malicious redirect? {reiri}')
     else:
         return reiri
