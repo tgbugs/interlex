@@ -206,6 +206,36 @@ def check_reiri(reiri):
         return reiri
 
 
+
+def return_page(html=None, data={}, status=200):
+    #TODO the window.close at line 231 can be customised to account for the status code invoked when calling
+    # this function, so that if we want to display an error it can leave the popup opened.
+    # not urgent imho, since we are also giving the possibility to inject the entire html and return that.
+    if html is not None:
+        return html
+    else:
+        data['code'] = status
+        data['status'] = status
+        response_json = json.dumps(data)
+        return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+        <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+        <head><title>InterLex Login / Registration</title></head>
+        <body>
+        <h1>InterLex Login / Registration</h1>
+        <script>
+            const response = {response_json};
+            if (window.opener !== null && window.opener !== undefined) {{
+                window.opener.postMessage(response, "*");
+            }} else {{
+                parent.postMessage(response, "*");
+            }};
+            window.close();
+        </script>
+        </body>
+        </html>'''
+
+
 class EndBase:
 
     def __init__(self, db, rules_req_auth):
@@ -1029,8 +1059,13 @@ class Ops(EndBase):
             self._orcid_login(orcid, orcid_meta['id_token'], group_resp)
             group_row = group_resp[0]
             groupname = group_row.groupname
-            return redirect(f'/{groupname}/priv/settings?from=orcid-landing-new', code=302)
-            #return 'you already have an InterLex account and have been logged in'
+            response = {
+                'code': 302,
+                'orcid_meta': orcid_meta,
+                'settings_url': f'/{groupname}/priv/settings',
+                'groupname': groupname,
+            }
+            return return_page(data=response, status=302)
 
         self._insert_orcid_meta(self.session, orcid_meta)
         self._orcid_login_user_temp(orcid_meta)
@@ -1151,7 +1186,7 @@ receive quite a few during periods of active development.
 </html>'''
 
         if request.method != 'POST':
-            return abort(404)
+            return return_page(status=404)
 
         errors = {}
         if 'username' not in request.form or not request.form['username']:
@@ -1266,7 +1301,7 @@ receive quite a few during periods of active development.
         '''
 
         if errors:
-            return json.dumps({'errors': errors}), 422, {'Content-Type': 'application/json'}
+            return return_page(data={'errors': errors}, status=422)
 
 
         argon2_string = None if password is None else iauth.hash_password(password)
@@ -1308,7 +1343,7 @@ receive quite a few during periods of active development.
             if not errors:
                 raise ValueError('we broke something')
 
-            return json.dumps({'errors': errors}), 422, ctaj
+            return return_page(data={'errors': errors}, status=422)
 
         if email_verify:
             try:
@@ -1348,7 +1383,7 @@ receive quite a few during periods of active development.
                     # FIXME likely want a way to show account creation successful or something after redirect
                     url_next += '&freiri=' + freiri
 
-            return redirect(url_next, 303)
+            return return_page(data={'redirect': url_next}, status=303)
         else:
             if 'application/json' in dict(request.accept_mimetypes):  # FIXME not the best way i think
                 msg = 'Account creation and association with orcid successful.'
@@ -1357,25 +1392,25 @@ receive quite a few during periods of active development.
                     msg += f' Confirmation email sent to {email}'
                     out['email'] = email
 
-                return json.dumps(out), 201, ctaj
+                return return_page(data=out, status=201)
             else:
                 if 'freiri' in request.args:
                     freiri = check_reiri(request.args['freiri'])
                     if freiri:
                         # FIXME likely want a way to show account creation successful or something after redirect
-                        return redirect(freiri, 303)
+                        return return_page(data={'redirect': freiri}, status=303)
 
                 elif 'from' in request.args:
                     frm = request.args['from']
                     if frm == 'orcid-new':
                         # e.g. someone went to orcid-new directly without coming from anywhere else
-                        return redirect(f'/{username}/priv/settings?from=orcid-new-success', 303)
+                        return return_page(data={'redirect': f'/{username}/priv/settings?from=orcid-new-success'}, status=303)
 
                 msg = 'Account creation and association with orcid successful.'
                 if email_verify:
                     msg += f' As a final step a verification email has been sent to {email}'
 
-                return msg, 201
+                return return_page(data=msg, status=201)
 
     def _start_email_verify(self, username, email):
         # this is usually a priv operation, but we call it
@@ -3372,5 +3407,3 @@ class VersionsOwn(Endpoints):
 
 class VersionsDiff(Endpoints):
     pass  # TODO
-
-
