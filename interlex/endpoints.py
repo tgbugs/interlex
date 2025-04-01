@@ -39,6 +39,7 @@ log = _log.getChild('endpoints')
 log_ver = _log.getChild('verification')
 
 ctaj = {'Content-Type': 'application/json'}
+_param_popup = 'aspopup'
 
 tripleRender = TripleRender()
 
@@ -220,22 +221,22 @@ def return_page(html=None, data={}, status=200):
         data['status'] = status
         response_json = json.dumps(data)
         return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
-        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
-        <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
-        <head><title>InterLex Login / Registration</title></head>
-        <body>
-        <h1>InterLex Login / Registration</h1>
-        <script>
-            const response = {response_json};
-            if (window.opener !== null && window.opener !== undefined) {{
-                window.opener.postMessage(response, "*");
-            }} else {{
-                parent.postMessage(response, "*");
-            }};
-            window.close();
-        </script>
-        </body>
-        </html>'''
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex Login / Registration</title></head>
+<body>
+<h1>InterLex Login / Registration</h1>
+<script>
+    const response = {response_json};
+    if (window.opener !== null && window.opener !== undefined) {{
+        window.opener.postMessage(response, "*");
+    }} else {{
+        parent.postMessage(response, "*");
+    }};
+    window.close();
+</script>
+</body>
+</html>'''
 
 
 class EndBase:
@@ -1091,7 +1092,11 @@ class Ops(EndBase):
                 'settings_url': f'/{groupname}/priv/settings',
                 'groupname': groupname,
             }
-            return return_page(data=response, status=302)
+            if _param_popup in request.args and request.args[_param_popup].lower() == 'true':
+                return return_page(data=response, status=302)
+            else:
+                return redirect(f'/{groupname}/priv/settings?from=orcid-landing-new', code=302)
+                #return 'you already have an InterLex account and have been logged in'
 
         self._insert_orcid_meta(self.session, orcid_meta)
         self._orcid_login_user_temp(orcid_meta)
@@ -1134,6 +1139,7 @@ class Ops(EndBase):
         # password
         # TODO only orcid
 
+        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
         already_registered = fl.current_user is not None and hasattr(fl.current_user, 'groupname') and fl.current_user.groupname is not None
         _orcid = fl.current_user is not None and hasattr(fl.current_user, 'orcid') and fl.current_user.orcid
         orcid = _orcid if _orcid else None  # adjust types, sql doesn't like nulls being passed as false ...
@@ -1212,7 +1218,11 @@ receive quite a few during periods of active development.
 </html>'''
 
         if request.method != 'POST':
-            return return_page(status=404)
+            if _dopop:
+                # FIXME watch out for the control flow difference between abort and return
+                return return_page(status=404)
+            else:
+                abort(404)
 
         errors = {}
         if 'username' not in request.form or not request.form['username']:
@@ -1327,8 +1337,10 @@ receive quite a few during periods of active development.
         '''
 
         if errors:
-            return return_page(data={'errors': errors}, status=422)
-
+            if _dopop:
+                return return_page(data={'errors': errors}, status=422)
+            else:
+                return json.dumps({'errors': errors}), 422, ctaj
 
         argon2_string = None if password is None else iauth.hash_password(password)
         email_verify = config.email_verify  # FIXME find the right place to query for this
@@ -1369,7 +1381,10 @@ receive quite a few during periods of active development.
             if not errors:
                 raise ValueError('we broke something')
 
-            return return_page(data={'errors': errors}, status=422)
+            if _dopop:
+                return return_page(data={'errors': errors}, status=422)
+            else:
+                return json.dumps({'errors': errors}), 422, ctaj
 
         if email_verify:
             try:
@@ -1409,7 +1424,10 @@ receive quite a few during periods of active development.
                     # FIXME likely want a way to show account creation successful or something after redirect
                     url_next += '&freiri=' + freiri
 
-            return return_page(data={'redirect': url_next}, status=303)
+            if _dopop:
+                return return_page(data={'redirect': url_next}, status=303)
+            else:
+                return redirect(url_next, 303)
         else:
             if 'application/json' in dict(request.accept_mimetypes):  # FIXME not the best way i think
                 msg = 'Account creation and association with orcid successful.'
@@ -1418,25 +1436,37 @@ receive quite a few during periods of active development.
                     msg += f' Confirmation email sent to {email}'
                     out['email'] = email
 
-                return return_page(data=out, status=201)
+                if _dopop:
+                    return return_page(data=out, status=201)
+                else:
+                    return json.dumps(out), 201, ctaj
             else:
                 if 'freiri' in request.args:
                     freiri = check_reiri(request.args['freiri'])
                     if freiri:
                         # FIXME likely want a way to show account creation successful or something after redirect
-                        return return_page(data={'redirect': freiri}, status=303)
+                        if _dopop:
+                            return return_page(data={'redirect': freiri}, status=303)
+                        else:
+                            return redirect(freiri, 303)
 
                 elif 'from' in request.args:
                     frm = request.args['from']
                     if frm == 'orcid-new':
                         # e.g. someone went to orcid-new directly without coming from anywhere else
-                        return return_page(data={'redirect': f'/{username}/priv/settings?from=orcid-new-success'}, status=303)
+                        if _dopop:
+                            return return_page(data={'redirect': f'/{username}/priv/settings?from=orcid-new-success'}, status=303)
+                        else:
+                            return redirect(f'/{username}/priv/settings?from=orcid-new-success', 303)
 
                 msg = 'Account creation and association with orcid successful.'
                 if email_verify:
                     msg += f' As a final step a verification email has been sent to {email}'
 
-                return return_page(data=msg, status=201)
+                if _dopop:
+                    return return_page(data=msg, status=201)
+                else:
+                    return msg, 201
 
     def _start_email_verify(self, username, email):
         # this is usually a priv operation, but we call it
