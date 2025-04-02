@@ -903,9 +903,14 @@ class Ops(EndBase):
         if fl.current_user is not None and hasattr(fl.current_user, 'orcid') and fl.current_user.orcid:
             abort(409, f'orcid already associated {fl.current_user.orcid}')  # FIXME TODO check error code on this
 
+        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
+        if _dopop:
+            c = '&' if '?' in url_orcid_land else '?'  # XXX I'm sure this is a bad assumption ...
+            url_orcid_land += (c + _param_popup + '=true')
+
         if 'from' in request.args:
             c = '&' if '?' in url_orcid_land else '?'  # XXX I'm sure this is a bad assumption ...
-            url_orcid_land += ('?from=' + request.args['from'])
+            url_orcid_land += (c + 'from=' + request.args['from'])
 
         if 'freiri' in request.args:
             freiri = check_reiri(request.args['freiri'])
@@ -1086,9 +1091,14 @@ class Ops(EndBase):
             self._orcid_login(orcid, orcid_meta['id_token'], group_resp)
             group_row = group_resp[0]
             groupname = group_row.groupname
+            _omsafe = 'orcid', 'name'
+            orcid_meta_safe = {}
+            for _k in _omsafe:
+                orcid_meta_safe[_k] = orcid_meta[_k]
+
             response = {
                 'code': 302,
-                'orcid_meta': orcid_meta,
+                'orcid_meta': orcid_meta_safe,
                 'settings_url': f'/{groupname}/priv/settings',
                 'groupname': groupname,
             }
