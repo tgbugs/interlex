@@ -56,6 +56,7 @@ _reset_mock_tokens = {}
 def getBasicDB(self, group, request):
     #log.debug(f'{group}\n{request.method}\n{request.url}\n{request.headers}')
 
+    expired_token = False
     try:
         # FIXME pretty sure this isn't quite right
         # XXX yeah, auth_group is the wrong way to do this
@@ -64,13 +65,7 @@ def getBasicDB(self, group, request):
         auth_group, auth_user, scope, auth_token, read_private = self.auth.authenticate_request(request)
     except self.auth.ExpiredTokenError:
         # FIXME are the cases where we want to redirect to login?
-        if '_via_auth' in fsession and fsession['_via_auth'] == 'orcid':
-            abort(401, {'message': 'orcid login expired, please login again'})
-        else:
-            newtokl = url_for('Priv /<group>/priv/api-token-new')
-            abort(401, {'message': (
-                'Your token has expired, please get a '
-                f'new one at {newtokl}')})
+        expired_token = True
     except (self.auth.MissingTokenError, self.auth.InvalidScopeError, self.auth.HasNotCompletedVerificationError) as e:
         # it is ok to return a 401 for missing token because it is returned for
         # particular methods or well known endpoints, never for scratch space
@@ -82,6 +77,21 @@ def getBasicDB(self, group, request):
     except self.auth.AuthError as e:
         log.exception(e)
         abort(400, {'message': 'something went wrong on your end'})
+
+    expired_token = expired_token or (
+        fl.current_user is not None and
+        not fl.current_user.is_authenticated and
+        hasattr(fl.current_user, 'via_auth') and
+        fl.current_user.via_auth == 'orcid')
+
+    if expired_token:
+        if '_via_auth' in fsession and fsession['_via_auth'] == 'orcid':
+            abort(401, {'message': 'orcid login expired, please login again'})
+        else:
+            newtokl = url_for('Priv /<group>/priv/api-token-new')
+            abort(401, {'message': (
+                'Your token has expired, please get a '
+                f'new one at {newtokl}')})
 
     if request.method in ('HEAD', 'GET', 'OPTIONS'):
         # FIXME there are some pages we need to reject at this point?
@@ -208,6 +218,25 @@ def check_reiri(reiri):
     else:
         return reiri
 
+
+def _rp_schema():
+    schema = {'type': 'object',
+     'required': ['code'],
+     'properties': {
+         'code': {'type': 'integer'},
+         'orcid_meta': {  # not present when user has not associated an orcid yet
+             'type': 'object',
+             'required': ['orcid'],
+             'properties': {
+                 'orcid': {'type': 'string'},
+                 'name': {'type': 'string'},  # not present from login only orcid-new atm
+             }},
+         'grouname': {'type': 'string'},  # not present when user only has orcid
+         'redirect': {'type': 'string'},
+         'settings_url': {'type': 'string'},  # FIXME condense with redirect?
+     },}
+    s = json.dumps(schema, indent=2)
+    return s
 
 
 def return_page(html=None, data={}, status=200):
@@ -899,11 +928,36 @@ class Ops(EndBase):
         url_orcid_land = url_for('Ops.orcid_landing_new /u/ops/orcid-land-new')
         return self._orcid(url_orcid_land)
 
-    def _orcid(self, url_orcid_land, refresh=False):
+    def _orcid(self, url_orcid_land, refresh=False, for_login=False):
+        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
         if fl.current_user is not None and hasattr(fl.current_user, 'orcid') and fl.current_user.orcid:
+            if for_login:
+                orcid_meta_safe = {
+                    # FIXME TODO leaving out name for now since I don't have a query that populates that right now
+                    'orcid': fl.current_user.orcid,
+                }
+                response = {
+                    'code': 200,
+                    'orcid_meta': orcid_meta_safe,
+                    'groupname': fl.current_user.groupname,
+                }
+                freiri = None
+                if 'freiri' in request.args:
+                    freiri = check_reiri(request.args['freiri'])
+                    response['code'] = 302
+                    response['redirect'] = freiri
+
+                if _dopop:
+                    return return_page(data=response, status=response['code'])
+                else:
+                    if freiri is not None:
+                        return redirect(freiri, 302)
+
+                    return 'orcid-login already logged in, check your cookies (use requests.Session)'
+
+            # TODO need to backstop some issue here but I don't remember what it was
             abort(409, f'orcid already associated {fl.current_user.orcid}')  # FIXME TODO check error code on this
 
-        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
         if _dopop:
             c = '&' if '?' in url_orcid_land else '?'  # XXX I'm sure this is a bad assumption ...
             url_orcid_land += (c + _param_popup + '=true')
@@ -936,14 +990,14 @@ class Ops(EndBase):
         refresh = 'from' in request.args and request.args['from'] == 'refresh'
         if refresh:
             request.args.pop('from')
-        return self._orcid(url_orcid_land, refresh)
+        return self._orcid(url_orcid_land, refresh, for_login=True)
 
     @staticmethod
     def _make_orcid_code():
         return base64.urlsafe_b64encode(secrets.token_bytes(4))[:-2].decode()
 
     @staticmethod
-    def _make_orcid_meta():
+    def _make_orcid_meta(expires_in_seconds=None):
         import uuid
         from hashlib import sha256
         import jwt
@@ -966,7 +1020,10 @@ class Ops(EndBase):
             return at_hash.decode()
 
         nowish = int(time())
-        exp = nowish + (24 * 60 * 60)
+        if expires_in_seconds is None:
+            expires_in_seconds = (24 * 60 * 60)
+
+        exp = nowish + expires_in_seconds
         tdat = dict(
             at_hash=get_at_hash(om['access_token']),
             aud=config.orcid_client_id,
@@ -1037,8 +1094,9 @@ class Ops(EndBase):
     _orcid_login_user_temp = staticmethod(_sigh_orcid_login_user_temp)
 
     def orcid_landing_login(self):
-        orcid_meta = self._orcid_landing()
+        orcid_meta = self._orcid_landing()  # aborts unless we get a valid response from orcid
         orcid, group_resp = self._orcid_check_already(orcid_meta)
+        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
         if not group_resp:
             # TODO options
             # create new account
@@ -1051,11 +1109,38 @@ class Ops(EndBase):
                 if freiri:
                     reiri += '&freiri=' + freiri
 
-            return redirect(reiri, code=302)
+            if _dopop:
+                _omsafe = 'orcid', 'name'
+                orcid_meta_safe = {}
+                for _k in _omsafe:
+                    orcid_meta_safe[_k] = orcid_meta[_k]
+
+                response = {
+                    'code': 302,
+                    'orcid_meta': orcid_meta_safe,
+                    'redirect': reiri,
+                }
+                return return_page(data=response, status=302)
+            else:
+                return redirect(reiri, code=302)
 
         else:
             self._orcid_login(orcid, orcid_meta['id_token'], group_resp)
-            return 'orcid-login successful, check your cookies (use requests.Session)'
+            if _dopop:
+                _omsafe = 'orcid', 'name'
+                orcid_meta_safe = {}
+                for _k in _omsafe:
+                    orcid_meta_safe[_k] = orcid_meta[_k]
+
+                groupname = fl.current_user.groupname
+                response = {
+                    'code': 200,
+                    'orcid_meta': orcid_meta_safe,
+                    'groupname': groupname,
+                }
+                return return_page(data=response, status=200)
+            else:
+                return 'orcid-login successful, check your cookies (use requests.Session)'
 
     def _orcid_login(self, orcid, openid_token, group_resp):
             group_row = group_resp[0]
@@ -1091,18 +1176,18 @@ class Ops(EndBase):
             self._orcid_login(orcid, orcid_meta['id_token'], group_resp)
             group_row = group_resp[0]
             groupname = group_row.groupname
-            _omsafe = 'orcid', 'name'
-            orcid_meta_safe = {}
-            for _k in _omsafe:
-                orcid_meta_safe[_k] = orcid_meta[_k]
-
-            response = {
-                'code': 302,
-                'orcid_meta': orcid_meta_safe,
-                'settings_url': f'/{groupname}/priv/settings',
-                'groupname': groupname,
-            }
             if _param_popup in request.args and request.args[_param_popup].lower() == 'true':
+                _omsafe = 'orcid', 'name'
+                orcid_meta_safe = {}
+                for _k in _omsafe:
+                    orcid_meta_safe[_k] = orcid_meta[_k]
+
+                response = {
+                    'code': 302,
+                    'orcid_meta': orcid_meta_safe,
+                    'settings_url': f'/{groupname}/priv/settings',
+                    'groupname': groupname,
+                }
                 return return_page(data=response, status=302)
             else:
                 return redirect(f'/{groupname}/priv/settings?from=orcid-landing-new', code=302)
@@ -1149,10 +1234,11 @@ class Ops(EndBase):
         # password
         # TODO only orcid
 
-        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
         already_registered = fl.current_user is not None and hasattr(fl.current_user, 'groupname') and fl.current_user.groupname is not None
         _orcid = fl.current_user is not None and hasattr(fl.current_user, 'orcid') and fl.current_user.orcid
         orcid = _orcid if _orcid else None  # adjust types, sql doesn't like nulls being passed as false ...
+
+        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
 
         if request.method == 'GET':
             # fine we'll send you a form to fill out
@@ -1380,11 +1466,15 @@ receive quite a few during periods of active development.
                     errors['username'] = [constraint]
 
             elif e.orig.diag.constraint_name == 'users_orcid_key':
+                # XXX this can be used to check whether orcids are registered
                 errors['orcid'] = ['exists']
 
-            elif e.orig.diag.constraint_name == 'user_emails_email_key':
+            elif e.orig.diag.constraint_name in ('user_emails_email_key', 'email_lower_index'):
+                # XXX this can be used to check whether emails are registered
                 errors['email'] = ['exists']
+
             else:
+                # _diag = {k:getattr(e.orig.diag, k) for k in dir(e.orig.diag) if not k.startswith('_')}
                 log.exception(e)
                 errors['unhandled'] = ['unhandled']
 
@@ -1702,8 +1792,20 @@ InterLex Account Recovery <br>
             self.session.commit()
             group = resp[0][0]
             do_log(group, 'success')
-            return redirect(f'/{group}/priv/settings?from=email-verify-success', 302)
-            #return f'email verification complete for {group}'
+            _msg = f'email verification complete for {group}'
+            try:
+                already_logged_in = fl.current_user is not None and hasattr(fl.current_user, 'groupname') and fl.current_user.groupname is not None
+                if already_logged_in:
+                    # only redirect if already logged in, otherwise a 401 error will crop up
+                    return redirect(f'/{group}/priv/settings?from=email-verify-success', 302)
+                else:
+                    # TODO consider redirecting to login with freiri set to /{group}/settings?from=email-verify-succes ?
+                    return _msg
+
+            except Exception as e:
+                log.exception(e)
+                return _msg
+
         else:
             # failure should look like an error not a null value on return so
             # we really should never get here
@@ -1714,10 +1816,12 @@ InterLex Account Recovery <br>
         # SIGH turns out that the UX for basic login is absolutely utterly horrible
         # so we provide the form as well
         already_logged_in = fl.current_user is not None and hasattr(fl.current_user, 'groupname') and fl.current_user.groupname is not None
+        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
+        aspopup_option = '?aspopup=true' if _dopop else ''
         _alog = f' You are already logged in as {fl.current_user.groupname}. <br>' if already_logged_in else ''
         # groupname is safe to pass to format here because it is coming from the db not the user
         _login_form = f'''
-<form action="/u/ops/user-login" method="post" class="login">
+<form action="/u/ops/user-login{aspopup_option}" method="post" class="login">
 
   <div class="login">
     <label for="username">Username: </label>
@@ -1851,12 +1955,33 @@ Alternately send an HTTP GET request with headers containing <br>
                 remember = 'remember' in request.args and request.args['remember'].lower() == 'true'
                 fsession['_via_auth'] = tuser.via_auth
                 fl.login_user(tuser(), remember=remember)
+                _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
+                if _dopop:
+                    response = {
+                        'code': 200,
+                        'groupname': fl.current_user.groupname,
+                    }
+                    if fl.current_user.orcid:
+                        orcid_meta_safe = {
+                            # FIXME TODO leaving out name for now since I don't have a query that populates that right now
+                            'orcid': fl.current_user.orcid,
+                        }
+                        response['orcid_meta'] = orcid_meta_safe
+
                 if 'freiri' in request.args:
                     freiri = check_reiri(request.args['freiri'])
                     if freiri:
-                        return redirect(freiri, 302)  # 302 seems preferred over 303 for compat reasons?
+                        if _dopop:
+                            response['code'] = 302
+                            response['redirect'] = freiri
+                            return return_page(data=response, status=302)
+                        else:
+                            return redirect(freiri, 302)  # 302 seems preferred over 303 for compat reasons?
 
-                return 'login successful, check your cookies (use requests.Session)'
+                if _dopop:
+                    return return_page(data=response, status=200)
+                else:
+                    return 'login successful, check your cookies (use requests.Session)'
 
             else:
                 return abort(401)  # FIXME hrm what would the return code be here ...
@@ -1909,22 +2034,57 @@ class Privu(EndBase):
         orcid_meta = self._orcid_landing()
         user = fl.current_user.groupname
         self._insert_orcid_meta(self.session, orcid_meta, user=user)
+        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
+        orcid_meta_safe = {}
+        if _dopop:
+            _omsafe = 'orcid', 'name'
+            for _k in _omsafe:
+                orcid_meta_safe[_k] = orcid_meta[_k]
+
         if 'freiri' in request.args:  # FIXME arg naming
             # FIXME TODO need a full return_user_to=url_encode_thing for all of
             # the login workflows maybe call it logged_in_from or something? if
             # it isn't set then don't return a final redirect
             freiri = check_reiri(request.args['freiri'])  # FIXME may need to un-urlencode it?
             if freiri:
-                return redirect(freiri, 302)  # 302 seems more standard than 303 for get
+                if _dopop:
+                    response = {
+                        'code': 302,
+                        'orcid_meta': orcid_meta_safe,
+                        'redirect': freiri,
+                        'groupname': user,
+                    }
+                    return return_page(data=response, status=302)
+                else:
+                    return redirect(freiri, 302)  # 302 seems more standard than 303 for get
+
         elif 'from' in request.args:
             frm = request.args['from']
             if frm == 'user-new':
                 # e.g. someone went to user-new directly without coming from anywhere else
-                return redirect(f'/{user}/priv/settings?from=user-new-success', 302)
+                if _dopop:
+                    response = {
+                        'code': 302,
+                        'orcid_meta': orcid_meta_safe,
+                        'settings_url': f'/{user}/priv/settings?from=user-new-success',
+                        'groupname': user,
+                    }
+                    return return_page(data=response, status=302)
+
+                else:
+                    return redirect(f'/{user}/priv/settings?from=user-new-success', 302)
 
         orcid = f'https://{config.orcid_host}/' + orcid_meta['orcid']
         # FIXME vs 303 -> interlex.org ...
-        return f'orcid {orcid} successfully associated with user account {user}', 200
+        if _dopop:
+            response = {
+                'code': 200,
+                'orcid_meta': orcid_meta_safe,
+                'groupname': user,
+            }
+            return return_page(data=response, status=200)
+        else:
+            return f'orcid {orcid} successfully associated with user account {user}', 200
 
 
 class Priv(EndBase):

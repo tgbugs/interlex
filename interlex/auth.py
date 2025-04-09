@@ -8,6 +8,7 @@ from jwt import exceptions as jwtexc
 import flask_login as fl
 from flask import abort, url_for, g as flask_context_globals, session as fsession
 from idlib.utils import makeEnc
+from pyontutils.utils_fast import isoformat
 from interlex import config
 from interlex.utils import log
 from interlex.dbstuff import Stuff
@@ -232,7 +233,7 @@ class Auth:
             # downstream logger will deal with this
             return None, None
 
-    def _orcid_jwt(self, openid_token):
+    def _orcid_jwt(self, openid_token, *, leeway=0):
         # TODO so much lurking complexity in here :/
         # retrieve the signing key at start up or similar
         # if the token we receive was not signed by that key
@@ -256,7 +257,7 @@ class Auth:
         else:
             key = _orcid_mock_public_key
 
-        detok = jwt.decode(openid_token, key, sk.algorithm_name, audience=config.orcid_client_id)
+        detok = jwt.decode(openid_token, key, sk.algorithm_name, audience=config.orcid_client_id, leeway=leeway)
 
         return detok
 
@@ -267,9 +268,27 @@ class Auth:
                 try:
                     detok = self._orcid_jwt(surrogate)  # TODO error handling
                 except jwtexc.ExpiredSignatureError as e:
-                    # FIXME TODO this needs to redirect to a login page and clear the session
-                    msg = 'please log in again'
-                    raise self.ExpiredTokenError(msg) from e
+                    debugtok = self._orcid_jwt(surrogate, leeway=999999999)
+                    _t_orcid = f'https://{config.orcid_host}/' + debugtok['sub']
+                    _t_exp = debugtok['exp']
+                    _t_dt = isoformat(datetime.fromtimestamp(_t_exp))
+                    self.log.info(f'token expired since {_t_dt} for {_t_orcid}')
+                    class tuser:
+                        is_active = True  # maybe we set this to False?
+                        is_anonymous = False
+                        is_authenticated = False
+                        via_auth = 'orcid'
+                        orcid = None
+                        id = surrogate
+                        own_role = None
+                        groupname = None
+                        def get_id(self):
+                            return self.id
+
+                    # FIXME unfortunately we can't raise here because
+                    # it makes it impossible for us to log the user out
+                    #raise self.ExpiredTokenError(tuser(), msg) from e
+                    return tuser()
 
                 orcid = f'https://{config.orcid_host}/' + detok['sub']
                 orcid_pending = '_orcid_only' in fsession and fsession['_orcid_only'] == 'true'
@@ -282,7 +301,7 @@ class Auth:
                     # somehow someone got a session cookie but we didn't record
                     # their orcid, which either means we have a bug or our
                     # flask session secret key got leaked
-                    log.critical(f'decoded cookie but no orcid_metadata for {orcid}')
+                    self.log.critical(f'decoded cookie but no orcid_metadata for {orcid}')
                     # during development this can happen when we reset the
                     # database so tell the other side to remove everything and
                     # retry however no message is provided here because if this
@@ -317,7 +336,7 @@ class Auth:
             elif isinstance(surrogate, int):
                 # a couple legacy testing cases, we don't use this anymore but
                 # automatically log them out if we hit this
-                log.critical(f'old session format {fsession}')
+                self.log.critical(f'old session format {fsession}')
                 # manual modification of session since user doesn't exist anymore
                 # so calling fl.logout_user() call cause an infinite loop because this
                 # code is being called during _get_user
@@ -337,7 +356,7 @@ class Auth:
             # and there is a valid session cookie that we can decode that
             # decodes to something that could be mistaken for a valid user
             # id but that somehow does not exist then something is VERY wrong
-            log.critical(f'decoded cookie but no user for {surrogate}')
+            self.log.critical(f'decoded cookie but no user for {surrogate}')
             # FIXME TODO so the other case where this can happen is when
             # a user has been banned, also, we need to implement alternative tokens
             # so that we can invalidate other sessions e.g. on password change
