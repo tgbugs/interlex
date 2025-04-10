@@ -1055,7 +1055,11 @@ class Ops(EndBase):
 
         else:
             self._orcid_login(orcid, orcid_meta['id_token'], group_resp)
-            return 'orcid-login successful, check your cookies (use requests.Session)'
+            _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
+            if _dopop:
+                return return_page(data={'orcid_meta': orcid_meta, 'group_meta': group_resp}, status=302)
+            else:
+                return 'orcid-login successful, check your cookies (use requests.Session)'
 
     def _orcid_login(self, orcid, openid_token, group_resp):
             group_row = group_resp[0]
@@ -1856,7 +1860,11 @@ Alternately send an HTTP GET request with headers containing <br>
                     if freiri:
                         return redirect(freiri, 302)  # 302 seems preferred over 303 for compat reasons?
 
-                return 'login successful, check your cookies (use requests.Session)'
+                _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
+                if _dopop:
+                    return return_page(data={'orcid_meta': group_row, 'group_meta': group_row}, status=302)
+                else:
+                    return 'login successful, check your cookies (use requests.Session)'
 
             else:
                 return abort(401)  # FIXME hrm what would the return code be here ...
