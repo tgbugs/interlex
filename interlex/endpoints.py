@@ -233,7 +233,7 @@ def _rp_schema():
              }},
          'grouname': {'type': 'string'},  # not present when user only has orcid
          'redirect': {'type': 'string'},
-         'settings_url': {'type': 'string'},  # FIXME condense with redirect?
+         'settings_url': {'type': 'string'},  # XXX deprecated, use redirect instead
      },}
     s = json.dumps(schema, indent=2)
     return s
@@ -1182,12 +1182,15 @@ class Ops(EndBase):
                 for _k in _omsafe:
                     orcid_meta_safe[_k] = orcid_meta[_k]
 
+                _redir = f'/{groupname}/priv/settings'
                 response = {
                     'code': 302,
                     'orcid_meta': orcid_meta_safe,
-                    'settings_url': f'/{groupname}/priv/settings',
+                    'redirect': _redir,
+                    'settings_url': _redir,
                     'groupname': groupname,
                 }
+
                 return return_page(data=response, status=302)
             else:
                 return redirect(f'/{groupname}/priv/settings?from=orcid-landing-new', code=302)
@@ -2063,10 +2066,12 @@ class Privu(EndBase):
             if frm == 'user-new':
                 # e.g. someone went to user-new directly without coming from anywhere else
                 if _dopop:
+                    _redir = f'/{user}/priv/settings?from=user-new-success'
                     response = {
                         'code': 302,
                         'orcid_meta': orcid_meta_safe,
-                        'settings_url': f'/{user}/priv/settings?from=user-new-success',
+                        'redirect': _redir,
+                        'settings_url': _redir,
                         'groupname': user,
                     }
                     return return_page(data=response, status=302)
