@@ -2761,13 +2761,19 @@ class Priv(EndBase):
         ideally search will be over the larger set of ontologies
 
         the actual process goes more like this
-        0. if the user has an existing id see if we already have it, and if not ask them to request the upstream ontology for ingestion, if it is a small ontology this can be done quickly
+        0. checkbox about whether to automatically add the new term to the active ontology
+           active ontology can be an ontology managed by an organization that the user has contributor status to (or something like that)
+        0. if the user has an existing id see if we already have it, and if not ask them to request the upstream ontology for ingestion,
+           if it is a small ontology this can be done quickly
+           TODO: what if they only have the uri not the upstream ontology?
         0. if there is no existing id user types a label and any exact synonyms
         0. display the elasticsearch results
         0. check if an exact match exists in the current labels and exacts
         0. if yes they have two options, go to their version of the exact match to edit, or modify the label so that it no longer matches
         0. if they opt to edit their own term and there were additional exact synonyms then those should be added to their version of the existing term
-        0. if there is an exact match to a label for a term from an ontology that does NOT currently have a interlex id then ask whether they want to use that ontogy term as the basis for a new interlex record, if not they need to explain in a comment why the exact match to an existing ontology term does not fit (need to add friction to pervent blindly proceeding here)
+        0. if there is an exact match to a label for a term from an ontology that does NOT currently have a interlex id then ask whether they
+           want to use that ontogy term as the basis for a new interlex record, if not they need to explain in a comment why the exact match
+           to an existing ontology term does not fit (need to add friction to pervent blindly proceeding here)
         0. at this point they should be flipped to the edit term page
         0. on the edit term page subClassOf/subPropertyOf and definition should be presented to be filled in
         0. sub*Of should be a text box that auto complete searches or takes a curie or iri, when they tab out an update is sent
