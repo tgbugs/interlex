@@ -98,7 +98,7 @@ def combinatorics():
     def error(r): return r is _error
     def fail(r): return r is _fail
 
-    def not_error(r): return r is _error
+    def not_error(r): return r is not _error
 
     def sw_apitok(nodes):
         for n in nodes:
@@ -151,6 +151,52 @@ def combinatorics():
     # priv/api-token -> org -> fail
     # priv/role -> auth_user own_role != owner -> fail
 
+    def auth_type(atype):
+        def auth_type_inner(at, _at=atype):
+            return at == _at
+
+        return auth_type_inner
+
+    def fault_type(atype):
+        def fault_type_inner(at, _at=atype):
+            return at == _at
+
+        return fault_type_inner
+
+    def resp_code(rcode):
+        def resp_code_inner(resp, _rcode=rcode):
+            return resp.status_code == _rcode
+
+        return resp_code_inner
+
+    def resp_ok(resp):
+        return resp.ok
+
+    def _and(*funs):
+        def _and_inner(v, _funs=funs):
+            fails = [f for f in _funs if not f(v)]
+            return not fails
+
+        return _and_inner
+
+    log_invars = [
+        # TODO multi-stage case where someone logs in, tries to log in again, fails, but doesn't matter because they were already in
+        dict(auth=auth_type('orcid'), fault=fault_type('code-unknown'),  lresp=resp_code(401)),
+        dict(auth=auth_type('orcid'), fault=fault_type('token-expired'), lresp=resp_code(401), resp=resp_code(401)),
+
+        dict(auth=auth_type('login'), fault=fault_type('pass-empty'),    lresp=resp_code(400), resp=resp_code(401)),
+        dict(auth=auth_type('login'), fault=fault_type('pass-trunc'),    lresp=resp_code(401), resp=resp_code(401)),
+        dict(auth=auth_type('login'), fault=fault_type('pass-extra'),    lresp=resp_code(401), resp=resp_code(401)),
+
+        dict(auth=auth_type('login'), fault=fault_type('user-empty'),    lresp=resp_code(400), resp=resp_code(401)),
+        dict(auth=auth_type('login'), fault=fault_type('user-trunc'),    lresp=resp_code(401), resp=resp_code(401)),  # assuming collisions don't somehow share password
+        dict(auth=auth_type('login'), fault=fault_type('user-extra'),    lresp=resp_code(401), resp=resp_code(401)),  # assuming collisions don't somehow share password
+
+        dict(auth=auth_type('login'), fault=fault_type('form-no-both'),  lresp=resp_code(422), resp=resp_code(401)),
+        dict(auth=auth_type('login'), fault=fault_type('form-no-user'),  lresp=resp_code(422), resp=resp_code(401)),
+        dict(auth=auth_type('login'), fault=fault_type('form-no-pass'),  lresp=resp_code(422), resp=resp_code(401)),
+    ]
+
     invars = [
         dict(nodes=privu_un,  auth_user=orcid_user,                                                                                      outcome=success),  # orcid only users can start a privu new user proc
         dict(nodes=ops_un,    auth_user=orcid_user,                                                                                      outcome=fail),     # orcid only users can't start an ops new user proc
@@ -162,7 +208,10 @@ def combinatorics():
         dict(nodes=priv,      auth_user=is_user, own_role=not_admin, group=diff_user, user_role=not_null,  method=true, scope=not_null,  outcome=fail),
 
         dict(nodes=priv,      auth_user=is_user, own_role=owner,     group=same_user, user_role=null,      method=true, scope=not_null,  outcome=success),
-        dict(nodes=sw_apitok, auth_user=is_user, own_role=not_owner, group=same_user, user_role=null,      method=true, scope=not_null,  outcome=fail),
+        dict(nodes=sw_apitok, auth_user=is_user, own_role=not_owner, group=same_user, user_role=null,      method=true, scope=not_null,  outcome=fail),  # correctly does not match scen_auth-XXX-1 missing user, email -> the user is not in the users table so is_user fails directly and in same_user
+        dict(nodes=sw_apitok,                    own_role=null,                                                                          outcome=fail),
+        dict(nodes=sw_apitok,                    own_role=not_owner,                                                                     outcome=fail),
+
         dict(nodes=role,      auth_user=is_user, own_role=pending,   group=same_user, user_role=null,      method=true, scope=not_null,  outcome=fail),
         dict(nodes=priv,      auth_user=is_user, own_role=owner,     group=is_org,    user_role=not_owner, method=true, scope=not_null,  outcome=fail),
         dict(nodes=priv,      auth_user=is_user, own_role=owner,     group=is_org,    user_role=owner,     method=true, scope=not_null,  outcome=success),
@@ -177,12 +226,40 @@ def combinatorics():
 
     keys = 'nodes', 'method', 'auth_user', 'own_role', 'group', 'user_role', 'scope'
     def check_invariants(scenario):
+        #_session  # acces in debug
         bads = []
+        at_least_1_checked = False
         for inv in invars:
             do_check = all([inv[k](scenario[k]) for k in keys if k in inv])
             if do_check:
+                at_least_1_checked = True
                 if not inv['outcome'](scenario['outcome']):
                     bads.append(inv)
+
+        if not at_least_1_checked:
+            breakpoint()
+            raise NotImplementedError(f'no invariants match scenario:\n{scenario!r}')
+
+        return bads
+
+    log_keys = 'auth', 'fault',
+    log_outcome_keys = 'lresp', 'resp',
+    def check_invars_log(scenario):
+        #_session  # acces in debug
+        bads = []
+        at_least_1_checked = False
+        for inv in log_invars:
+            do_check = all([inv[k](scenario[k]) for k in log_keys if k in inv])
+            if do_check:
+                at_least_1_checked = True
+                for lk in log_outcome_keys:
+                    if lk in inv and lk in scenario:
+                        if not inv[lk](scenario[lk]):
+                            bads.append(inv)
+
+        if not at_least_1_checked:
+            breakpoint()
+            raise NotImplementedError(f'no invariants match scenario:\n{scenario!r}')
 
         return bads
 
@@ -217,7 +294,21 @@ def combinatorics():
 
     scen_log = [
         # i.e. successful login with orcid by someone, and then someone tries to log in to their account and fails
-        dict(auth_user=mtest_user, register='orcid-first', auth='orcid-fail', missing={'user', 'email'})
+        dict(auth_user=mtest_user, register='orcid-first',  auth='orcid', fault='code-unknown', missing={'user', 'email'}),
+        dict(auth_user=mtest_user, register='orcid-first',  auth='orcid', fault='token-expired', missing={'user', 'email'}),
+
+        dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='pass-empty', missing=set()),
+        dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='pass-trunc', missing=set()),
+        dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='pass-extra', missing=set()),
+
+        dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='user-empty', missing=set()),
+        dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='user-trunc', missing=set()),
+        dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='user-extra', missing=set()),
+
+        dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='form-no-both', missing=set()),
+        dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='form-no-user', missing=set()),
+        dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='form-no-pass', missing=set()),
+        #dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='sescook-mangled', missing=set()),
     ]
 
     _group = '<group>'
@@ -228,7 +319,7 @@ def combinatorics():
         dict(nodes=('', 'u', '*priv', 'user-new'),     auth_user=mtest_user, own_role='owner',   group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second',     missing=set()),
 
         dict(nodes=('', 'u', '*priv', 'user-new'),     auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-first',      missing={'user', 'email'}),
-        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-first',      missing={'user', 'email'}),
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-first',      missing={'user', 'email'}),  # scen_auth-XXX-1
         dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-first',      missing={'email'}),
         dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-first-pass', missing={'email'}),
 
@@ -242,7 +333,7 @@ def combinatorics():
 
     ]
 
-    scnid = iter(range(len(scen_auth) * 2))
+    scnid = iter(range(len(scen_auth) * 10))
     def scen_sql(scen):
         user = scen['auth_user']
         yield None, None
@@ -290,7 +381,16 @@ def combinatorics():
             user = None
             test_email = test_email_f.format(n=this_scen_id)
             test_argon = hash_password(test_password)
-            orcid_meta = endpoints.Ops._make_orcid_meta()
+            expires_in_seconds = None
+            if 'auth' in scen and scen['auth'] == 'orcid':
+                if 'fault' in scen and scen['fault'] == 'token-expired':
+                    # TODO ideally we would try to time it so login works but test url fails
+                    # but that will require a bit of wrangling, probably by reminting and
+                    # skipping the db just for the test FIXME also i don't think we check
+                    # to see whether the oid token matches because we don't update the record
+                    expires_in_seconds = 0
+
+            orcid_meta = endpoints.Ops._make_orcid_meta(expires_in_seconds=expires_in_seconds)
             if scen_type in 'reg':
                 return database, orcid_meta, this_scen_id
 
@@ -392,7 +492,12 @@ def combinatorics():
         return database, orcid_meta, this_scen_id
 
     # FIXME probably better to do each test sequentially and not make all dbs first ...
-    scendbs = [(scen, prepare_scen(scen, 'reg'), 'reg') for scen in scen_reg] + [(scen, prepare_scen(scen, 'log'), 'log') for scen in scen_log] + [(scen, prepare_scen(scen, 'auth'), 'auth') for scen in scen_auth]
+    scendbs = [
+        (scen, prepare_scen(scen, 'reg'), 'reg') for scen in scen_reg
+    ] + [
+        (scen, prepare_scen(scen, 'log'), 'log') for scen in scen_log
+    ] + [
+        (scen, prepare_scen(scen, 'auth'), 'auth') for scen in scen_auth]
 
     # FIXME source appropriately
     parent_child, node_methods, path_to_route, path_names = uriStructure()
@@ -442,6 +547,7 @@ def combinatorics():
         return resp
 
     def run_scen(scen, scen_type, sid, db, orcid_meta):
+        invars, log_invars  # needed for access in debug
         nonlocal _session
         if 'nodes' in scen:
             route = '/'.join(remove_terminals([path_to_route(n) for n in scen['nodes']]))
@@ -595,21 +701,65 @@ def combinatorics():
 
                 return
 
-            if scen_type == 'log':
-                # TODO
-                breakpoint()
-                return
+            #if scen_type == 'log':
+                ## TODO
+                #breakpoint()
+                #return
 
             if scen['auth'] is not None:
+                fault = scen['fault'] if 'fault' in scen else None
+                _user = scen['auth_user']
                 if scen['auth'] == 'login':
-                    lheaders = {'Authorization': 'Basic ' + base64.b64encode((scen['auth_user'] + ':' + test_password).encode()).decode()}
+                    _test_password = test_password
+                    if fault is not None:
+                        if fault == 'pass-empty':
+                            _test_password = ''
+                        elif fault == 'pass-trunc':
+                            _test_password = _test_password[:-1]
+                        elif fault == 'pass-extra':
+                            _test_password += 'x'
+
+                        elif fault == 'user-empty':
+                            _user = ''
+                        elif fault == 'user-trunc':
+                            _user = _user[:-1]
+                        elif fault == 'user-extra':
+                            _user += 'x'
+                        elif fault.startswith('form-'):
+                            pass
+                        else:
+                            breakpoint()
+                            raise NotImplementedError(f'TODO {scen["fault"]}')
+
+                    use_basic = False  # FIXME TODO scen['login_type'] or something
                     lurl = url_prefix + '/u/ops/user-login'
-                    lresp = fixresp(client.get(lurl, headers=lheaders))
-                    headers['Cookie'] = lresp.headers['Set-Cookie']
+                    if use_basic:
+                        lheaders = {'Authorization': 'Basic ' + base64.b64encode((_user + ':' + _test_password).encode()).decode()}
+                        lresp = fixresp(client.get(lurl, headers=lheaders))
+                    else:
+                        form = {'username': _user, 'password': _test_password}
+                        if fault == 'form-no-pass':
+                            form.pop('password')
+                        elif fault == 'form-no-user':
+                            form.pop('username')
+                        elif fault == 'form-no-both':
+                            # doesn't really matter whether we send an
+                            # empty form don't send a form at all the
+                            # code treats both the same TODO maybe
+                            # confirm that though
+                            form = {}
+
+                        lresp = fixresp(client.post(lurl, data=form))
+
+                    if 'Set-Cookie' in lresp.headers:
+                        headers['Cookie'] = lresp.headers['Set-Cookie']
+
                 elif scen['auth'] == 'orcid':
                     code = endpoints.Ops._make_orcid_code()
                     endpoints._orcid_mock = code
-                    endpoints._orcid_mock_codes[code] = orcid_meta
+                    if 'fault' not in scen or scen['fault'] != 'code-unknown':
+                        endpoints._orcid_mock_codes[code] = orcid_meta
+
                     lurl = url_prefix + '/u/ops/orcid-login'
                     lresps = []
                     lheaders = {}
@@ -631,12 +781,17 @@ def combinatorics():
                     if 'Cookie' in lheaders:
                         headers['Cookie'] = lheaders['Cookie']
 
-                    #breakpoint()
+            if scen_type == 'log':
+                scen['lresp'] = lresp
+                user = scen['auth_user']
+                url = url_prefix + f'/{user}/priv/settings'
+                resp = do_get(client, url)
+                scen['resp'] = resp
+                bad = check_invars_log(scen)
+                if bad:
+                    breakpoint()
 
-                elif scen['auth'] == 'orcid-fail':  # XXX not quite the right place to test this, it is more in the scen_log set ?
-                    pass
-
-                #breakpoint()
+                return bad
 
             resp = fixresp(method(url, headers=headers))
             scen['outcome'] = _success if resp.ok else _fail  # FIXME
@@ -658,7 +813,7 @@ def combinatorics():
                 breakpoint()
                 'derp'
 
-            return [dict(outcome=not_error)]
+            return [dict(outcome=not_error)]  # FIXME this seems ... incorrect
         finally:
             endpoints._orcid_mock = True
             with app.app_context():
