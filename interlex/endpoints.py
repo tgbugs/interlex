@@ -255,8 +255,15 @@ def return_page(html=None, data={}, status=200):
 <head><title>InterLex Login / Registration</title></head>
 <body>
 <h1>InterLex Login / Registration</h1>
-<script>
+<script type="module">
+    async function getCookies() {{
+        const cookies = await window.cookieStore.getAll();
+        return cookies;
+    }}
+
     const response = {response_json};
+    const cookies = await getCookies();
+    response['cookies'] = JSON.stringify(cookies);
     if (window.opener !== null && window.opener !== undefined) {{
         window.opener.postMessage(response, "*");
     }} else {{

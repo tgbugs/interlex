@@ -521,7 +521,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
     app.config['CELERY_ACCEPT_CONTENT'] = config.accept_content
     app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=180)
     app.config['REMEMBER_COOKIE_SECURE'] = True
-    app.config['REMEMBER_COOKIE_HTTPONLY'] = True  # XXX see how this interacts with the frontend
+    app.config['REMEMBER_COOKIE_HTTPONLY'] = False  # XXX see how this interacts with the frontend
     app.url_map.converters['regex'] = RegexConverter
     app.session_interface = NoSessionForToken()
 
