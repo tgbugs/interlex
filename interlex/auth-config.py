@@ -92,6 +92,7 @@
 
      # fl
      'fl-session-secret-key': None,
+     'fl-cookie-httponly': True,
 
      # smtp
      'smtp-host': {

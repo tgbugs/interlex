@@ -521,7 +521,13 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
     app.config['CELERY_ACCEPT_CONTENT'] = config.accept_content
     app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=180)
     app.config['REMEMBER_COOKIE_SECURE'] = True
-    app.config['REMEMBER_COOKIE_HTTPONLY'] = False  # XXX see how this interacts with the frontend
+    cookies_httponly = config.auth.get('fl-cookie-httponly')
+    # on dev it seems HTTPONLY needs to be false because
+    # the domains do not match, on prod we may be able to
+    # enable httponly since the domains will match
+    app.config['REMEMBER_COOKIE_HTTPONLY'] = cookies_httponly
+    app.config['SESSION_COOKIE_HTTPONLY'] = cookies_httponly
+
     app.url_map.converters['regex'] = RegexConverter
     app.session_interface = NoSessionForToken()
 
