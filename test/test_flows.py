@@ -22,6 +22,7 @@ import idlib
 from urllib.parse import quote as url_quote
 from sqlalchemy import create_engine
 from sqlalchemy.sql import text as sql_text
+from flask_sqlalchemy import SQLAlchemy
 from interlex import config, endpoints, auth as iauth
 from interlex.uri import make_paths, uriStructure, route_methods, run_uri
 from interlex.auth import hash_password
@@ -212,7 +213,8 @@ def combinatorics():
         dict(nodes=sw_apitok,                    own_role=null,                                                                          outcome=fail),
         dict(nodes=sw_apitok,                    own_role=not_owner,                                                                     outcome=fail),
 
-        dict(nodes=role,      auth_user=is_user, own_role=pending,   group=same_user, user_role=null,      method=true, scope=not_null,  outcome=fail),
+        dict(nodes=role,      auth_user=is_user, own_role=pending,   group=true,      user_role=null,      method=true, scope=not_null,  outcome=fail),
+        dict(nodes=priv,      auth_user=is_user, own_role=pending,   group=diff_user, user_role=null,      method=true, scope=not_null,  outcome=fail),
         dict(nodes=priv,      auth_user=is_user, own_role=owner,     group=is_org,    user_role=not_owner, method=true, scope=not_null,  outcome=fail),
         dict(nodes=priv,      auth_user=is_user, own_role=owner,     group=is_org,    user_role=owner,     method=true, scope=not_null,  outcome=success),
         dict(nodes=sw_apitok, auth_user=is_user, own_role=owner,     group=is_org,    user_role=owner,     method=true, scope=not_null,  outcome=fail),
@@ -268,13 +270,16 @@ def combinatorics():
     test_email_f = 'test-user-{n}@example.org'
 
     def mtest_org(scen):
-        return 'org-test-' + base64.b64encode(secrets.token_bytes(6)).decode()  # FIXME shouldn't we disallow org.* ? and group. for groupnames ?? nah i think those are ok, blocking user and test still relevant though
+        return 'org-test-' + base64.urlsafe_b64encode(secrets.token_bytes(6)).decode()  # FIXME shouldn't we disallow org.* ? and group. for groupnames ?? nah i think those are ok, blocking user and test still relevant though
 
     def mtest_user(scen):
         return 'tgbugs-test-' + base64.urlsafe_b64encode(secrets.token_bytes(6)).decode()
 
     def msame_user(scen):
         return scen['auth_user']
+
+    def mother_group(scen):
+        return scen['other_group']
 
     scen_reg = [
         dict(auth_user=mtest_user, register='orcid-first',      missing=set()),
@@ -313,6 +318,13 @@ def combinatorics():
 
     _group = '<group>'
     scen_auth = [
+        dict(nodes=('', _group, 'priv', 'role'), auth_user=mtest_user, own_role='pending', other_group=mtest_org, group=mother_group, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-second',   missing={'email'}),  # xfail
+        #dict(nodes=('', _group, 'priv', 'role'), auth_user=mtest_user, own_role='pending', other_group=mtest_org, group=mother_group, user_role='owner', method='GET', scope='user-only', auth='orcid', register='orcid-second',   missing={'email'}),  # FIXME impossible
+        # but invars check only the scenario not the actual value in the database, so that needs to be fixed so we can test for impossible scenarios rather than maksing them out
+
+        dict(nodes=('', _group, 'priv', 'role'), auth_user=mtest_user, own_role='owner', other_group=mtest_org, group=mother_group, user_role='owner', method='GET', scope='user-only', auth='login', register='orcid-second',     missing=set()),
+        dict(nodes=('', _group, 'priv', 'role'), auth_user=mtest_user, own_role='owner', other_group=mtest_org, group=mother_group, user_role='owner', method='GET', scope='user-only', auth='orcid', register='orcid-second',     missing=set()),
+
         dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner',   group=msame_user, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-first',      missing=set()),
         dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner',   group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-first-pass', missing=set()),
         dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner',   group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second',     missing=set()),
@@ -345,6 +357,7 @@ def combinatorics():
         argv = '/bin/sh', 'bin/interlex-dbsetup', str(test_db_port), database
         run_cmd(argv, working_dir, '/dev/stderr')
 
+    orcid_kls = idlib.systems.orcid.OrcidSandbox if config.orcid_sandbox else idlib.Orcid
     def prepare_scen(scen, scen_type):
         this_scen_id = next(scnid)
         # validate scen
@@ -361,6 +374,9 @@ def combinatorics():
 
         if 'auth_user' in scen:
             scen['auth_user'] = scen['auth_user'](scen)
+
+        if 'other_group' in scen:
+            scen['other_group'] = scen['other_group'](scen)
 
         if 'group' in scen:
             scen['group'] = scen['group'](scen)
@@ -394,8 +410,7 @@ def combinatorics():
             if scen_type in 'reg':
                 return database, orcid_meta, this_scen_id
 
-            kls = idlib.systems.orcid.OrcidSandbox if config.orcid_sandbox else idlib.Orcid
-            orcid = kls._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
+            orcid = orcid_kls._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
             if scen['register'].startswith('orcid-first'):
                 # this tests partially completely workflows in the database
                 # we also want to run scen_reg through the app as well
@@ -416,7 +431,7 @@ def combinatorics():
                 pass
             elif scen['own_role'] == 'pending':
                 if not missing:
-                    msg = 'pending must specify what is missing'
+                    msg = f'pending must specify what is missing {scen}'
                     raise ValueError(msg)
 
                 if 'user' in missing:
@@ -480,6 +495,24 @@ def combinatorics():
                 #if sql is not None:
                     #session.execute(sql_text(sql), params=params)
                     #session.commit()
+
+            # create other group
+            if 'other_group' in scen:
+                _og = scen['other_group']
+                if _og.startswith('org-test-'):  # FIXME add explicit field for this
+                    dbstuff.org_new(_og, user)
+                else:
+                    other_user = _og
+                    other_test_password = base64.b64encode(secrets.token_bytes(15)).decode()
+                    other_test_argon = hash_password(other_test_password)
+                    other_test_email = test_email_f.format(n=f"other-{this_scen_id}")
+                    other_orcid_meta = endpoints.Ops._make_orcid_meta()
+                    other_orcid = orcid_kls._id_class(prefix='orcid', suffix=other_orcid_meta['orcid']).iri
+                    endpoints.Ops._insert_orcid_meta(session, other_orcid_meta)
+                    dbstuff.user_new(other_user, other_test_email, other_test_argon, other_orcid, email_verify=False)
+
+                session.commit()
+
         except Exception as e:
             session.rollback()
             raise e
@@ -546,16 +579,37 @@ def combinatorics():
 
         return resp
 
+    app = None
     def run_scen(scen, scen_type, sid, db, orcid_meta):
         invars, log_invars  # needed for access in debug
         nonlocal _session
+        nonlocal app
         if 'nodes' in scen:
             route = '/'.join(remove_terminals([path_to_route(n) for n in scen['nodes']]))
             filled = route.replace('<group>', scen['group'])
             url = url_prefix + filled
 
-        app = run_uri(db_kwargs=dict(dbuser='interlex-user', host=test_db_host, port=test_db_port, database=db))
-        app.testing = True
+        if app is None:
+            app = run_uri(db_kwargs=dict(dbuser='interlex-user', host=test_db_host, port=test_db_port, database=db))
+            app.testing = True
+        else:
+            db_kwargs = dict(dbuser='interlex-user', host=test_db_host, port=test_db_port, database=db)
+            new_dburi = dbUri(**db_kwargs)
+            if new_dburi != app.config['SQLALCHEMY_DATABASE_URI']:
+                msg = f"switching dburi {new_dburi} != {app.config['SQLALCHEMY_DATABASE_URI']}"
+                log.info(msg)
+                if 'sqlalchemy' in app.extensions:
+                    with app.app_context():
+                        _old_db = app.extensions.pop('sqlalchemy')
+                        _old_db.session.close()
+                        _conn = _old_db.session.connection()
+                        _conn.close()
+                        _conn.engine.dispose()
+                        _old_db.engine.dispose()
+
+                app.config['SQLALCHEMY_DATABASE_URI'] = new_dburi
+                SQLAlchemy().init_app(app)
+
         session = app.extensions['sqlalchemy'].session
         try:
             client = app.test_client()

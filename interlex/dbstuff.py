@@ -29,6 +29,17 @@ class Stuff:
         sql = base + values_template
         return self.session_execute(sql, params)
 
+    def org_new(self, orgname, creator):
+        params = dict(groupname=orgname, creator=creator)
+        # FIXME TODO ensure that creator own_role is owner ?
+        sql = '''
+WITH grow AS (INSERT INTO groups (groupname) VALUES (:groupname) RETURNING id),
+gro AS (INSERT INTO orgs (id, creator_id) SELECT id, idFromGroupname(:creator) FROM grow),
+oup AS (INSERT INTO user_permissions (group_id, user_id, user_role) SELECT id, idFromGroupname(:creator), 'owner' FROM grow)
+SELECT o.id FROM orgs AS o JOIN groups AS g ON g.id = o.id WHERE g.groupname = :groupname
+'''
+        return list(self.session_execute(sql, params=params))
+
     def user_new(self, username, email, argon2_string=None, orcid=None, email_verify=True):
         params = dict(groupname=username, email=email)
 
