@@ -565,12 +565,14 @@ class Auth:
             auth_user = row.groupname
 
         elif li_user is not None:
-            scope = 'settings-only'  # note that settings- implies user-
             auth_user = li_user
             if logged_in_user.own_role != 'owner':  # pending user
+                scope = 'settings-only'  # note that settings- implies user-
                 if request.url_rule.rule.startswith('/<group>/priv/api-token'):
                     msg = 'email and orcid verfication must be completed to access this resource'
                     raise self.HasNotCompletedVerificationError(request, msg)
+            else:
+                scope = 'settings-all'  # note that settings- implies user-
 
         else:
             msg = 'more like not implemented correctly amirite'
