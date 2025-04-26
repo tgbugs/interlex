@@ -100,7 +100,7 @@ def server_alt(db=None, dburi=None, debug=False):
         try:
             return tripleRender(
                 request, graph, group_rend, frag_pref, id, object_to_existing, title,
-                redirect=redirect, **kwargs)
+                redirect=redirect, for_alt=True, **kwargs)
         except BaseException as e:
             print(tc.red('ERROR'), e)
             raise e
