@@ -2394,7 +2394,7 @@ class Priv(EndBase):
                 if k.lifetime_seconds:
                     out['lifetime-seconds'] = k.lifetime_seconds
 
-                if k.revoked:
+                if k.revoked_datetime:
                     out['revoked'] = isoformat(k.revoked_datetime)
 
                 return out
