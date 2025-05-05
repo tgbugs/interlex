@@ -2324,48 +2324,103 @@ class Priv(EndBase):
         def ev(dt):
             return 'null' if dt is None else f'"{isoformat(dt)}"'
 
-        if 'from' in request.args:
-            frm = request.args['from']
-            if frm == 'orcid-landing-new':
-                prefix = f'# you already have an InterLex account associated with {fl.current_user.orcid}\n'
-            elif frm == 'email-verify-success':
-                _vrow = sorted(emails, key=(lambda e: (e.email_validated is None, e.email_validated)))[-1]
-                _email = _vrow.email
-                prefix = f'# email address {_email} successfully validated\n'
+        best = request.accept_mimetypes.best
+        mimetype = (best if best and best != '*/*' and
+                    'application/signed-exchange' not in best
+                    else 'application/json')
+
+        if mimetype == 'text/turtle':
+
+            if 'from' in request.args:
+                frm = request.args['from']
+                if frm == 'orcid-landing-new':
+                    prefix = f'# you already have an InterLex account associated with {fl.current_user.orcid}\n'
+                elif frm == 'email-verify-success':
+                    _vrow = sorted(emails, key=(lambda e: (e.email_validated is None, e.email_validated)))[-1]
+                    _email = _vrow.email
+                    prefix = f'# email address {_email} successfully validated\n'
+                else:
+                    log.error(f'TODO {frm} not handled')
+                    prefix = ''
             else:
-                log.error(f'TODO {frm} not handled')
                 prefix = ''
+
+            emails_str = '\n\n' + '\n'.join([
+                (f'<mailto:{e.email}> a ilxtr:interlex-email-record ;\n'
+                f'  email:primary {e.email_primary};\n'
+                f'  email:verified {ev(e.email_validated)} .')
+                    for e in emails])
+
+            keys_str = ('\n\n' + '\n'.join([
+                ('[] a ilxtr:api-key-record ;\n'
+                f'  key:key "{k.key}" ;\n'
+                f'  key:type "{k.key_type}" ;\n'
+                f'  key:scope "{k.key_scope}" ;\n'
+                f'  key:created "{isoformat(k.created_datetime)}" ') +
+                (f';\n  key:note {json.dumps(k.note)} ' if k.note else '') +
+                (f';\n  key:lifetime-seconds {k.lifetime_seconds} ' if k.lifetime_seconds else '') +
+                (f';\n  key:revoked "{isoformat(k.revoked_datetime)}" ' if k.revoked_datetime else '') + '.'
+                for k in sorted(keys, key=(lambda r: r.created_datetime), reverse=True)])) if keys else ''
+
+            orcid_line = '' if user.orcid is None else f'  settings:orcid <{user.orcid}> ;\n'
+            out = prefix + (
+                f'ilx:{group}/priv/settings a ilxtr:interlex-settings ;\n'
+                '  skos:comment "completely fake ttlish representation of settings" ;\n'
+                f'  settings:groupname "{group}" ;\n'
+                f'  settings:email [ <mailto:{ep.email}> {ev(ep.email_validated)} ] ;\n'  # implicitly primary email
+                f'{orcid_line}'
+                '  settings:notification-prefs "email" ;\n'
+                f'  settings:own-role "{user.own_role}" .'
+            ) + emails_str + keys_str + '\n'
+            return out, 200, {'Content-Type': 'text/turtle'}
+
         else:
-            prefix = ''
+            def ej(e):
+                out = {'email': e.email, 'primary': e.email_primary}
+                if e.email_validated is not None:
+                    out['verified'] = isoformat(e.email_validated)
+                return out
 
-        emails_str = '\n\n' + '\n'.join([
-            (f'<mailto:{e.email}> a ilxtr:interlex-email-record ;\n'
-             f'  email:primary {e.email_primary};\n'
-             f'  email:verified {ev(e.email_validated)} .')
-                   for e in emails])
+            def kj(k):
+                out = {
+                    'key': k.key,
+                    'type': k.key_type,
+                    'scope': k.key_scope,
+                    'created': isoformat(k.created_datetime),
+                }
+                if k.note:
+                    out['note'] = k.note
 
-        keys_str = ('\n\n' + '\n'.join([
-            ('[] a ilxtr:api-key-record ;\n'
-             f'  key:key "{k.key}" ;\n'
-             f'  key:type "{k.key_type}" ;\n'
-             f'  key:scope "{k.key_scope}" ;\n'
-             f'  key:created "{isoformat(k.created_datetime)}" ') +
-            (f';\n  key:note {json.dumps(k.note)} ' if k.note else '') +
-            (f';\n  key:lifetime-seconds {k.lifetime_seconds} ' if k.lifetime_seconds else '') +
-            (f';\n  key:revoked "{isoformat(k.revoked_datetime)}" ' if k.revoked_datetime else '') + '.'
-            for k in sorted(keys, key=(lambda r: r.created_datetime), reverse=True)])) if keys else ''
+                if k.lifetime_seconds:
+                    out['lifetime-seconds'] = k.lifetime_seconds
 
-        orcid_line = '' if user.orcid is None else f'  settings:orcid <{user.orcid}> ;\n'
-        out = prefix + (
-            f'ilx:{group}/priv/settings a ilxtr:interlex-settings ;\n'
-            '  skos:comment "completely fake ttlish representation of settings" ;\n'
-            f'  settings:groupname "{group}" ;\n'
-            f'  settings:email [ <mailto:{ep.email}> {ev(ep.email_validated)} ] ;\n'  # implicitly primary email
-            f'{orcid_line}'
-            '  settings:notification-prefs "email" ;\n'
-            f'  settings:own-role "{user.own_role}" .'
-        ) + emails_str + keys_str + '\n'
-        return out, 200, {'Content-Type': 'text/turtle'}
+                if k.revoked:
+                    out['revoked'] = isoformat(k.revoked_datetime)
+
+                return out
+
+            out = {
+                'code': 200,
+                'status': 200,
+                'settings': {
+                    'groupname': group,
+                    'notification-preferences': 'email',  # TODO
+                    'own-role': user.own_role,
+                    'emails': [ej(e) for e in emails],
+                }}
+
+            if 'from' in request.args:
+                frm = request.args['from']
+                out['from'] = frm
+
+            if user.orcid is not None:
+                out['settings']['orcid'] = user.orcid
+
+            if keys:
+                out['settings']['keys'] = [
+                    kj(k) for k in sorted(keys, key=(lambda r: r.created_datetime), reverse=True)]
+
+            return json.dumps(out), 200, ctaj
 
     @basic
     def logout(self, group, db=None):
