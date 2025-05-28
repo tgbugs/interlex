@@ -2698,7 +2698,12 @@ class Priv(EndBase):
 
         enum_types = set(enum_types)
         enum_scopes = set(enum_scopes)
-        thing = request.form if True else request.json  # FIXME TODO
+        #log.debug(dict(request.accept_mimetypes))
+        #log.debug('derp')
+        r_is_json = 'application/json' in dict(request.accept_mimetypes)  # FIXME need better
+        #log.debug(r_is_json)
+        thing = request.get_json(force=True) if r_is_json else request.form  # FIXME TODO request.json -> abort(415) despite application/json being in accept ...
+        #log.debug(thing)
         errors = {}
         if 'token-type' in thing:
             token_type = thing['token-type']
