@@ -6,7 +6,7 @@ import binascii
 import jwt
 from jwt import exceptions as jwtexc
 import flask_login as fl
-from flask import abort, url_for, g as flask_context_globals, session as fsession
+from flask import abort, redirect, url_for, g as flask_context_globals, session as fsession
 from idlib.utils import makeEnc
 from pyontutils.utils_fast import isoformat
 from interlex import config
