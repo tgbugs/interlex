@@ -120,7 +120,7 @@ recons text;
 BEGIN
     -- FIXME TODO handle perspective ontologies instead of only default group perspective ontologies
     SELECT p.name INTO pname FROM perspectives AS p WHERE p.id = NEW.perspective AND p.default_group_perspective;
-    recons := '/' || name || '/ontologies/uris' || NEW.ont_path || '/spec';
+    recons := '/' || pname || '/ontologies/uris' || NEW.ont_path || '/spec';
     IF (pname IS NULL OR recons != uri_path(NEW.spec)) THEN
        RAISE EXCEPTION 'spec uri does not match recons uri % != %', NEW.spec, recons;
     END IF;

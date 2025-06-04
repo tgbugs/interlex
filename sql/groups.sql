@@ -34,7 +34,7 @@ CREATE TRIGGER def_pers_name_check BEFORE INSERT ON perspectives FOR EACH ROW EX
 CREATE OR REPLACE FUNCTION persFromGroupname(groupname text, OUT perspective integer) RETURNS integer AS $persFromGroupname$
 -- FIXME run this off groups not org_user_view?
 BEGIN
-    SELECT id INTO STRICT perspective FROM perspectives WHERE name = persFromGroupname.groupname AND default_group_perspective;
+    SELECT id INTO STRICT perspective FROM perspectives AS p WHERE p.name = persFromGroupname.groupname AND p.default_group_perspective;
     -- use STRICT to abort a transaction early if the user does not exist
 END;
 $persFromGroupname$ language plpgsql;
