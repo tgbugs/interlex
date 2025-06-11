@@ -15,7 +15,7 @@ def makeTestRoutes(limit=1):
     parent_child, node_methods, path_to_route, path_names = uriStructure()
     groups = 'base', 'tgbugs'  # , 'origin'  # base redirects to default/curated ...
     other_groups = 'latest', 'curated'  # , 'bob'  # FIXME apparently NoGroup is insanely slow on error???
-    ilx_patterns = 'ilx_0123456', 'ilx_0090000', 'cde_1000000'
+    ilx_patterns = 'ilx_0123456', 'tmp_000000001', 'ilx_0090000', 'cde_1000000'
     words = 'isReadablePredicate', 'cookies'
     labels = 'brain', 'mus musculus'
     versions = '1524344335', '2018-04-01'  # FIXME should version alone 404 or return the qualifier?
@@ -230,7 +230,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
         resp_patch = client.patch(url, headers=headers_patch, json=jld)
         breakpoint()
 
-    def test_post_ontspec(self):
+    def test_00_post_ontspec(self):
         self.app.debug = True
         client = self.app.test_client()
         tuser = auth.get('test-api-user')
@@ -238,12 +238,12 @@ class TestRoutes(RouteTester, unittest.TestCase):
         headers = {'Authorization': f'Bearer {token}'}
         data = {'title': 'test ontology',
                 'subjects': [
-                    #'http://uri.interlex.org/base/ilx_0101431',
-                    #'http://uri.interlex.org/base/ilx_0101432',
+                    'http://uri.interlex.org/base/ilx_0101431',
+                    'http://uri.interlex.org/base/ilx_0101432',
                     #'http://uri.interlex.org/base/ilx_0101433',
                     #'http://purl.obolibrary.org/obo/UBERON_0000955',
-                    'http://purl.obolibrary.org/obo/BFO_0000001',
-                    'http://purl.obolibrary.org/obo/IAO_0000001',
+                    #'http://purl.obolibrary.org/obo/BFO_0000001',
+                    #'http://purl.obolibrary.org/obo/IAO_0000001',
                 ]}
         # FIXME TODO somehow looking at this I'm seeing that if we don't already have it we need
         # to ensure that we don't wind up with duplicate ontologies all having a single subject in them
@@ -258,8 +258,61 @@ class TestRoutes(RouteTester, unittest.TestCase):
             #resp3 = client3.get(url + '.html')  # FIXME .html breaks url matcher TODO
             resp3 = client3.get(url, headers={'Accept': 'text/html'})
 
+        else:
+            with self.app.app_context():
+                breakpoint()
+                ''
+            assert False, 'oops'
+
         with self.app.app_context():
             #breakpoint()
+            ''
+
+    def test_01_patch_ontspec(self):
+        self.app.debug = True
+        client = self.app.test_client()
+        tuser = auth.get('test-api-user')
+        token = auth.get('interlex-test-api-key')
+        headers = {'Authorization': f'Bearer {token}'}
+        onts_url = f'{self.prefix}/{tuser}/ontologies'
+        resp1 = client.get(onts_url)
+
+        data = {
+            'title': 'test ontology updated',
+                'add': [
+                    #'http://uri.interlex.org/base/ilx_0101431',
+                    #'http://uri.interlex.org/base/ilx_0101432',
+                    'http://uri.interlex.org/base/ilx_0101433',
+                    #'http://purl.obolibrary.org/obo/UBERON_0000955',
+                    #'http://purl.obolibrary.org/obo/BFO_0000002',
+                    #'http://purl.obolibrary.org/obo/IAO_0000001',
+                ],
+                'del': [
+                    'http://uri.interlex.org/base/ilx_0101432',
+                    #'http://purl.obolibrary.org/obo/BFO_0000001',
+                ],
+        }
+
+        # FIXME TODO somehow looking at this I'm seeing that if we don't already have it we need
+        # to ensure that we don't wind up with duplicate ontologies all having a single subject in them
+        url = resp1.json[-1]['uri']
+        resp2 = client.get(url, headers={'Accept': 'text/turtle'})
+        resp3 = client.patch(url, json=data, headers=headers)
+        if resp3.location is not None:
+            client2 = self.app.test_client()
+            resp2_1 = client2.get(resp3.location)
+            client3 = self.app.test_client()
+            #resp3 = client3.get(url + '.html')  # FIXME .html breaks url matcher TODO
+            resp3_1 = client3.get(url, headers={'Accept': 'text/turtle'})
+        else:
+            with self.app.app_context():
+                breakpoint()
+                ''
+            assert False, 'oops'
+
+        assert resp2.data != resp3_1.data, 'no change?'
+        with self.app.app_context():
+            breakpoint()
             ''
 
     def test_post_user_new(self):

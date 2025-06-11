@@ -17,7 +17,7 @@ from htmlfn import atag, btag, h2tag, htmldoc
 from htmlfn import table_style, render_table, redlink_style
 from pyontutils.core import OntGraph, makeGraph, populateFromJsonLd
 from pyontutils.utils_fast import TermColors as tc, isoformat
-from pyontutils.namespaces import makePrefixes, definition, rdf, owl
+from pyontutils.namespaces import makePrefixes, definition, rdf, owl, dc, ilxtr
 from sqlalchemy.sql import text as sql_text
 import idlib
 from interlex import auth as iauth
@@ -807,6 +807,28 @@ class Endpoints(EndBase):
                 {'uri': row.name,
                  'first_seen': isoformat(row.first_seen.astimezone(timezone.utc))}
                 for row in resp]
+            return json.dumps(onts), 200, ctaj
+
+        else:
+            # FIXME this section should be moved to queries or something like that
+            resp = dbstuff.getGroupOntologies(group)
+            specs = [r.spec for r in resp]
+            # assert not [r for r in resp if r.spec_head_identity != r.identity]
+            triple_rows = [list(self.queries.getGraphByName(spec)) for spec in specs]  # FIXME TODO getGraphByIdentity
+            te = TripleExporter()
+            graphs = [OntGraph().populate_from_triples((te.triple(*r) for r in trows)) for trows in triple_rows]
+            onts = []
+            for srow, graph in zip(resp, graphs):
+                ont = {'uri': srow.spec,
+                 'first_seen': isoformat(srow.first_seen.astimezone(timezone.utc)),  # identity first seen, isn't actually last modified because might revert to old identity that has been seen previously
+                 }
+                for s, o in graph[:dc.title:]:
+                    ont['title'] = str(o)
+
+                ont['entity_count'] = len(list(graph[:ilxtr['include-subject']:]))
+
+                onts.append(ont)
+
             return json.dumps(onts), 200, ctaj
 
         # TODO
@@ -2110,6 +2132,7 @@ class Priv(EndBase):
             'request-ingest': self.request_ingest,
             'pull-new': self.pull_new,  # FIXME TODO may need pull-ont-new pull-ent-new pull-ext-new pull-uri-new
             'entity-new': self.entity_new,
+            'entity-promote': self.entity_promote,
             'modify-a-b': self.modify_a_b,
             'modify-add-rem': self.modify_add_rem,
 
@@ -2808,6 +2831,20 @@ class Priv(EndBase):
         return 'TODO', 501
 
     @basic
+    def entity_promote(self, group):
+        """
+        promote an existing entity that does not have an ilx id to
+        have an ilx id
+        """
+        # aka entity_map_existing
+        # TODO this handles the case where there is an existing term that does
+        # not have an interlex id
+        {'existing_id': '',
+         'label': '',
+         'exact': [],}
+        abort(501, 'TODO')
+
+    @basic
     def entity_new(self, group, db=None):
         """
         The workflow we want for this is a bit more complex than a simple form.
@@ -3165,13 +3202,69 @@ class Ontologies(Endpoints):
             spec_uri = spec_uri_resp[0].spec
             graph = from_title_subjects_ontspec(spec_uri, title, subjects)
             dout = ingest_ontspec(graph, session=self.session)
+            head_identity = dout['graph_combined_local_conventions_identity']
+            dbstuff.updateSpecHead(spec_uri, head_identity)
             self.session.commit()
             iri = spec_uri.rsplit('/', 1)[0] + '.html'
             # BEHOLD! Your new ontology.
             return redirect(iri, 303)
 
         elif request.method == 'PATCH':
-            abort(501, 'TODO')
+            j = request.json
+
+            if 'add' in j:
+                adds = j['add']
+            else:
+                adds = tuple()
+
+            if 'del' in j:
+                dels = j['del']
+            else:
+                dels = tuple()
+
+            if not adds and not dels:
+                abort(422, 'request missing both "add" and "del" properties')
+
+            # FIXME beware uri host mismatch
+            spec_uri = request.url  # FIXME TODO getGraphByIdentity
+            trows = list(self.queries.getGraphByName(spec_uri))
+            te = TripleExporter()
+            existing_graph = OntGraph().populate_from_triples((te.triple(*r) for r in trows))
+            for s, o in existing_graph[:dc.title:]:
+                existing_title = str(o)
+            existing_subjects = [str(s) for i, s in existing_graph[:ilxtr['include-subject']:]]
+            se = set(existing_subjects)
+            sa = set(adds)
+            sd = set(dels)
+            errors = []
+            add_already = se & sa
+            del_not_in = sd - se
+            if add_already:
+                msg = f'attempting to add entities already in ontology {sorted(add_already)}'
+                errors.append(msg)
+
+            if del_not_in:
+                msg = f'attempting to del entities not in ontology {sorted(del_not_in)}'
+                errors.append(msg)
+
+            if errors:
+                abort(422, '\n'.join(errors))
+
+            sn = (se - sd) | sa
+            if sn == se:
+                abort(422, 'operation would accomplish nothing')
+
+            subjects = sorted(sn)
+            title = j['title'] if 'title' in j else existing_title
+            graph = from_title_subjects_ontspec(spec_uri, title, subjects)
+            dout = ingest_ontspec(graph, session=self.session)
+            head_identity = dout['graph_combined_local_conventions_identity']
+            dbstuff = Stuff(self.session)
+            dbstuff.updateSpecHead(spec_uri, head_identity)
+            self.session.commit()
+            iri = spec_uri.rsplit('/', 1)[0] + '.html'
+            # BEHOLD! Your updated ontology.
+            return redirect(iri, 303)
         else:
             abort(405)
 
@@ -3273,11 +3366,13 @@ class Ontologies(Endpoints):
                 # FIXME bad match in the paths again where going to ont instead of ont spec
 
                 graph = OntGraph()
+                tr_kwargs = {}
                 if spec:
                     # TODO check that there is an ontology at all before trying to get triples
                     curies = {p: n for p, n in self.queries.getCuriesByName(spec_uri)}
                     graph_rows = self.queries.getGraphByName(spec_uri)
                     title = f'spec for {ont_uri}'
+                    tr_kwargs['simple'] = True
                 else:
                     # get the spec config triples
                     # and the raw triples (for now)
@@ -3295,7 +3390,7 @@ class Ontologies(Endpoints):
                 for r in graph_rows:
                     graph.add(te.triple(*r))
 
-                return tripleRender(request, graph, group, None, None, tuple(), title)
+                return tripleRender(request, graph, group, None, None, tuple(), title, **tr_kwargs)
 
             else:
                 pass

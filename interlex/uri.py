@@ -129,6 +129,7 @@ def uriStructure():
                                 #'ont-new',  # FIXME TODO still figuring out what to do about this one ...
 
                                 'entity-new',
+                                'entity-promote',
                                 'modify-a-b',
                                 'modify-add-rem',
 
@@ -247,6 +248,7 @@ def uriStructure():
                     'orcid-login': ['GET'],
 
                     # priv
+                    'logout': ['GET'],  # TODO align with whatever we ultimately decide for the method
                     '<user>': ['GET', 'PUT', 'DELETE'],  # for user roles
                     '<other_role_group>': ['GET', 'DELETE'],  # for user has role
 

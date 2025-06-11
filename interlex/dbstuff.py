@@ -448,7 +448,7 @@ WHERE ak.user_id = idFromGroupname(:group)
         # TODO big major todo
         sql = '''
 select * from ontologies as o
-join triples as t on o.spec = t.s
+join identities as ids on o.spec_head_identity = ids.identity
 where o.perspective = persFromGroupname(:group)
 '''
         return list(self.session_execute(sql, args))
@@ -500,6 +500,13 @@ INSERT INTO ontologies (perspective, ont_path, spec) VALUES
 (persFromGroupname(:group), :path, :spec) RETURNING spec
 '''
         return list(self.session_execute(sql, args))
+
+    def updateSpecHead(self, spec, head_identity):
+        args = dict(head_identity=head_identity, spec=spec)
+        sql = '''
+UPDATE ontologies SET spec_head_identity = :head_identity WHERE spec = :spec
+'''
+        self.session_execute(sql, args)
 
     def getConstraint(self, schema, table, constraint):
         # https://dba.stackexchange.com/a/214877

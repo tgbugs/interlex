@@ -17,3 +17,4 @@ GRANT UPDATE (replaced) ON interlex.comments TO "interlex-user";
 GRANT DELETE ON interlex.user_session_surrogates TO "interlex-user";
 
 GRANT UPDATE (expected_bound_name) ON interlex.reference_names TO "interlex-user";
+GRANT UPDATE (spec_head_identity) ON interlex.ontologies TO "interlex-user";
