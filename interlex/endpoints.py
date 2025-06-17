@@ -32,6 +32,7 @@ from interlex.utils import log as _log
 from interlex.config import ilx_pattern  # FIXME pull from database probably
 from interlex.ingest import ingest_ontspec
 from interlex.dbstuff import Stuff
+from interlex.vervar import process_vervar
 from interlex.render import TripleRender  # FIXME need to move the location of this
 from interlex.notifications import send_message, get_smtp_spec, msg_email_verify, msg_user_recover, msg_user_recover_alt
 
@@ -541,7 +542,10 @@ class Endpoints(EndBase):
 
     @basic
     def versions(self, group, frag_pref_id, epoch_verstr_id=None, db=None):
-        abort(501, 'TODO')
+        uri = f'http://uri.interlex.org/base/{frag_pref_id}'
+        snr, ttsr, tsr, trr = self.queries.getVerVarBySubject(uri)
+        vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(uri, snr, ttsr, tsr, trr)
+        return json.dumps(resp), 200, ctaj
 
     @basic
     def lexical(self, group, label, db=None):

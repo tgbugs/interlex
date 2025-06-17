@@ -1494,12 +1494,18 @@ WHERE tn.s IS NOT NULL AND tn.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#ty
         return list(self.session_execute(sql))
 
     def getObjectsForPredicates(self, iris, *predicates):
+        if not iris:
+            raise ValueError('iris should not be empty')
+
         args = dict(p=predicates, iris=tuple(iris))  # FIXME normalize here or there?
         sql = 'SELECT s, o_lit FROM triples WHERE p in :p AND s in :iris'
         for r in self.session_execute(sql, args):
             yield r.s, r.o_lit  # with multiple iris we have to keep track of the mapping
 
     def getLabels(self, user, iris):
+        if not iris:
+            raise ValueError('iris should not be empty')
+
         yield from self.getObjectsForPredicates(iris, rdfs.label)  # FIXME alts?
 
     def getDefinitions(self, user, *iris):

@@ -1,7 +1,9 @@
 """ versions and variants """
+from datetime import timezone
 from collections import defaultdict
 from pyontutils.core import OntGraph
 from pyontutils.namespaces import rdf, dc, owl
+from pyontutils.utils_fast import isoformat
 from pyontutils.identity_bnode import toposort
 from interlex.dump import TripleExporter
 from interlex.utils import log as _log
@@ -111,6 +113,9 @@ def process_vervar(s, snr, ttsr, tsr, trr):
     # the frozensets that are they keys for uniques make links as follows
     # [metagraphs[meta_identity] for start_identity in uniques[triple_idents_frozenset] for meta_identity in start_to_meta[start_identity]]
     # [vervar_graph for vervar_graph in vvgraphs[triple_idents_frozenset]]
+    resp = {'type': 'vervar-record',
+            'subject': s,
+            'vervar_count': len(uniques),}
     versions = []
     for fst, sids in uniques.items():
         # XXX TODO we don't actually stored the bnode + named ids right now
@@ -121,7 +126,7 @@ def process_vervar(s, snr, ttsr, tsr, trr):
         # named_condensed + bnode_condensed might be computable on the fly?
         vg = vvgraphs[fst]
         version = {
-            'n_triples': len(vg),
+            'triple_count': len(vg),
             'appears_in': [],
         }
         for sid in sids:
@@ -131,7 +136,8 @@ def process_vervar(s, snr, ttsr, tsr, trr):
                 continue
             for mid in sorted(start_to_meta[sid], key=lambda m: meta_first_seen[m]):
                 g = metagraphs[mid]
-                apin = {'first_seen': meta_first_seen[mid]}
+                fsm = isoformat(meta_first_seen[mid].astimezone(timezone.utc))
+                apin = {'first_seen': fsm}
                 types = list(g[:rdf.type:])
                 s, ty = types[0]
                 apin['uri'] = s
@@ -148,5 +154,6 @@ def process_vervar(s, snr, ttsr, tsr, trr):
 
     versions = sorted(versions, key=lambda v: ('appears_in' in v and v['appears_in'] and True,
                                                 'appears_in' in v and v['appears_in'] and v['appears_in'][0]['first_seen']))
+    resp['versions'] = versions
 
-    return vv, uniques, metagraphs, ugraph, vvgraphs, versions
+    return vv, uniques, metagraphs, ugraph, vvgraphs, resp

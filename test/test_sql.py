@@ -19,7 +19,7 @@ class TestQueries(unittest.TestCase):
         res = []
         for s in ss:
             asdf = snr, ttsr, tsr, trr = queries.getVerVarBySubject(s)
-            vv, uniques, metagraphs, ugraph, vvgraphs, versions = process_vervar(s, snr, ttsr, tsr, trr)
-            res.append((asdf, vv, uniques, metagraphs, ugraph, vvgraphs, versions))
+            vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(s, snr, ttsr, tsr, trr)
+            res.append((asdf, vv, uniques, metagraphs, ugraph, vvgraphs, resp))
 
         breakpoint()
