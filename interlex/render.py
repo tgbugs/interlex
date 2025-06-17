@@ -153,7 +153,7 @@ class TripleRender:
         """ Same as iri selection but for curies """
 
     def html(self, request, graph, group, frag_pref, id, object_to_existing,
-             title, mimetype, labels, ontid, ranking, ilx_stubs, for_alt):
+             title, mimetype, labels, ontid, ranking, ilx_stubs, for_alt, simple):
         cts = CustomTurtleSerializer(graph)
         gsortkey = cts._globalSortKey
         psortkey = lambda p: cts.predicate_rank[p]

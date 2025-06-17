@@ -1092,7 +1092,8 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
         # identity relations based on that identity
         raise NotImplementedError('TODO')
 
-    def getBySubject(self, subject, user):
+    def _broken_getBySubject(self, subject, user):
+        # this is completely broken since it doesn't recursively retrieve subgraphs where oblank > 1
         # FIXME ah uri normalization ... what to do about you
         args = dict(uri=subject)
         sql = '''
@@ -1112,6 +1113,188 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
 
         resp = list(self.session_execute(sql, args))
         return resp
+
+    def getBySubject(self, subject, user):
+        args = dict(uri=subject)
+        sql = '''
+with recursive subgraphs(/*triple_identity,*/ s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity, next_subgraph_identity) AS (
+    SELECT /*sg.triple_identity,*/ sg.s, sg.s_blank, sg.p, sg.o,
+           sg.o_lit, sg.datatype, sg.language,
+           sg.o_blank, sg.subgraph_identity,
+           sd.object_subgraph_identity as next_subgraph_identity
+    FROM triples as sg
+    LEFT OUTER JOIN subgraph_deduplication as sd on sg.subgraph_identity = sd.subject_subgraph_identity and sg.o_blank = sd.o_blank
+    WHERE sg.s = :uri
+    UNION ALL
+    SELECT /*tsg.triple_identity,*/ tsg.s, tsg.s_blank, tsg.p, tsg.o,
+           tsg.o_lit, tsg.datatype, tsg.language,
+           tsg.o_blank, tsg.subgraph_identity,
+           sd.object_subgraph_identity as next_subgraph_identity
+    FROM subgraphs as sgs
+    JOIN triples as tsg on
+        (tsg.s is null or
+         tsg.s = :uri
+        ) and (
+         tsg.subgraph_identity = sgs.next_subgraph_identity
+         or (sgs.subgraph_identity = tsg.subgraph_identity and tsg.s_blank is not null and tsg.s_blank >= sgs.o_blank))
+    LEFT OUTER JOIN subgraph_deduplication as sd on
+         tsg.subgraph_identity = sd.subject_subgraph_identity and tsg.o_blank = sd.o_blank
+)
+select distinct * from subgraphs
+'''
+        # FIXME for some reason this hangs forever if there is no result? no looks like a wierd restart bug
+        gen = self.session_execute(sql, args)
+        resp = list(gen)
+        return resp
+
+    def getVerVarBySubject(self, subject):
+        # get metadata for all sources that contain a subject
+        args = dict(uri=subject)
+        # FIXME we need a variant of the sources query that starts
+        # from the triplesets query results for easier mapping
+        old_source_sql = '''
+with recursive id_parent(s, p) as (
+select irs0.s, irs0.p from identity_relations as irs0 where irs0.o in
+(
+with starts as (
+select named_embedded_identity from
+triples as t
+join identity_named_triples_ingest as inti on t.triple_identity = inti.triple_identity
+where t.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' and t.s = :uri
+)
+select named_embedded_identity from starts
+)
+and irs0.p != 'hasEquivalent'
+union all
+select irs.s, irs.p from identity_relations as irs
+join id_parent as ip on irs.o = ip.s
+and irs.p != 'hasEquivalent'
+)
+select distinct ids.identity, ids.first_seen, t.*
+from id_parent as idp
+join identities as ids on ids.identity = idp.s
+join identity_relations as irsf0 on irsf0.p = 'hasMetadataGraph' and irsf0.s = idp.s
+join identity_relations as irsf1 on irsf1.p = 'hasNamedRecord' and irsf1.s = irsf0.o -- for this use case the named metadata record subset is sufficient
+join identity_named_triples_ingest as inti on inti.named_embedded_identity = irsf1.o
+join triples as t on t.triple_identity = inti.triple_identity
+where ids.type in ('serialization', 'graph_combined_local_conventions')
+'''
+        # TODO next step is to also collect graph_bnode_identity for all triples as well we the named triples
+        # we only need to go from the union of subgraph_identity to the the union of graph_bnode_identity
+        # and check the intersection of those with the named graph parents i think
+        triples_sql = '''
+with recursive subgraphs(triple_identity, s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity, next_subgraph_identity) AS (
+    SELECT sg.triple_identity, sg.s, sg.s_blank, sg.p, sg.o,
+           sg.o_lit, sg.datatype, sg.language,
+           sg.o_blank, sg.subgraph_identity,
+           sd.object_subgraph_identity as next_subgraph_identity
+    FROM triples as sg
+    LEFT OUTER JOIN subgraph_deduplication as sd on sg.subgraph_identity = sd.subject_subgraph_identity and sg.o_blank = sd.o_blank
+    WHERE sg.s = :uri
+    UNION ALL
+    SELECT tsg.triple_identity, tsg.s, tsg.s_blank, tsg.p, tsg.o,
+           tsg.o_lit, tsg.datatype, tsg.language,
+           tsg.o_blank, tsg.subgraph_identity,
+           sd.object_subgraph_identity as next_subgraph_identity
+    FROM subgraphs as sgs
+    JOIN triples as tsg on
+        (tsg.s is null or
+         tsg.s = :uri
+        ) and (
+         tsg.subgraph_identity = sgs.next_subgraph_identity
+         or (sgs.subgraph_identity = tsg.subgraph_identity and tsg.s_blank is not null and tsg.s_blank >= sgs.o_blank))
+    LEFT OUTER JOIN subgraph_deduplication as sd on
+         tsg.subgraph_identity = sd.subject_subgraph_identity and tsg.o_blank = sd.o_blank
+)
+select distinct * from subgraphs
+order by subgraph_identity, o_blank, p
+'''
+
+        tripsets_sql = '''
+select * from (
+select t.triple_identity as ident, irs1.s, irs1.p --, ids.type
+-- inti.named_embedded_identity, NULL as p
+from triples as t
+join identity_named_triples_ingest as inti on t.triple_identity = inti.triple_identity
+join identity_relations as irs on irs.o = inti.named_embedded_identity
+join identity_relations as irs1 on irs1.o = irs.s
+join identities as ids on ids.identity = irs1.s
+where
+t.s = :uri
+union
+select t.subgraph_identity as ident, irs1.s, irs1.p --, ids.type
+from triples as t
+join identity_relations as irs on irs.o = t.subgraph_identity
+join identity_relations as irs1 on irs1.o = irs.s
+join identities as ids on ids.identity = irs1.s
+where
+t.s = :uri
+)
+where p != 'hasMetadataGraph' -- amazingly this does NOT have the perf clif!
+order by p, ident, s
+'''
+
+        ts_src_common = f'''
+with recursive id_parent(s, p, o) as (
+select irs0.s, irs0.p, irs0.o from identity_relations as irs0 where irs0.o in
+(
+with starts as (
+-- FIXME fails for spec
+{tripsets_sql}
+)
+select s from starts
+)
+and irs0.p != 'hasEquivalent'
+union all
+select irs.s, irs.p, ip.o from identity_relations as irs
+join id_parent as ip on irs.o = ip.s
+and irs.p != 'hasEquivalent'
+)
+'''
+        ts_src_common2 = '''
+from id_parent as idp
+join identities as ids on ids.identity = idp.s
+join identity_relations as irsf0 on irsf0.p = 'hasMetadataGraph' and irsf0.s = idp.s
+'''
+        ts_src_common3 = '''
+where ids.type in ('serialization', 'graph_combined_local_conventions')
+'''
+
+        ts_to_source_sql = f'''{ts_src_common}
+select distinct idp.o as gstart, ids.identity, ids.type, ids.first_seen
+{ts_src_common2}
+{ts_src_common3}
+'''
+
+        source_named_sql = f'''{ts_src_common}
+select distinct ids.identity,
+t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity
+{ts_src_common2}
+join identity_relations as irsf1 on irsf1.p = 'hasNamedRecord' and irsf1.s = irsf0.o -- for this use case the named metadata record subset is sufficient
+join identity_named_triples_ingest as inti on inti.named_embedded_identity = irsf1.o
+join triples as t on t.triple_identity = inti.triple_identity
+{ts_src_common3}
+'''
+
+        def f(g):
+            from collections import namedtuple
+            sigh = []
+            for r in g:
+                args = tuple(c.tobytes().hex() if isinstance(c, memoryview) else c for c in r)
+                sigh.append(args)
+
+            if not sigh:
+                return []
+
+            nt = namedtuple('rowthing', r._fields)
+            out = [nt(*s) for s in sigh]
+            return out
+
+        source_named_resp = f(self.session_execute(source_named_sql, args))
+        ts_to_source_resp = f(self.session_execute(ts_to_source_sql, args))
+        tripsets_resp = f(self.session_execute(tripsets_sql, args))
+        triples_resp = f(self.session_execute(triples_sql, args))
+        return source_named_resp, ts_to_source_resp, tripsets_resp, triples_resp
 
     def getById(self, frag_pref, id, user):
         """ return all triples associated with an interlex id (curie suffix) """
