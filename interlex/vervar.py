@@ -1,10 +1,11 @@
 """ versions and variants """
 from datetime import timezone
 from collections import defaultdict
+import rdflib
 from pyontutils.core import OntGraph
 from pyontutils.namespaces import rdf, dc, owl
 from pyontutils.utils_fast import isoformat
-from pyontutils.identity_bnode import toposort
+from pyontutils.identity_bnode import toposort, IdentityBNode, idf, it as ibn_it
 from interlex.dump import TripleExporter
 from interlex.utils import log as _log
 
@@ -125,10 +126,16 @@ def process_vervar(s, snr, ttsr, tsr, trr):
         # however we could calculate and cache/record it somewhere ... the
         # named_condensed + bnode_condensed might be computable on the fly?
         vg = vvgraphs[fst]
+        _idg = IdentityBNode(vg, as_type=ibn_it['triple-seq'], id_method=idf['record-seq'])  # matches v3 behavior
+        _ids = IdentityBNode(rdflib.URIRef(s), id_method=idf['(s ((p o) ...))'], in_graph=vg)
+        # FIXME notation of (s ((p o) ...)) is confusing because it isn't clear what happens with bnodes
+        #breakpoint()
         version = {
+            'identity-graph': _idg.identity.hex(),
+            'identity-record': _ids.identity.hex(),  # FIXME need a way to get back to this via identity_relations, likely named_embedded + bnode?
             'triple_count': len(vg),
-            'appears_in': [],
         }
+        appears_in = []
         for sid in sids:
             if sid not in start_to_meta:  # FIXME something is off here because specs are their own meta record ...
                 msg = f'sigh {s} {sid.tobytes().hex() if isinstance(sid, memoryview) else sid}'
@@ -148,12 +155,16 @@ def process_vervar(s, snr, ttsr, tsr, trr):
                 if vinfo: apin['vinfo'] = vinfo[0][1]
                 viri = list(g[:owl.versionIRI:])
                 if viri: apin['viri'] = viri[0][1]
-                version['appears_in'].append(apin)
+                appears_in.append(apin)
+
+        if appears_in:
+            version['appears_in'] = appears_in
 
         versions.append(version)
 
-    versions = sorted(versions, key=lambda v: ('appears_in' in v and bool(v['appears_in']),
-                                                'appears_in' in v and v['appears_in'] and v['appears_in'][0]['first_seen']))
-    resp['versions'] = versions
+    if versions:
+        versions = sorted(versions, key=lambda v: ('appears_in' in v and bool(v['appears_in']),
+                                                    'appears_in' in v and v['appears_in'] and v['appears_in'][0]['first_seen']))
+        resp['versions'] = versions
 
     return vv, uniques, metagraphs, ugraph, vvgraphs, resp
