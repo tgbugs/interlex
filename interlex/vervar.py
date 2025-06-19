@@ -152,7 +152,7 @@ def process_vervar(s, snr, ttsr, tsr, trr):
 
         versions.append(version)
 
-    versions = sorted(versions, key=lambda v: ('appears_in' in v and v['appears_in'] and True,
+    versions = sorted(versions, key=lambda v: ('appears_in' in v and bool(v['appears_in']),
                                                 'appears_in' in v and v['appears_in'] and v['appears_in'][0]['first_seen']))
     resp['versions'] = versions
 
