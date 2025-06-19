@@ -146,8 +146,8 @@ def process_vervar(s, snr, ttsr, tsr, trr):
                 fsm = isoformat(meta_first_seen[mid].astimezone(timezone.utc))
                 apin = {'first_seen': fsm}
                 types = list(g[:rdf.type:])
-                s, ty = types[0]
-                apin['uri'] = s
+                _s, ty = types[0]
+                apin['uri'] = _s
                 apin['type'] = ty
                 title = list(g[:dc.title:])
                 if title: apin['title'] = title[0][1]
