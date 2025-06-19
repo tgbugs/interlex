@@ -132,7 +132,10 @@ class Main(clif.Dispatcher):
         from interlex.sync import InterLexLoad
         from interlex.core import getScopedSession, dbUri
 
-        kwargs = {k:auth.get(f'db-{k}') for k in ('user', 'host', 'port', 'database')}
+        kwargs = {k:auth.get(f'test-{k}'
+                             if self.options.test and k != 'user' else
+                             f'db-{k}')
+                  for k in ('user', 'host', 'port', 'database')}
         kwargs['dbuser'] = kwargs.pop('user')
         dburi = dbUri(**kwargs)
         log.info(dburi)

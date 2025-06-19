@@ -1,12 +1,13 @@
 import re
+import math
 from collections import defaultdict
 import rdflib
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.sql import text as sql_text
 from pyontutils import combinators as cmb
-from pyontutils.core import OntId, OntGraph
-from pyontutils.utils_fast import chunk_list
-from pyontutils.namespaces import ILX, ilxtr, oboInOwl, owl, rdf, rdfs
+from pyontutils.core import OntId, OntGraph, OntMeta
+from pyontutils.utils_fast import chunk_list, isoformat, utcnowtz
+from pyontutils.namespaces import ILX, ilxtr, oboInOwl, owl, rdf, rdfs, dc
 from pyontutils.namespaces import definition, replacedBy, makeURIs
 from interlex import alt
 from interlex import config
@@ -37,7 +38,8 @@ class InterLexLoad:
         self.queries = Queries(self.loader.session)
         self.do_cdes = do_cdes
         self.debug = debug
-        self.admin_engine = create_engine(dbUri(dbuser='interlex-admin'), echo=True)
+        eurl = db.session.connection().engine.url
+        self.admin_engine = create_engine(dbUri(dbuser='interlex-admin', host=eurl.host, port=eurl.port, database=eurl.database), echo=True)
         kwargs = {k: config.auth.get(f'alt-db-{k}')
                   for k in ('user', 'host', 'port', 'database')}
         if kwargs['database'] is None:
@@ -51,10 +53,68 @@ class InterLexLoad:
         self.graph = None
 
     def setup(self):
+        self._sync_start = utcnowtz()
         self.existing_ids()
         self.user_iris()
         self.make_triples()
         self.ids()
+        self.make_metadata()
+        #self.engine.dispose()  # doesn't make any meaningful difference in memory usage
+
+    def make_metadata(self):
+        # FIXME TODO need to decide on the metadata class for this and the uri we are going to use
+        # also need to make sure that we have a way to prevent exceedingly large ontology files from
+        # being reserialized if they weren't in the first place, but may way to use our nt dump code
+        _source = self.engine.url
+        _max_frags = self.current
+        _total_triples = len(self._triples)
+        _sync_start = isoformat(self._sync_start)
+        _sync_end = isoformat(self._sync_end)  # processing doesn't count, we want the time window for sql queries
+        _some_datetime = _sync_end
+        _nowish_epoch = math.floor(self._sync_end.timestamp())
+        _cdes = 'with cdes' if self.do_cdes else 'without cdes'
+
+        s = rdflib.URIRef('http://uri.interlex.org/base/ontologies/sync')  # FIXME need better alternative
+        sv = rdflib.URIRef(s + f'/version/{_nowish_epoch}/sync')
+
+        asdf = (
+            (rdf.type, owl.Ontology),
+            #(rdf.type, ilxtr.OntologySync),
+            #(rdfs.comment, rdflib.Literal(f'source {_source} max ilx {_max_ilx} total first pass triples {_total_triples}')),
+            (ilxtr['sync-start'], rdflib.Literal(_sync_start)),
+            (ilxtr['sync-end'], rdflib.Literal(_sync_end)),
+            (ilxtr['sync-source'], rdflib.Literal(_source)),
+            #(ilxtr['sync-max-fragpref'], rdflib.Literal(_max_ilx)),
+            (ilxtr['sync-triple-count'], rdflib.Literal(_total_triples)),
+            #(ilxtr['sync-git-commit'], rdflib.Literal()),
+            #(ilxtr.datetime, rdflib.Literal(f'{_some_datetime}')),
+            (ilxtr.epoch, rdflib.Literal(_nowish_epoch)),
+            (dc.title, rdflib.Literal(f'interlex sync for {_sync_end} {_cdes}')),
+            (owl.versionInfo, rdflib.Literal(_sync_end)),
+            (owl.versionIRI, sv),
+        )
+        triples = []
+        for p, o in asdf:
+            triples.append((s, p, o))
+        for frag, val in _max_frags.items():
+            p = ilxtr[f'sync-max-{frag}']
+            o = rdflib.Literal(val)
+            triples.append((s, p, o))
+
+        # FIXME also need to make sure that these are entered as metadata correctly in the call to load
+        self._meta_triples = triples
+        _metagraph = OntGraph()
+        _metagraph.populate_from_triples(triples)
+        # at the moment ingest ignores meta curies so there won't be a
+        # mismatch between meta curies and triples curies
+        _metagraph.namespace_manager.bind('ilxtr', ilxtr)
+        class OntMetaL(OntMeta):
+            def __init__(self):
+                self._identifier = s
+                self._graph = _metagraph
+
+        sigh = OntMetaL()
+        self._mntf = sigh
 
     @exc.bigError
     def local_load(self):
@@ -90,6 +150,7 @@ class InterLexLoad:
                 'SET suffix_max = EXCLUDED.suffix_max '
                 'WHERE fragment_prefix_sequences.prefix = EXCLUDED.prefix'),
                          params)
+            conn.commit()
 
         #lse([('INSERT INTO fragment_prefix_sequences (prefix, suffix_max) '
             #f'VALUES {vt} ON CONFLICT (prefix) DO UPDATE '
@@ -128,9 +189,23 @@ class InterLexLoad:
         log.debug('Yay!')
 
     def load(self):
-        do_process_into_session(self._db.session, process_triple_seq, self.triples,
-                                commit=False, batchsize=self.batchsize, debug=True)
+        # FIXME we need to insure that the interlex id seq is present before triples go in because
+        # we want to make sure that only ids that have been minted can be inserted into the triples
+        # table ... might need a trigger for that one though
+        serialization_identity = None
+        metadata_to_fetch = None
+        metadata_not_to_fetch = self._mntf  # FIXME TODO populate from self._meta_triples
+        local_conventions = None
+        triples = self._meta_triples + self._triples
+        do_process_into_session(self._db.session, process_triple_seq,
+                                triples,
+                                serialization_identity,
+                                metadata_to_fetch,
+                                metadata_not_to_fetch,
+                                local_conventions,
+                                commit=True, batchsize=self.batchsize, debug=True)
         self.local_load()
+        self._db.session.commit()
         #self.local_load_part2()
         #self.remote_load()
 
@@ -405,6 +480,7 @@ class InterLexLoad:
             data = {name:conn.execute(sql_text(query)).fetchall()  # FIXME yeah this is gonna be big right?
                     for name, query in queries.items()}
 
+        self._sync_end = utcnowtz()
         #breakpoint()  # XXX break here
         ilx_index = {}
         id_type = {}
@@ -639,7 +715,8 @@ class InterLexLoad:
 
         #engine.execute()
         #breakpoint()
-        self.triples = triples
+
+        self._triples = triples
         self.wat = bads, WTF, WTF2
         if self.debug and (bads or WTF or WTF2):
             log.debug(bads[:10])

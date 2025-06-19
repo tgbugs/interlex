@@ -5,6 +5,7 @@ from .setup_testing_db import getSession
 
 
 class TestQueries(unittest.TestCase):
+
     def test_vervar(self):
         session = getSession()
         queries = Queries(session)
