@@ -920,6 +920,7 @@ CREATE TABLE triples(
        -- CONSTRAINT un__triples__s_blank_p_o_blank UNIQUE (s_blank, p, o_blank, subgraph_identity)
 );
 CREATE INDEX triples__s__index ON triples (s);
+CREATE INDEX triples__p__index ON triples (p);  -- needed accelerate transitive queries (watch out for the memory usage if creating after the fact)
 
 CREATE INDEX triples__subgraph_identity__index
        ON triples (subgraph_identity);
@@ -1081,81 +1082,85 @@ CREATE INDEX view_lift_sco_res_onp_svf__p__index ON view_lift_sco_res_onp_svf (p
 
 -- transitive query helper functions
 
-CREATE OR REPLACE FUNCTION connected_predicates_ilx(s_starts uri[], predicates uri[], obj_to_sub boolean = FALSE)
+CREATE OR REPLACE FUNCTION connected_predicates_ilx(s_starts uri[], predicates uri[], obj_to_sub boolean = FALSE, max_depth integer = -1)
 RETURNS TABLE (s uri, p uri, o uri, ident bytea) AS $$
 BEGIN
 
 IF obj_to_sub THEN
 
   RETURN QUERY
-  WITH RECURSIVE tree(s, p, o, ident) AS (
-    SELECT t.s, t.p, t.o, t.triple_identity as ident FROM triples AS t
+  WITH RECURSIVE tree(s, p, o, ident, dpth) AS (
+    SELECT t.s, t.p, t.o, t.triple_identity as ident, 0 as dpth FROM triples AS t
     JOIN UNNEST(predicates) AS ps ON t.p = ps
     JOIN UNNEST(s_starts) AS ss ON t.o = ss -- object
   UNION ALL
-    SELECT t.s, t.p, t.o, t.triple_identity as ident FROM triples AS t
+    SELECT t.s, t.p, t.o, t.triple_identity as ident, tr.dpth + 1 as dpth FROM triples AS t
     JOIN tree AS tr ON t.o = tr.s -- object -> subject
     JOIN UNNEST(predicates) AS ps ON t.p = ps
+    WHERE max_depth < 0 OR tr.dpth < max_depth
   )
-  SELECT * FROM tree;
+  SELECT DISTINCT tro.s, tro.p, tro.o, tro.ident FROM tree as tro;
 
 ELSE
 
   RETURN QUERY
-  WITH RECURSIVE tree(s, p, o, ident) AS (
-    SELECT t.s, t.p, t.o, t.triple_identity as ident FROM triples AS t
+  WITH RECURSIVE tree(s, p, o, ident, dpth) AS (
+    SELECT t.s, t.p, t.o, t.triple_identity as ident, 0 as dpth FROM triples AS t
     JOIN UNNEST(predicates) AS ps ON t.p = ps
     JOIN UNNEST(s_starts) AS ss ON t.s = ss -- subject
   UNION ALL
-    SELECT t.s, t.p, t.o, t.triple_identity as ident FROM triples AS t
+    SELECT t.s, t.p, t.o, t.triple_identity as ident, tr.dpth + 1 as dpth FROM triples AS t
     JOIN tree AS tr ON t.s = tr.o -- subject -> object
     JOIN UNNEST(predicates) AS ps ON t.p = ps
+    WHERE max_depth < 0 OR tr.dpth < max_depth
   )
-  SELECT * FROM tree;
+  SELECT DISTINCT tro.s, tro.p, tro.o, tro.ident FROM tree as tro;
 
 END IF;
 
 END;
 $$ language plpgsql;
 
-CREATE OR REPLACE FUNCTION connected_predicates_ext(s_starts uri[], predicates uri[], obj_to_sub boolean = FALSE)
+CREATE OR REPLACE FUNCTION connected_predicates_ext(s_starts uri[], predicates uri[], obj_to_sub boolean = FALSE, max_depth integer = -1)
 RETURNS TABLE (s uri, p uri, o uri, ident bytea) AS $$
 BEGIN
 
 IF obj_to_sub THEN
 
   RETURN QUERY
-  WITH RECURSIVE tree(s, p, o, ident) AS (
-    SELECT t.s, t.p, t.o, t.subgraph_identity as ident FROM view_lift_sco_res_onp_svf AS t
+  WITH RECURSIVE tree(s, p, o, ident, dpth) AS (
+    SELECT t.s, t.p, t.o, t.subgraph_identity as ident, 0 as dpth FROM view_lift_sco_res_onp_svf AS t
     JOIN UNNEST(predicates) AS ps ON t.p = ps
     JOIN UNNEST(s_starts) AS ss ON t.o = ss -- object
   UNION ALL
-    SELECT t.s, t.p, t.o, t.subgraph_identity as ident FROM view_lift_sco_res_onp_svf AS t
+    SELECT t.s, t.p, t.o, t.subgraph_identity as ident, tr.dpth + 1 as dpth FROM view_lift_sco_res_onp_svf AS t
     JOIN tree AS tr ON t.o = tr.s -- object -> subject
     JOIN UNNEST(predicates) AS ps ON t.p = ps
+    WHERE max_depth < 0 OR tr.dpth < max_depth
   )
-  SELECT * FROM tree;
+  SELECT DISTINCT tro.s, tro.p, tro.o, tro.ident FROM tree as tro;
 
 ELSE
 
   RETURN QUERY
-  WITH RECURSIVE tree(s, p, o, ident) AS (
-    SELECT t.s, t.p, t.o, t.subgraph_identity as ident FROM view_lift_sco_res_onp_svf AS t
+  WITH RECURSIVE tree(s, p, o, ident, dpth) AS (
+    SELECT t.s, t.p, t.o, t.subgraph_identity as ident, 0 as dpth FROM view_lift_sco_res_onp_svf AS t
     JOIN UNNEST(predicates) AS ps ON t.p = ps
     JOIN UNNEST(s_starts) AS ss ON t.s = ss -- subject
   UNION ALL
-    SELECT t.s, t.p, t.o, t.subgraph_identity as ident FROM view_lift_sco_res_onp_svf AS t
+    SELECT t.s, t.p, t.o, t.subgraph_identity as ident, tr.dpth + 1 as dpth FROM view_lift_sco_res_onp_svf AS t
     JOIN tree AS tr ON t.s = tr.o -- subject -> object
     JOIN UNNEST(predicates) AS ps ON t.p = ps
+    WHERE max_depth < 0 OR tr.dpth < max_depth
   )
-  SELECT * FROM tree;
+  SELECT DISTINCT tro.s, tro.p, tro.o, tro.ident FROM tree as tro;
 
 END IF;
 
 END;
 $$ language plpgsql;
 
-CREATE OR REPLACE FUNCTION connected_predicates_all(s_starts uri[], predicates uri[], obj_to_sub boolean = FALSE)
+CREATE OR REPLACE FUNCTION connected_predicates_all(s_starts uri[], predicates uri[], obj_to_sub boolean = FALSE, max_depth integer = -1)
 RETURNS TABLE (s uri, p uri, o uri, ident bytea, ext boolean) AS $$
 /*
 don't bother with trying to sort out internal and external starts and predicates and
@@ -1173,14 +1178,15 @@ IF obj_to_sub THEN
     UNION
       SELECT t.s, t.p, t.o, t.subgraph_identity as ident, true as ext FROM view_lift_sco_res_onp_svf AS t
       JOIN UNNEST(predicates) AS ps ON t.p = ps
-  ), tree(s, p, o, ident) AS (
-      SELECT t.s, t.p, t.o, t.ident, t.ext FROM trip_and_view AS t
+  ), tree(s, p, o, ident, ext, dpth) AS (
+      SELECT t.s, t.p, t.o, t.ident, t.ext, 0 as dpth FROM trip_and_view AS t
       JOIN UNNEST(s_starts) AS ss ON t.o = ss -- object
     UNION ALL
-      SELECT t.s, t.p, t.o, t.ident, t.ext FROM trip_and_view AS t
+      SELECT t.s, t.p, t.o, t.ident, t.ext, tr.dpth + 1 as dpth FROM trip_and_view AS t
       JOIN tree AS tr ON t.o = tr.s -- object -> subject
+      WHERE max_depth < 0 OR tr.dpth < max_depth
   )
-  SELECT * FROM tree;
+  SELECT DISTINCT tro.s, tro.p, tro.o, tro.ident, tro.ext FROM tree as tro;
 
 ELSE
 
@@ -1191,14 +1197,15 @@ ELSE
     UNION
       SELECT t.s, t.p, t.o, t.subgraph_identity as ident, true as ext FROM view_lift_sco_res_onp_svf AS t
       JOIN UNNEST(predicates) AS ps ON t.p = ps
-  ), tree(s, p, o, ident, ext) AS (
-      SELECT t.s, t.p, t.o, t.ident, t.ext FROM trip_and_view AS t
+  ), tree(s, p, o, ident, ext, dpth) AS (
+      SELECT t.s, t.p, t.o, t.ident, t.ext, 0 as dpth FROM trip_and_view AS t
       JOIN UNNEST(s_starts) AS ss ON t.s = ss -- subject
     UNION ALL
-      SELECT t.s, t.p, t.o, t.ident, t.ext FROM trip_and_view AS t
+      SELECT t.s, t.p, t.o, t.ident, t.ext, tr.dpth + 1 as dpth FROM trip_and_view AS t
       JOIN tree AS tr ON t.s = tr.o -- subject -> object
+      WHERE max_depth < 0 OR tr.dpth < max_depth
   )
-  SELECT * FROM tree;
+  SELECT DISTINCT tro.s, tro.p, tro.o, tro.ident, tro.ext FROM tree as tro;
 
 END IF;
 
