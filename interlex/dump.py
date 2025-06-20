@@ -3,6 +3,9 @@ import ontquery as oq
 from itertools import chain
 from collections import defaultdict
 from sqlalchemy.sql import text as sql_text
+from sqlalchemy.sql.expression import bindparam
+from sqlalchemy.types import UserDefinedType
+from sqlalchemy.dialects.postgresql import ARRAY
 from pyontutils import sneechenator as snch
 from pyontutils.core import OntId
 from pyontutils.utils import TermColors as tc
@@ -14,6 +17,11 @@ from pyontutils.combinators import annotation
 from interlex import exceptions as exc
 from interlex.core import log, makeParamsValues, synonym_types
 from interlex.namespaces import ilxr, ilxrtype
+
+
+class uri(UserDefinedType):
+    def get_col_spec(self):
+        return 'uri'
 
 
 class MysqlExport:
@@ -703,8 +711,12 @@ class Queries:
         self.session = session
         self.__reference_host = None
 
-    def session_execute(self, sql, params=None):
-        return self.session.execute(sql_text(sql), params=params)
+    def session_execute(self, sql, params=None, bindparams=None):
+        t = sql_text(sql)
+        if bindparams:
+            t = t.bindparams(*bindparams)
+
+        return self.session.execute(t, params=params)
 
     @property
     def reference_host(self):
@@ -1552,3 +1564,12 @@ WHERE tn.s IS NOT NULL AND tn.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#ty
                                                 'WITH ORDINALITY id',
                                                 dict(triples_ids=list(triples_ids))):
             yield identity
+
+    def getTransitive(self, subjects, predicates, obj_to_sub=False, depth=None):
+        # TODO need a way to indicate how much metadata to include
+        args = dict(subjects=list(subjects), predicates=list(predicates), obj_to_sub=obj_to_sub, depth=-1 if depth is None else depth)
+        sql = '''
+select * from connected_predicates_ilx(:subjects, :predicates, :obj_to_sub, :depth)
+'''
+        return list(self.session_execute(sql, args, [bindparam('subjects', type_=ARRAY(uri)),
+                                                     bindparam('predicates', type_=ARRAY(uri)),]))

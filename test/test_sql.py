@@ -13,6 +13,7 @@ class TestQueries(unittest.TestCase):
             'http://uri.interlex.org/base/ilx_0101431',
             'http://purl.obolibrary.org/obo/UBERON_0000955',
             'http://purl.obolibrary.org/obo/UBERON_0004829',
+            'http://purl.obolibrary.org/obo/RO_0002131',  # XXX broken reconstruction of lists for property chain axiom
             'http://purl.obolibrary.org/obo/HP_0003001',
             'http://purl.obolibrary.org/obo/HP_0002001',
             'http://uri.interlex.org/tgbugs/ontologies/uris/test-6bfbce3594c2/spec',
@@ -23,4 +24,14 @@ class TestQueries(unittest.TestCase):
             vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(s, snr, ttsr, tsr, trr)
             res.append((asdf, vv, uniques, metagraphs, ugraph, vvgraphs, resp))
 
+        breakpoint()
+
+    def test_transitive(self):
+        session = getSession()
+        queries = Queries(session)
+        #'http://purl.obolibrary.org/obo/UBERON_0000955',
+        hrm = queries.getTransitive(
+            ['http://uri.interlex.org/base/ilx_0101431'],
+            ['http://uri.interlex.org/base/ilx_0112785'],
+            True,)
         breakpoint()
