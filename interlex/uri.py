@@ -68,6 +68,7 @@ def uriStructure():
         '*spec': 'spec',
         '*spec.<extension>': 'spec.<extension>',
         '*dns_ont': 'dns',
+        '<dns_ont_host>': '<dns_host>',
         '*<path:dns_ontpath>': '<path:ont_path>',
         '*dns_version': 'version',
         '*uris_ont': 'uris',
@@ -82,6 +83,9 @@ def uriStructure():
         '*contributions_ont': 'contributions',
         '*external': 'external',  # FIXME TEMP
         '*versions': 'versions',
+        'query_transitive': 'transitive',
+        '<qt_start>': '<start>',
+        '<qt_predicate>': '<predicate>',
         #'*<other_group_diff>': '<other_group>',  # FIXME consider whether this is a good idea ... XXX i think it is, because we normalize them to the same value in request processing, and it simplifies auth processing, and Own/Diff/Other do not overlap so there is never a 3 way rule? but i could see maybe trying to view the diff between two other groups via you own context so yeah we could have 3 sort of "explain the argument between groups a and b using the language of perspective c"
     }
 
@@ -100,7 +104,7 @@ def uriStructure():
     # reminder: None is used to mark branches that are also terminals
     parent_child = {
         '<group>':             [None] + basic + ['*ilx_get', 'lexical'] + branches + compare + [
-            'priv', 'pulls', 'contributions', 'prov', 'external',],
+            'priv', 'pulls', 'contributions', 'prov', 'external', 'dns', 'query'],
         'u':                   ['ops', '*priv'],
         'ops':                 ['login',
                                 'user-new',
@@ -182,8 +186,16 @@ def uriStructure():
         # TODO distinguish between ontology _files_ and 'ontologies' which are the import closure?
         # ya, identified vs unidentified imports, owl only supports unidentified imports
 
-        '*dns_ont':            ['<dns_host>'],
-        '<dns_host>':          ['*<path:dns_ontpath>'],
+        'query':               ['query_transitive'],
+        'query_transitive':    ['<qt_start>'],
+        '<qt_start>':          ['<qt_predicate>'],
+
+        'dns':                 ['<dns_host>'],
+        '<dns_host>':          ['*<path:dns_path>'],
+        '*<path:dns_path>':    [None, '*dns_version'],
+
+        '*dns_ont':            ['<dns_ont_host>'],
+        '<dns_ont_host>':      ['*<path:dns_ontpath>'],
         '*<path:dns_ontpath>': [None, '*dns_version'],
         '*dns_version':        ['<epoch_verstr_ont>'],  # FIXME possibly only epoch/dt for these?
 

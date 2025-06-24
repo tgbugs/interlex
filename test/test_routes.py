@@ -359,6 +359,54 @@ class TestRoutes(RouteTester, unittest.TestCase):
             endpoints._reset_mock = False
 
 
+    def test_query_transitive(self):
+        sps = (
+            #(False, 'UBERON:0000955', 'BFO:0000050'),
+            (False, 'ILX:0100612', 'rdfs:subClassOf'),
+            (False, 'ILX:0101431', 'ILX:0112785'),
+            (True, 'ILXdne:0101431', 'ILX:0112785'),
+            (True, 'ILX:0101431', 'ILXdne:0112785'),
+        )
+        test_acc = (
+            'text/html',
+            'text/turtle',
+            'application/json',
+            'application/ld+json',
+        )
+        try:
+            endpoints._reset_mock = True
+            self.app.debug = True
+            client = self.app.test_client()
+            bads = []
+            for xfail, start, predicate in sps:  # oof this takes a long time to run even with the mostly optimized queries
+                for depth in (0, 1, 2, -1):
+                    for obj_to_sub in (True, False):
+                        params = '?'
+                        if obj_to_sub:
+                            params += 'obj-to-sub=true&'
+                        if depth >= 0:
+                            params += f'depth={depth}'
+
+                        url = f'{self.prefix}/base/query/transitive/{start}/{predicate}{params}'
+                        for acc in test_acc:
+                            headers = {'Accept': acc}
+                            resp = client.get(url, headers=headers)
+                            if xfail:
+                                if resp.status_code == 200:
+                                    bads.append(resp)
+                            else:
+                                if resp.status_code != 200:
+                                    bads.append(resp)
+
+            if bads:
+                breakpoint()
+
+            assert not bads, bads
+
+        finally:
+            endpoints._reset_mock = False
+
+
 class TestApiDocs(RouteTester, unittest.TestCase):
     def test_docs(self):
         urls = [f'{self.prefix}/docs']  # NOTE /docs/ should fail?

@@ -340,6 +340,8 @@ class Endpoints(EndBase):
             #ilx_get: self.ilx_get,
             '*ilx_get': self.ilx,
 
+            'dns': self.dns,
+
             'lexical': self.lexical,
             'readable': self.readable,
             'uris': self.uris,
@@ -372,6 +374,8 @@ class Endpoints(EndBase):
             '*contributions_ont': self.ontologies_contributions,
 
             'prov': self.prov,
+
+            'query_transitive': self.query_transitive,
 
             'mapped': self.mapped,
         }
@@ -546,6 +550,10 @@ class Endpoints(EndBase):
         snr, ttsr, tsr, trr = self.queries.getVerVarBySubject(uri)
         vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(uri, snr, ttsr, tsr, trr)
         return json.dumps(resp), 200, ctaj
+
+    @basic
+    def dns(self, dns_host, dns_path):
+        abort(501, 'TODO')
 
     @basic
     def lexical(self, group, label, db=None):
@@ -753,6 +761,8 @@ class Endpoints(EndBase):
                             # leads to breakdown of separation of concerns due to statefulness
                             # slow but probably worth it for enhancing readability
                             iris = set(e for t in graph for e in t if isinstance(e, URIRef))
+                            if not iris:
+                                abort(404)
                             labels = {URIRef(s):label for s, label in self.queries.getLabels(group, iris)}
                         else:
                             labels = None
@@ -798,6 +808,45 @@ class Endpoints(EndBase):
         # if org: uploading_user
         # if user: contribs per group
         return 'TODO\n', 501
+
+    @basic
+    def query_transitive(self, group, start, predicate):
+        nm = OntGraph(bind_namespaces='none').namespace_manager
+        nm.populate_from(self.queries.getGroupCuries(group))  # FIXME
+        errors = []
+        try:
+            s = nm.expand_curie(start)
+        except ValueError:
+            errors.append(f'unknown curie prefix for start {start}')
+
+        try:
+            p = nm.expand_curie(predicate)
+        except ValueError:
+            errors.append(f'unknown curie prefix for predicate {predicate}')
+
+        if errors:
+            msg = '\n'.join(errors)
+            # TODO likely need a json variant for this
+            abort(422, msg)
+
+        depth = (
+            int(request.args['depth'])
+            if 'depth' in request.args and (request.args['depth'].isdigit() or request.args['depth'] == '-1')
+            else -1)
+        obj_to_sub = 'obj-to-sub' in request.args and request.args['obj-to-sub'].lower() == 'true'
+        tt = self.queries.getTransitive([s], [p], obj_to_sub=obj_to_sub, depth=depth)
+        te = TripleExporter()
+        graph = OntGraph()
+        for r in tt:
+            t = te.triple(r.s, None, r.p, r.o, r.o_lit, r.datatype, r.language)
+            graph.add(t)
+
+        object_to_existing = None
+        so_or_os = 'subject to object'
+        title = f'transitive closure from {start} under {predicate} going {so_or_os} to depth {depth}'
+        resp = tripleRender(request, graph, group, None, None,
+                            tuple(), title, redirect=False, simple=True)
+        return resp
 
     @basic
     def ontologies_(self, group, db=None):
@@ -3394,7 +3443,7 @@ class Ontologies(Endpoints):
                 for r in graph_rows:
                     graph.add(te.triple(*r))
 
-                return tripleRender(request, graph, group, None, None, tuple(), title, **tr_kwargs)
+                return tripleRender(request, graph, group, None, None, tuple(), title, redirect=False, **tr_kwargs)
 
             else:
                 pass

@@ -1569,7 +1569,16 @@ WHERE tn.s IS NOT NULL AND tn.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#ty
         # TODO need a way to indicate how much metadata to include
         args = dict(subjects=list(subjects), predicates=list(predicates), obj_to_sub=obj_to_sub, depth=-1 if depth is None else depth)
         sql = '''
-select * from connected_predicates_ilx(:subjects, :predicates, :obj_to_sub, :depth)
+with cp as (select * from connected_predicates_ilx(:subjects, :predicates, :obj_to_sub, :depth))
+, need_lbls as (select distinct s as e from cp union select distinct p as e from cp union select distinct o as e from cp)
+, out as (
+select cp.s, cp.p, cp.o, null as o_lit, null as datatype, null as language, cp.ident from cp union
+select distinct t.s, t.p, t.o, t.o_lit, t.datatype, t.language, t.triple_identity as ident
+from triples as t join need_lbls as nl on t.s = nl.e and (t.p = 'http://www.w3.org/2000/01/rdf-schema#label'
+        or t.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type')
+)
+select * from out
+order by p, o, o_lit
 '''
         return list(self.session_execute(sql, args, [bindparam('subjects', type_=ARRAY(uri)),
                                                      bindparam('predicates', type_=ARRAY(uri)),]))

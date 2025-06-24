@@ -34,4 +34,12 @@ class TestQueries(unittest.TestCase):
             ['http://uri.interlex.org/base/ilx_0101431'],
             ['http://uri.interlex.org/base/ilx_0112785'],
             True,)
+        from pyontutils.core import OntGraph
+        from interlex.dump import TripleExporter
+        te = TripleExporter()
+
+        g = OntGraph()
+        for r in hrm:
+            t = te.triple(r.s, None, r.p, r.o, r.o_lit, r.datatype, r.language)
+            g.add(t)
         breakpoint()
