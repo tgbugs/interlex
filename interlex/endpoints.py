@@ -3287,10 +3287,10 @@ class Ontologies(Endpoints):
                 existing_title = str(o)
             existing_subjects = [str(s) for i, s in existing_graph[:ilxtr['include-subject']:]]
             se = set(existing_subjects)
-            sa = set(adds)
+            _sa = set(adds)
             sd = set(dels)
             errors = []
-            add_already = se & sa
+            add_already = se & _sa
             del_not_in = sd - se
             if add_already:
                 msg = f'attempting to add entities already in ontology {sorted(add_already)}'
@@ -3303,7 +3303,7 @@ class Ontologies(Endpoints):
             if errors:
                 abort(422, '\n'.join(errors))
 
-            sn = (se - sd) | sa
+            sn = (se - sd) | _sa
             if sn == se:
                 abort(422, 'operation would accomplish nothing')
 
