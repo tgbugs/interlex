@@ -3846,7 +3846,7 @@ class Diff(Ontologies):
 
     @basic2
     def ontologies_ilx(self, group, other_group_diff, frag_pref_id, extension=None, db=None):
-        return self._ilx(group=group, other_group_diff=other_group_diff, frag_pref_id=frag_pref_id, extension=extension)
+        return self.ilx(group=group, other_group_diff=other_group_diff, frag_pref_id=frag_pref_id, extension=extension)
 
     @basic2
     def ontologies_version(self, group, other_group_diff, filename,
