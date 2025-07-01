@@ -234,13 +234,19 @@ class TestRoutes(RouteTester, unittest.TestCase):
         resp = client.get(url, headers=headers_get)
         jld = resp.json
         ont = [o for o in jld['@graph'] if o['@type'] == 'owl:Ontology'][0]
-        frag_pref_id = ont['isAbout']['@id'].rsplit('/')[-1]
+        pred = 'isAbout' if 'isAbout' in ont else 'http://purl.obolibrary.org/obo/IAO_0000136'
+        frag_pref_id = ont[pred]['@id'].rsplit('/')[-1]
+        # FIXME isAbout also may fail to expand if {group} does not
+        # use that curie since we aren't yet merging with base curies
+        # XXX this happens if the test user doesn't have curies loaded during config
+
         # FIXME isAbout iri mismatch somehow base vs group, not unexpected
         # but is a rendering bug because we don't currently require the group
         # because we are still using queries.getById instead of
         # getPerspectiveHeadForId or however it will be named
         ent = [o for o in jld['@graph'] if o['@id'].endswith(frag_pref_id)][0]
-        ent['ilxr:synonym'].append(f'lol test brain {diff}')
+        spred = 'ilxr:synonym' if 'ilxr:synonym' in ent else 'http://uri.interlex.org/base/readable/synonym'
+        ent[spred].append(f'lol test brain {diff}')
 
         resp_patch = client.patch(url, headers=headers_patch, json=jld)
         breakpoint()

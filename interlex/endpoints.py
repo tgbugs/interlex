@@ -509,7 +509,8 @@ class Endpoints(EndBase):
             # and must have the reference to the previous identity
             jld = request.json
             ont = [o for o in jld['@graph'] if o['@type'] == 'owl:Ontology'][0]
-            bound_frag_pref_id = ont['isAbout']['@id'].rsplit('/')[-1]
+            pred = 'isAbout' if 'isAbout' in ont else 'http://purl.obolibrary.org/obo/IAO_0000136'  # FIXME curies and context ...
+            bound_frag_pref_id = ont[pred]['@id'].rsplit('/')[-1]
             if bound_frag_pref_id != frag_pref_id:
                 abort(422, f'wrong id: {bound_frag_pref_id} != frag_pref_id')
 
