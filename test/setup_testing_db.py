@@ -11,8 +11,9 @@ from interlex.core import dbUri
 # TODO interlex-user tests ...
 
 def getSession(dburi=dbUri(dbuser='interlex-admin',
-                           database=config.test_database,
-                           port=config.test_database_port,),
+                           host=config.test_host,
+                           port=config.test_database_port,
+                           database=config.test_database,),
                echo=False):
     engine = create_engine(dburi)
     engine.echo = echo

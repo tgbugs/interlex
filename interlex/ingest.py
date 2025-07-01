@@ -1895,7 +1895,7 @@ def ingest_path(path, user, **kwargs):
 
 
 #@profile_me(sort='cumtime')
-def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, debug=False, force=False):
+def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, debug=False, force=False, session=None):
     # FIXME TODO something with user yeah?
     if batchsize is None:
         batchsize = _batchsize
@@ -2153,7 +2153,9 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
     # of an additional 5 gigs of memory for nothing since all the cached content
     # is unique and mostly params, the issue is so bad in fact that I'm considering
     # changing our defaults to avoid memory issues
-    session = getScopedSession(echo=False, query_cache_size=0)
+    if session is None:
+        session = getScopedSession(echo=False, query_cache_size=0)
+
     try:
         q = Queries(session)
 

@@ -7,6 +7,7 @@ from pyontutils.identity_bnode import IdentityBNode, idf, it as ibn_it
 from interlex.config import auth
 from interlex.ingest import process_triple_seq, ingest_path
 from .common import working_dir
+from .setup_testing_db import getSession
 
 
 class TestIngestIdentityFunction(unittest.TestCase):
@@ -77,17 +78,20 @@ class TestIngestIdentityFunction(unittest.TestCase):
         else:
             path = working_dir / 'test/data/nometa.ttl'
 
-        ingest_path(path, 'tgbugs', debug=True)
+        session = getSession()
+        ingest_path(path, 'tgbugs', debug=True, session=session)
 
     def test_nasty(self):
         path = auth.get_path('git-local-base') / 'pyontutils/ttlser/test/nasty.ttl'
-        ingest_path(path, 'tgbugs', debug=True)
+        session = getSession()
+        ingest_path(path, 'tgbugs', debug=True, session=session)
 
     def test_evil(self):
         # evil violations many assumptions
         path = auth.get_path('git-local-base') / 'pyontutils/ttlser/test/evil.ttl'
+        session = getSession()
         try:
-            ingest_path(path, 'tgbugs')
+            ingest_path(path, 'tgbugs', session=session)
             raise AssertionError('should have failed')
         except AssertionError as e:
             raise
