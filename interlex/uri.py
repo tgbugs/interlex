@@ -134,6 +134,7 @@ def uriStructure():
 
                                 'entity-new',
                                 'entity-promote',
+                                'entity-check',  # FIXME naming
                                 'modify-a-b',
                                 'modify-add-rem',
 
@@ -267,7 +268,9 @@ def uriStructure():
                     'upload':['HEAD', 'POST'],  # FIXME why did this need head?
                     'request-ingest': ['POST'],
 
+                    'entity-check': ['GET', 'POST'],
                     'entity-new': ['GET', 'POST'],
+                    'entity-promote': ['GET', 'POST'],
                     'modify-a-b': ['PATCH'],  # accepts add remove ban requires both add and remove but can be empty for either only for bulk
                     'modify-add-rem': ['PATCH'],  # takes a before and after so that the backend can generate the add and remove subset
 

@@ -179,19 +179,34 @@ class TestRoutes(RouteTester, unittest.TestCase):
         resp = self.get(url)
         assert self.host in resp.url
 
-    def test_post_entity_new(self):
+    def test_post_entity_check(self):
+        data, (_, _) = self.test_post_entity_new()
+        # should fail
+        _, (r1, r2) = self.test_post_entity_new(endpoint='entity-check', data=data)
+        assert r2.status_code == 409, r2.status_code
+        assert r2.json['existing'], r2.json['existing']
+
+        # should succeed
+        data2, (r3, r4) = self.test_post_entity_new(endpoint='entity-check')
+        assert r4.status_code == 200, r4.status_code
+        assert not r4.json['existing'], r4.json['existing']
+        breakpoint()
+
+    def test_post_entity_new(self, endpoint='entity-new', data=None):
         self.app.debug = True
         client = self.app.test_client()
         tuser = auth.get('test-api-user')
         token = auth.get('interlex-test-api-key')
         headers = {'Authorization': f'Bearer {token}'}
         diff = secrets.token_hex(6)
-        data = {
-            'rdf-type': 'owl:Class',
-            'label': f'test term 1 {diff}',
-            'exact': [f'test term one {diff}', f'first test term {diff}'],
-        }
-        url = f'{self.prefix}/{tuser}/priv/entity-new'
+        if data is None:
+            data = {
+                'rdf-type': 'owl:Class',
+                'label': f'test term 1 {diff}',
+                'exact': [f'test term one {diff}', f'first test term {diff}'],
+            }
+
+        url = f'{self.prefix}/{tuser}/priv/{endpoint}'
         resp = client.get(url, headers=headers)
         resp1 = client.post(url, json=data, headers=headers)
         if resp1.status_code == 303:
@@ -203,7 +218,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
             print(resp2.data.decode())
 
-        breakpoint()
+        return data, (resp, resp1,)
 
     def test_patch_entity(self):
         self.app.debug = True

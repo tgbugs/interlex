@@ -17,7 +17,7 @@ from htmlfn import atag, btag, h2tag, htmldoc
 from htmlfn import table_style, render_table, redlink_style
 from pyontutils.core import OntGraph, makeGraph, populateFromJsonLd
 from pyontutils.utils_fast import TermColors as tc, isoformat
-from pyontutils.namespaces import makePrefixes, definition, rdf, owl, dc, ilxtr
+from pyontutils.namespaces import makePrefixes, definition, rdf, rdfs, owl, dc, ilxtr
 from sqlalchemy.sql import text as sql_text
 import idlib
 from interlex import auth as iauth
@@ -2184,6 +2184,7 @@ class Priv(EndBase):
             'upload': self.upload,
             'request-ingest': self.request_ingest,
             'pull-new': self.pull_new,  # FIXME TODO may need pull-ont-new pull-ent-new pull-ext-new pull-uri-new
+            'entity-check': self.entity_check,
             'entity-new': self.entity_new,
             'entity-promote': self.entity_promote,
             'modify-a-b': self.modify_a_b,
@@ -2883,15 +2884,99 @@ class Priv(EndBase):
     def pull_new(self, group, db=None):
         return 'TODO', 501
 
+    _type_curies = [  # FIXME hardcoded
+        'owl:Class',
+        'owl:AnnotationProperty',
+        'owl:ObjectProperty',
+        'TODO:CDE',
+        'TODO:FDE',
+        'TODO:PDE',
+    ]
+
+    @staticmethod
+    def _entproc(request):
+        errors = {}
+        if request.content_type == 'application/x-www-form-urlencoded':
+            thing = request.form
+        elif request.content_type == 'application/json':
+            thing = request.json
+        else:
+            breakpoint()
+            abort(415, 'json or form pls')
+
+        for arg, req in (('rdf-type', True), ('label', True), ('exact', False)):
+            if req and (arg not in thing or not thing[arg].strip()):
+                errors[arg] = ['missing']
+            elif arg == 'rdf-type' and thing['rdf-type'] not in Priv._type_curies:
+                errors[arg] = [f'unknown rdf-type {thing[arg]!r}']
+
+        return thing, errors
+
+    @basic
+    def entity_check(self, group):
+        """
+        see if any label or exact already exists
+        obviously there is a toctou issue here
+        and why entity-new returns an error (race conditions)
+        """
+
+        if request.method == 'GET':
+            abort(501, 'TODO')  # TODO html form ...
+
+        nm = OntGraph(bind_namespaces='none').namespace_manager
+        nm.populate_from(self.queries.getGroupCuries('base'))  # FIXME
+        thing, errors = self._entproc(request)
+        if errors:
+            od = {'errors': errors}
+            return json.dumps(od), 422, ctaj
+
+        rdf_type = nm.expand_curie(thing['rdf-type'])
+        label = thing['label'].strip()
+        exact = [e.strip() for e in thing['exact']] if 'exact' in thing else []
+        label_or_exact = [label] + exact
+        stypes = {o: 'exact' for o in exact}
+        stypes[label] = 'label'
+        dbstuff = Stuff(self.session)
+        existing = dbstuff.checkEntity(label_or_exact)
+        if existing:
+            ex = {}
+            for row in existing:
+                subject = f'http://uri.interlex.org/{group}/{row.prefix}_{row.id}'
+                o = row.o_lit
+                pe = ilxtr.hasExactSynonym if row.p == 'exact' else rdfs.label
+                ps = ilxtr.hasExactSynonym if stypes[row.o_lit] == 'exact' else rdfs.label
+                if subject not in ex:
+                    ex[subject] = []
+
+                ex[subject].append({
+                    'object': o,
+                    'predicate_existing': pe,
+                    'predicate_submitted':  ps,
+                })
+            resp = {'existing': ex}
+            return json.dumps(resp), 409, ctaj
+
+        return json.dumps({'existing': []}), 200, ctaj
+
     @basic
     def entity_promote(self, group):
         """
         promote an existing entity that does not have an ilx id to
         have an ilx id
         """
+
         # aka entity_map_existing
         # TODO this handles the case where there is an existing term that does
         # not have an interlex id
+
+        if request.method == 'GET':
+            abort(501, 'TODO')  # TODO html form ...
+
+        # TODO part of the workflow which I don't think I explicated
+        # below is what to do if during promotion the rdfs:label for a
+        # term already exists, either it matches and should be added as
+        # an existing id or it is actually a different term in which case
+        # the user will need to provide a different label
         {'existing_id': '',
          'label': '',
          'exact': [],}
@@ -2953,6 +3038,7 @@ class Priv(EndBase):
         after the label and exact synonyms are done an no matches confirmed the user should be taken to the edit term page for the new term NOT back to the page they were on previously
         """
 
+        # TODO need a way to pass the ontologies to put the term in when it is created
         nm = OntGraph(bind_namespaces='none').namespace_manager
         nm.populate_from(self.queries.getGroupCuries('base'))  # FIXME
         if False:
@@ -2967,18 +3053,10 @@ class Priv(EndBase):
                 except KeyError:
                     return iri
 
-            type_curies = [_sigh(t.o) for t in rdf_types]
+            self._type_curies = [_sigh(t.o) for t in rdf_types]
 
-        type_curies = [  # FIXME hardcoded
-            'owl:Class',
-            'owl:AnnotationProperty',
-            'owl:ObjectProperty',
-            'TODO:CDE',
-            'TODO:FDE',
-            'TODO:PDE',
-        ]
         if request.method == 'GET':
-            rdf_type_options = '\n      '.join([f'<option value="{t}">{t}</option>' for t in type_curies])
+            rdf_type_options = '\n      '.join([f'<option value="{t}">{t}</option>' for t in self._type_curies])
             _entity_new_form = f'''
 <form action="" method="post" class="entity-new">
 
@@ -3011,20 +3089,7 @@ class Priv(EndBase):
 </html>'''
 
         elif request.method == 'POST':
-            errors = {}
-            if request.content_type == 'application/x-www-form-urlencoded':
-                thing = request.form
-            elif request.content_type == 'application/json':
-                thing = request.json
-            else:
-                abort(415, 'json or form pls')
-
-            for arg, req in (('rdf-type', True), ('label', True), ('exact', False)):
-                if req and (arg not in thing or not thing[arg].strip()):
-                    errors[arg] = ['missing']
-                elif arg == 'rdf-type' and thing['rdf-type'] not in type_curies:
-                    errors[arg] = [f'unknown rdf-type {thing[arg]!r}']
-
+            thing, errors = self._entproc(request)
             if errors:
                 od = {'errors': errors}
                 return json.dumps(od), 422, ctaj

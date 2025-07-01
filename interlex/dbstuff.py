@@ -470,6 +470,11 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
         sql = 'select t.s, t.o from triples as t where t.p = :predicate and t.s in :subjects'
         return list(self.session_execute(sql, args))
 
+    def checkEntity(self, label_and_exacts):
+        args = dict(loe=tuple(label_and_exacts))
+        sql = 'select * from current_interlex_labels_and_exacts as cile where o_lit in :loe'
+        return list(self.session_execute(sql, args))
+
     def newEntity(self, rdf_type, label, exacts=None):
         if not config.use_real_frag_pref:
             frag_pref = 'tmp'
