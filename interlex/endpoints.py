@@ -257,13 +257,19 @@ def return_page(html=None, data={}, status=200):
 <body>
 <h1>InterLex Login / Registration</h1>
 <script type="module">
-    async function getCookies() {{
-        const cookies = await window.cookieStore.getAll();
-        return cookies;
-    }}
+    function parseCookies() {
+        return document.cookie
+        .split('; ')
+        .filter(Boolean)
+        .reduce((acc, cookie) => {
+            const [name, ...rest] = cookie.split('=');
+            acc[decodeURIComponent(name)] = decodeURIComponent(rest.join('='));
+            return acc;
+        }, {});
+    }
 
     const response = {response_json};
-    const cookies = await getCookies();
+    const cookies = parseCookies();
     response['cookies'] = JSON.stringify(cookies);
     if (window.opener !== null && window.opener !== undefined) {{
         window.opener.postMessage(response, "*");
