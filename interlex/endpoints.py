@@ -257,16 +257,16 @@ def return_page(html=None, data={}, status=200):
 <body>
 <h1>InterLex Login / Registration</h1>
 <script type="module">
-    function parseCookies() {
+    function parseCookies() {{
         return document.cookie
         .split('; ')
         .filter(Boolean)
-        .reduce((acc, cookie) => {
+        .reduce((acc, cookie) => {{
             const [name, ...rest] = cookie.split('=');
             acc[decodeURIComponent(name)] = decodeURIComponent(rest.join('='));
             return acc;
-        }, {});
-    }
+        }}, {{}});
+    }}
 
     const response = {response_json};
     const cookies = parseCookies();
