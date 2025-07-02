@@ -3122,7 +3122,7 @@ class Priv(EndBase):
 
             new_uri = resp[0].newentity
             #reiri = new_uri  # XXX this will double redirect in prod
-            reiri = new_uri.replace(self.reference_host, request.host).replace('http://', f'{request.scheme}://') + '.html'
+            reiri = new_uri.replace(self.reference_host, request.host).replace('http://', f'{request.scheme}://')
             self.session.commit()
             return redirect(reiri, 303)
         else:
