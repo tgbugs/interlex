@@ -1206,11 +1206,14 @@ def process_bnode(
         accum_condensed.add(scid)
         ng = normgraph(s, subgraph, scid, replica, subject_condensed_idents, bnode_replicas)
         for n_s, _n_p, n_o, o_scid, o_replica in ng:
+            tid = None
             n_p = str(_n_p)
             rows = None
             if isinstance(n_s, rdflib.URIRef):
                 n_s = str(n_s)
                 rows = batch_conn_rows
+                tibn = IdentityBNode((n_s, n_p, scid), as_type=ibn_it['triple-conn'], id_method=idf['triple-conn'])
+                tid = tibn.identity
 
             if n_s == 0 or rows is not None and n_o == 0:
                 # we track the replicas at the conn/free head
@@ -1231,6 +1234,8 @@ def process_bnode(
                 row = n_s, n_p, n_o, scid
                 if rows is None:
                     rows = batch_link_rows
+                else:  # batch_conn_rows case
+                    row = tid, *row
 
             elif isinstance(n_o, rdflib.Literal):
                 row = n_s, n_p, str(n_o), str_None(n_o.datatype), str_None(n_o.language), scid
@@ -1576,7 +1581,7 @@ def prepare_batch_bnode(batch_term_uri_rows,
     if batch_link_rows:
         yield prepare_batch('INSERT INTO triples (s_blank, p, o_blank, subgraph_identity) VALUES', batch_link_rows, ocdn)
     if batch_conn_rows:
-        yield prepare_batch('INSERT INTO triples (s, p, o_blank, subgraph_identity) VALUES', batch_conn_rows, ocdn)
+        yield prepare_batch('INSERT INTO triples (triple_identity, s, p, o_blank, subgraph_identity) VALUES', batch_conn_rows, ocdn)
 
 
 def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embedded=None):
