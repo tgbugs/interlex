@@ -2192,6 +2192,12 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
 
             if dout:
                 if rs_named != dout['graph_named_identity']:
+                    smrn, sdne = set(mr_named), set(dout['named_embedded'])
+                    asdf = smrn - sdne
+                    fdsa = sdne - smrn
+                    # XXX if you hit this it is 99% because you are missing
+                    # rdflib-float-nonorm.patch see https://github.com/RDFLib/rdflib/pull/3020 and
+                    # https://github.com/tgbugs/dockerfiles/blob/6bd473f5ac4cba02c081b42d9b90719c464cca3a/source.org?plain=1#L1750-L1796
                     breakpoint()
 
                 assert rs_named == dout['graph_named_identity'], 'urg'
