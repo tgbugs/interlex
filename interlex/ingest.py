@@ -369,8 +369,15 @@ def get_paths(path):
 
 
 def run_cmd(argv, cwd, logfile):
-    with open(logfile, 'at+') as logfd:
-        this_start = logfd.tell()
+    fmode = 'at+'
+    onerr = logfile == '/dev/stderr'
+    if onerr:
+        fmode = 'wt'
+
+    with open(logfile, fmode) as logfd:
+        if not onerr:
+            this_start = logfd.tell()
+
         try:
             p1 = subprocess.Popen(
                 argv,
@@ -378,9 +385,11 @@ def run_cmd(argv, cwd, logfile):
                 stderr=subprocess.STDOUT, stdout=logfd)
             _ = p1.communicate()
             if p1.returncode != 0:
-                logfd.seek(this_start)
-                result = logfd.read()
-                log.debug('stdout/err from failing process\n' + result)
+                if not onerr:
+                    logfd.seek(this_start)
+                    result = logfd.read()
+                    log.debug('stdout/err from failing process\n' + result)
+
                 raise exc.SubprocessException(f'oops return code was {p1.returncode}')
         except KeyboardInterrupt as e:
             p1.send_signal(signal.SIGINT)

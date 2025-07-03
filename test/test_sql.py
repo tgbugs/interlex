@@ -17,6 +17,7 @@ class TestQueries(unittest.TestCase):
             'http://purl.obolibrary.org/obo/HP_0003001',
             'http://purl.obolibrary.org/obo/HP_0002001',
             'http://uri.interlex.org/tgbugs/ontologies/uris/test-6bfbce3594c2/spec',
+            'http://uri.interlex.org/tgbugs/uris/readable/s0',  # XXX yeah test_ingest_versions and this reveal a nasty bug in getVerVarBySubject
               )
         res = []
         for s in ss:

@@ -1,14 +1,13 @@
 import unittest
 import rdflib
 from pyontutils.core import OntGraph
-from pyontutils.namespaces import ilxtr
+from pyontutils.namespaces import ilxtr, rdf, owl
 from pyontutils.identity_bnode import IdentityBNode, idf, it as ibn_it
 
 from interlex.config import auth
-from interlex.ingest import process_triple_seq, ingest_path
+from interlex.ingest import process_triple_seq, ingest_path, ingest_ontspec
 from .common import working_dir
 from .setup_testing_db import getSession
-
 
 class TestIngestIdentityFunction(unittest.TestCase):
     """ make sure that ingest and ibnode produce the same results """
@@ -99,3 +98,33 @@ class TestIngestIdentityFunction(unittest.TestCase):
             # we expect this to fail at the moment because we have not
             # implemented ingest for graphs with cycles (among others)
             pass
+
+
+class TestIngestVersions(unittest.TestCase):
+
+    def test_ingest_versions(self):
+        session = getSession()
+        g0 = OntGraph()
+        g1 = OntGraph()
+
+        b0 = rdflib.BNode()
+        #b1 = rdflib.BNode()
+        #b2 = rdflib.BNode()
+        s0 = ilxtr.s0
+        p0 = ilxtr.p0
+        p1 = ilxtr.p1
+        trips_c = (
+            (ilxtr['test-ont-v'], rdf.type, owl.Ontology),
+            (s0, rdf.type, owl.Class),
+            (b0, rdf.type, owl.Restriction),
+            (b0, owl.onProperty, ilxtr.prop0),
+            (b0, owl.someValuesFrom, ilxtr.value0),
+        )
+        [[g.add(t) for t in trips_c] for g in (g0, g1)]
+        g0.add((s0, p0, b0))
+        g1.add((s0, p1, b0))
+
+        d0 = ingest_ontspec(g0, session)
+        d1 = ingest_ontspec(g1, session)
+        session.commit()
+        breakpoint()
