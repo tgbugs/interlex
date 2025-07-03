@@ -1099,7 +1099,7 @@ def process_post(
         # the presence of the parsedTo record in irels, and serialization_identity can go in earlier if we want (TODO)
         # e.g. to use the database to prevent multiple load attems
         irels = ((serialization_identity, 'parsedTo', graph_combined_local_conventions_identity),)
-        yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels)
+        yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
 
 
 def process_bnode(
@@ -1136,22 +1136,26 @@ def process_bnode(
     link_seen_o = defaultdict(lambda: 0)
     conn_seen_o = defaultdict(lambda: 0)
     conn_seen_s = defaultdict(lambda: 0)
+    conn_nrecs = defaultdict(lambda: 0)
     # hold out of order subjects, under the assumption that rapper will produce a nearly topo order
     waiting_term = defaultdict(list)  # FIXME even with sorted ntriples inputs I'm still seeing the spike here at the start !??
     waiting_link = defaultdict(list)
     waiting_conn = defaultdict(list)
-    transitive_trips = defaultdict(list)
+    transitive_trips = defaultdict(list)  # XXX more accurately now "triples with the key as a subject" and not really even that ...
     subject_idents = defaultdict(list)
     subject_condensed_idents = {}
     condensed_counts = defaultdict(lambda: -1)
     accum_embedded = []  # this is for the graph bnode identity, list because free subgraphs can be duplicated
     accum_condensed = set() # this is for the irels table, slightly different from accum condensed
+    accum_connected = []
 
     batch_term_uri_rows = []
     batch_term_lit_rows = []
     batch_link_rows = []
     batch_conn_rows = []
-    batch_idents = []
+    batch_idents_cnd = {}
+    batch_idents_emb = []
+    batch_idni = []
 
     bnode_replicas = {}
     replica_helper = set()
@@ -1196,30 +1200,64 @@ def process_bnode(
             # TODO see if we can avoid these checks for the dangle cases?
             sord.append(_s)
 
+    if debug:
+        tids_sanity = []
+
     def make_subgraph_rows(s, scid, replica):
         nonlocal counter_row
         if s not in transitive_trips:
             breakpoint()
 
         subgraph = transitive_trips.pop(s)
-        batch_idents.append((scid, len(subgraph)))
-        accum_condensed.add(scid)
+        _nrecs = len(subgraph)
+        conn_nrecs[s] += _nrecs
+        if isinstance(s, rdflib.URIRef):
+            # the value should already be in unless it is zero due to dangling
+            if scid == _hbn.null_identity:
+                nrecs = 0
+            else:
+                nrecs = None
+        else:
+            nrecs = conn_nrecs[s]
+
+        if scid in batch_idents_cnd:
+            # identical subgraphs built from different bnodes are allowed
+            # which is why we have replicas and dedupe, also this is per
+            # batch so if there were multiple batches enforcement would fail
+            if nrecs is not None and batch_idents_cnd[scid] != nrecs:
+                # nrecs can be None intentionally if we scid should already be in
+                breakpoint()
+                raise ValueError(f'{batch_idents_cnd[scid]} != {nrecs}')
+        else:
+            batch_idents_cnd[scid] = nrecs
+            accum_condensed.add(scid)
+
         ng = normgraph(s, subgraph, scid, replica, subject_condensed_idents, bnode_replicas)
         for n_s, _n_p, n_o, o_scid, o_replica in ng:
             tid = None
             n_p = str(_n_p)
             rows = None
             if isinstance(n_s, rdflib.URIRef):
+                if debug:
+                    _ons = n_s
+
                 n_s = str(n_s)
                 rows = batch_conn_rows
+                # calling ibn here isn't doing too much rework because when we
+                # compute pair-ident for n_p scid below it is cached
                 tibn = IdentityBNode((n_s, n_p, scid), as_type=ibn_it['triple-conn'], id_method=idf['triple-conn'])
                 tid = tibn.identity
+
+                if debug:
+                    tids_sanity.append((_ons, tid))
 
             if n_s == 0 or rows is not None and n_o == 0:
                 # we track the replicas at the conn/free head
                 if rows is None:  # s_blank case
                     rhr = (None, None, scid, replica)
-                else:
+                else:  # batch_conn_rows case
+                    # TODO we should be able switch to this or (tid, scid, replica)
+                    # rhr = (tid, replica)
                     rhr = (n_s, n_p, scid, replica)
 
                 # replica_helper must be a set because if a value is
@@ -1235,6 +1273,14 @@ def process_bnode(
                 if rows is None:
                     rows = batch_link_rows
                 else:  # batch_conn_rows case
+                    # FIXME the fact that we append this here causes many
+                    # issues because it means we end up have to calculate
+                    # the hash twice, once for the triples table and once
+                    # for identity_bnode_triples_ingest, it is cached but
+                    # this implies the the flow is broken, should probably
+                    # stash tid under s to populate batch_idni so that we
+                    # have a single source instead of computing twice and
+                    # relying an an opaque process that happens to have a cache?
                     row = tid, *row
 
             elif isinstance(n_o, rdflib.Literal):
@@ -1249,6 +1295,7 @@ def process_bnode(
 
             rows.append(row)
             counter_row += 1
+    # end make_subgraph_rows
 
     counter_row = 0
     counter_batch = 0 
@@ -1304,11 +1351,13 @@ def process_bnode(
                 subject_idents[ts].append(t_pair_identity)
                 if term_seen_s[ts] == term_bnode_subject_counts[ts]:
                     if term_seen_s[ts] == min_expected_count:
-                        tscid = subject_condensed_idents[ts] = sid(subject_idents.pop(ts))
+                        tscids = subject_idents.pop(ts)
+                        tscid = subject_condensed_idents[ts] = sid(tscids)
                         condensed_counts[tscid] += 1
                         treplica = condensed_counts[tscid]
                         tstoc = total_object_count(ts)
                         if tstoc > 1 or tstoc == 0:
+                            # only accumulate if multiparent (tstoc > 1) or free (tstoc == 0)
                             # this is safe because this only happens if we have
                             # already seen this bnode as a subject the expected
                             # number of times
@@ -1348,12 +1397,17 @@ def process_bnode(
                 link_seen_s[s] += 1
                 link_seen_o[o] += 1
                 transitive_trips[s].append(t)
+                if o in conn_nrecs:
+                    conn_nrecs[s] += conn_nrecs[o]
                 #if s == subject:
                     #can_break = True
 
                 # accumulate objects
                 if o in transitive_trips:  # this will only be an transitive trips if it is single parent at this point
+                    # uh and not even then ...
                     transitive_trips[s].extend(transitive_trips.pop(o))
+                    breakpoint()
+                    raise ValueError('we never hit this branch because o will always be popped off by make_subgraph_rows')
                 #else:  # secondary case
                     # TODO dedupes
                     #breakpoint()
@@ -1392,13 +1446,13 @@ def process_bnode(
                 # FIXME I think we only need to accumulate the subject
                 # idents in a list, no need for defaultdict lookup since
                 # thing are already sorted and we reorder the triples
-
                 if link_seen_s[s] == link_bnode_subject_counts[s]:
                     scid = subject_condensed_idents[s] = sid(subject_idents.pop(s))
                     condensed_counts[scid] += 1
                     replica = condensed_counts[scid]
                     stoc = total_object_count(s)  # NOT min_expected_count which is for occurances as a subject
                     if stoc > 1 or stoc == 0:
+                        # only accumulate if multiparent (stoc > 1) or free (stoc == 0)
                         accum_embedded.append(scid)
 
                     make_subgraph_rows(s, scid, replica)
@@ -1426,26 +1480,50 @@ def process_bnode(
                 conn_seen_s[cs] += 1
                 conn_seen_o[co] += 1
                 transitive_trips[cs].append(ct)
+                if co in conn_nrecs:
+                    conn_nrecs[cs] += conn_nrecs[co]
                 if co in transitive_trips:
                     # this will only be an transitive trips if o is single parent and the transitive set
                     # will only include trips that are not transitively part of a multi-parent subgraph
                     transitive_trips[cs].extend(transitive_trips.pop(co))
+                    breakpoint()
+                    # XXX i think these were the old way of trying to build as few subgraphs as possible
+                    # but the complexity of replicas and dedupe means that we gave up on that which is
+                    # also why s_blank is pretty much never 0 and we have to use a cte to reconstruct
+                    # there isn't a good way around this in the general case and we did it this way
+                    # to reduce the total size of the triples table otherwise if you have identical
+                    # subgraphs that are part of a larger parent graph everything is duplicated so
+                    # we wound up here
+                    raise ValueError('we never hit this now because co will have been popped off in make_subgraph_rows')
 
                 if co not in subject_condensed_idents:
                     breakpoint()
 
+                # XXX oid does leverage _oi_cache so we aren't do all that much rework computing triple-conn
+                #pair_identity = IdentityBNode((cp, subject_condensed_idents[co]), as_type=ibn_it['pair-ident'], id_method=idf['pair-ident']).identity
                 pair_identity = oid(oid(cp.encode()), subject_condensed_idents[co])
                 subject_idents[cs].append(pair_identity)
 
                 cosci = subject_condensed_idents[co]
                 creplica = bnode_replicas[co]
+                # confusingly we run make_subgraph_rows unconditionally
+                # because technically the subject is part of multiple
+                # subgraphs since the subject itself is not a bnode
+                # and the triple with a bnode as an object is not part
+                # of the subgraph identity
                 make_subgraph_rows(cs, cosci, creplica)
                 if conn_seen_s[cs] == conn_named_subject_counts[cs]:
-                    cscid = subject_condensed_idents[cs] = sid(subject_idents.pop(cs))
+                    cscids = subject_idents.pop(cs)
+                    cscid = subject_condensed_idents[cs] = sid(cscids)
                     cseid = oid(oid(cs.encode()), cscid)
                     accum_embedded.append(cseid)
                     conn_seen_s.pop(cs)
                     conn_named_subject_counts.pop(cs)
+                    _csid = oid(cs.encode())
+                    batch_idni.extend([(cseid, oid(_csid, pi)) for pi in cscids])
+                    batch_idents_emb.append((cseid, conn_nrecs[cs]))
+                    if debug:
+                        accum_connected.append((cs, cseid, cscid, cscids))
 
                 if conn_seen_o[co] == conn_bnode_object_counts[co]:
                     conn_seen_o.pop(co)
@@ -1471,13 +1549,15 @@ def process_bnode(
                     # XXX FIXME uh how did we get an id for these at all?
                     assert conn_bnode_object_counts == dict(conn_seen_o)
 
-            if batch_idents:
+            if batch_idents_cnd:
                 yield from prepare_batch_bnode(
                     batch_term_uri_rows,
                     batch_term_lit_rows,
                     batch_link_rows,
                     batch_conn_rows,
-                    batch_idents,)
+                    batch_idents_cnd,
+                    batch_idents_emb,
+                    batch_idni,)
 
             if i != lsm1:
                 yield None, None
@@ -1487,7 +1567,9 @@ def process_bnode(
             batch_term_lit_rows = []
             batch_link_rows = []
             batch_conn_rows = []
-            batch_idents = []
+            batch_idents_cnd = {}
+            batch_idents_emb = []
+            batch_idni = []
             counter_row = counter_row - batchsize
             # avoid continued cache growth eating loads of memory
             IdentityBNode._if_cache = {}
@@ -1498,8 +1580,45 @@ def process_bnode(
     if debug:
         dout['bnode_embedded'] = accum_embedded
     graph_bnode_identity = sid(accum_embedded)
+
+    def check_conn_trips():
+        # check to ensure that the two alternate ways
+        # of computing conn triple identity agree
+        asigh = {}
+        for _s, cseid, cscid, cscids in accum_connected:
+            #asigh[cs] = cseid, cscids
+            _sid = oid(_s.encode())
+            stids = []
+            for i in cscids:
+                stids.append(oid(_sid, i))
+
+            asigh[_s] = stids
+            #asigh[_s] = cseid, stids
+
+        dd = defaultdict(list)
+        for _s, i in tids_sanity:
+            dd[_s].append(i)
+
+        hrmd = dict(dd)
+
+        assert set(asigh) == set(hrmd)
+        mismatched = {}
+        for _s, i1 in hrmd.items():
+            a, b = sorted(i1), sorted(asigh[_s])
+            if a != b:
+                mismatched[_s] = a, b
+
+        assert not mismatched
+
+    if debug:
+        check_conn_trips()
+
     #irels = [(graph_bnode_identity, e) for e in accum_condensed]  # if we screwed this up the database will catch it because they wont be in idents
     irels = [(e,) for e in accum_condensed]
+    # ae are needed to make the link from the source graph to conn triples via identity_bnode_triples_ingest (or maybe just inti depending ...)
+    # also reminder that "embedded" for free subgraphs (zero or multi parent) is just the condensed identity so skip those cases to avoid constraint issues
+    irels += [(e,) for e in accum_embedded if e not in accum_condensed]
+
     log.debug('done process_bnode triples')
     #replicas = [(graph_bnode_identity, *r) for r in replica_helper]
     #dedupes = [(graph_bnode_identity, *d) for d in dedupe_helper]
@@ -1569,11 +1688,15 @@ def prepare_batch_bnode(batch_term_uri_rows,
                         batch_term_lit_rows,
                         batch_link_rows,
                         batch_conn_rows,
-                        batch_idents,):
-    if not batch_idents:
+                        batch_idents_cnd,
+                        batch_idents_emb,
+                        batch_idni,
+                        ):
+    if not batch_idents_cnd:
         breakpoint()
 
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 5 */', batch_idents, ocdn, constant_dict={'nt': 'bnode_condensed'})
+    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 5 */', list(batch_idents_cnd.items()), ocdn, constant_dict={'nt': 'bnode_condensed'})
+    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 9 */', batch_idents_emb, ocdn, constant_dict={'nt': 'bnode_embedded'})
     if batch_term_uri_rows:
         yield prepare_batch('INSERT INTO triples (s_blank, p, o, subgraph_identity) VALUES', batch_term_uri_rows, ocdn)
     if batch_term_lit_rows:
@@ -1582,6 +1705,8 @@ def prepare_batch_bnode(batch_term_uri_rows,
         yield prepare_batch('INSERT INTO triples (s_blank, p, o_blank, subgraph_identity) VALUES', batch_link_rows, ocdn)
     if batch_conn_rows:
         yield prepare_batch('INSERT INTO triples (triple_identity, s, p, o_blank, subgraph_identity) VALUES', batch_conn_rows, ocdn)
+    if batch_idni:
+        yield prepare_batch('INSERT INTO identity_named_triples_ingest (named_embedded_identity, triple_identity) VALUES', batch_idni, ocdn)
 
 
 def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embedded=None):

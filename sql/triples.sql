@@ -285,6 +285,7 @@ CREATE TYPE named_type AS ENUM ('empty',
                                 'local_conventions', -- (sid ((prefix namespace) ...))
                                 --'graph', -- ill specified
                                 'graph_combined', -- (oid named_embedded_seq bnode_embedded_seq)
+                                'bnode_embedded', -- this is specifically for bnode records for conn triples of the form (s ((p id) ...)) where id is a bnode_condensed identity it is the nei mentioned for bnode_conn_free_seq
                                 'bnode_conn_free_seq', -- this uses the named embedded identity for connected subjects and condensed identity for free subgraphs, this means that bnode_conn_free_seq cannot be calculated directly from just the bnode_condensed identities
                                 'bnode_condensed_seq', -- (sid ((us ((up uo) ...)) ...)) aka (sid (bnode-record ...)) subClassOf bnode_graph
                                 'bnode_condensed', -- (us ((us uo) ...)) subClassOf bnode_record, but does not include any named subject id, be == bc
@@ -365,7 +366,7 @@ CREATE TABLE identities(
        -- whatever we are counting for this type of thing, usually triples or triples + local conventions
        -- counting (s ((p o) ...)) records is significantly more difficult and is not needed for sanity checks
        record_count integer NOT NULL, -- ok to be zero for bound_name
-       reference_name uri,
+       reference_name uri,  -- TODO ... maybe we could use this for reference names or subjects ? since we aren't actually using it for anything at the moment we lose foreign key but since we have named_type ...
        type named_type NOT NULL,
        first_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, -- XXX I think this is the best way to ensure that we can always have some basis for versioning even if everything else fails, we can have another table with extra info for versioning, but this should also vastly simplify versioning for records as well when we go to join/merge into a particular perspective
        /* -- uh ... this check was doing nothing ???
