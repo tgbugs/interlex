@@ -1696,7 +1696,8 @@ def prepare_batch_bnode(batch_term_uri_rows,
         breakpoint()
 
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 5 */', list(batch_idents_cnd.items()), ocdn, constant_dict={'nt': 'bnode_condensed'})
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 9 */', batch_idents_emb, ocdn, constant_dict={'nt': 'bnode_embedded'})
+    if batch_idents_emb:  # if only term and link cases this will be empty
+        yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 9 */', batch_idents_emb, ocdn, constant_dict={'nt': 'bnode_embedded'})
     if batch_term_uri_rows:
         yield prepare_batch('INSERT INTO triples (s_blank, p, o, subgraph_identity) VALUES', batch_term_uri_rows, ocdn)
     if batch_term_lit_rows:
