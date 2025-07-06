@@ -126,13 +126,20 @@ def process_vervar(s, snr, ttsr, tsr, trr):
         # however we could calculate and cache/record it somewhere ... the
         # named_condensed + bnode_condensed might be computable on the fly?
         vg = vvgraphs[fst]
-        _idg = IdentityBNode(vg, as_type=ibn_it['triple-seq'], id_method=idf['record-seq'])  # matches v3 behavior
-        _ids = IdentityBNode(rdflib.URIRef(s), id_method=idf['(s ((p o) ...))'], in_graph=vg)
+
+        #_idg = IdentityBNode(vg, as_type=ibn_it['triple-seq'], id_method=idf['record-seq'])  # matches v3 behavior
+        #_ids = IdentityBNode(rdflib.URIRef(s), id_method=idf['(s ((p o) ...))'], in_graph=vg)
+        #_idga = IdentityBNode(vg, as_type=ibn_it['triple-seq'], id_method=idf['record-alt-seq'])
+        #_idsa = IdentityBNode(rdflib.URIRef(s), id_method=idf['((s (p o)) ...)'], in_graph=vg)
         # FIXME notation of (s ((p o) ...)) is confusing because it isn't clear what happens with bnodes
-        #breakpoint()
+        #_idg3 = IdentityBNode(vg, as_type=ibn_it['triple-seq'], id_method=idf['record-combined-seq'])
+        _idg = IdentityBNode(vg, as_type=ibn_it['triple-seq'], id_method=idf['graph-combined'])
+        _ids = IdentityBNode(rdflib.URIRef(s), id_method=idf['record-combined'], in_graph=vg)
+        # FIXME TODO we shouldn't need to compute record-combined here because it should be pulled from irels once we update the query
         version = {
-            'identity-graph': _idg.identity.hex(),
-            'identity-record': _ids.identity.hex(),  # FIXME need a way to get back to this via identity_relations, likely named_embedded + bnode?
+            # both identities are the -combined equivalent for their level
+            'identity-graph': _idg.identity.hex(),  # use graph-combined because that is what ingest computes and stores
+            'identity-record': _ids.identity.hex(),  # record-combined because it is the simplest route to id combined records and map to triples
             'triple_count': len(vg),
         }
         appears_in = []
