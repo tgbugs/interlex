@@ -1064,11 +1064,30 @@ def process_post(
     if dout is None:
         dout = {}
 
+    idents = tuple()
+    irels = tuple()
+
+    nri = dout['named_record_identities']
+    bri = dout['bnode_record_identities']
+    for _s in (set(nri) | set(bri)):
+        # we don't insert the null identity into irels here unlike in the
+        # graph case because there are way more records than graphs and
+        # because the semantics for missing on or the other are clear
+        _nid, nrc = nri[_s] if _s in nri else (None, 0)
+        _bid, brc = bri[_s] if _s in bri else (None, 0)
+        rcid = oid(_nid, _bid)
+        idents += (('record_combined', rcid, nrc + brc),)  # FIXME lol alloc
+        if _nid is not None;
+        irels += ((rcid, 'hasNamedRecord', _nid),)
+        if _bid is not None:
+            irels += ((rcid, 'hasBnodeRecord', _bid),)
+
     graph_combined_identity = oid(graph_named_identity, graph_bnode_identity)
     dout['graph_combined_identity'] = graph_combined_identity
-    idents = (('graph_combined', graph_combined_identity, triple_count),)
-    irels = ((graph_combined_identity, 'hasNamedGraph', graph_named_identity),
-             (graph_combined_identity, 'hasBnodeGraph', graph_bnode_identity),)
+    idents += (('graph_combined', graph_combined_identity, triple_count),)
+    irels += ((graph_combined_identity, 'hasNamedGraph', graph_named_identity),
+              (graph_combined_identity, 'hasBnodeGraph', graph_bnode_identity),)
+
 
     if local_conventions_identity is None:
         # for sanity if there were no local conventions just make the
@@ -1081,7 +1100,7 @@ def process_post(
     dout['graph_combined_local_conventions_identity'] = graph_combined_local_conventions_identity
     idents += (('graph_combined_local_conventions', graph_combined_local_conventions_identity, record_count),)
     irels += ((graph_combined_local_conventions_identity, 'hasGraph', graph_combined_identity),
-                (graph_combined_local_conventions_identity, 'hasLocalConventions', local_conventions_identity),)
+              (graph_combined_local_conventions_identity, 'hasLocalConventions', local_conventions_identity),)
 
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */', idents, ocdn)
     yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
@@ -1144,6 +1163,7 @@ def process_bnode(
     transitive_trips = defaultdict(list)  # XXX more accurately now "triples with the key as a subject" and not really even that ...
     subject_idents = defaultdict(list)
     subject_condensed_idents = {}
+    subject_embedded_idents = {}
     condensed_counts = defaultdict(lambda: -1)
     accum_embedded = []  # this is for the graph bnode identity, list because free subgraphs can be duplicated
     accum_condensed = set() # this is for the irels table, slightly different from accum condensed
@@ -1356,14 +1376,15 @@ def process_bnode(
                         condensed_counts[tscid] += 1
                         treplica = condensed_counts[tscid]
                         tstoc = total_object_count(ts)
+                        make_subgraph_rows(ts, tscid, treplica)
                         if tstoc > 1 or tstoc == 0:
                             # only accumulate if multiparent (tstoc > 1) or free (tstoc == 0)
                             # this is safe because this only happens if we have
                             # already seen this bnode as a subject the expected
                             # number of times
                             accum_embedded.append(tscid)
+                            subject_embedded_idents[ts] = tscid, conn_nrecs[ts]
 
-                        make_subgraph_rows(ts, tscid, treplica)
                         if tscid not in bnode_replicas:
                             # we don't know if we will need this
                             # because it depends on the hash
@@ -1451,11 +1472,12 @@ def process_bnode(
                     condensed_counts[scid] += 1
                     replica = condensed_counts[scid]
                     stoc = total_object_count(s)  # NOT min_expected_count which is for occurances as a subject
+                    make_subgraph_rows(s, scid, replica)
                     if stoc > 1 or stoc == 0:
                         # only accumulate if multiparent (stoc > 1) or free (stoc == 0)
                         accum_embedded.append(scid)
+                        subject_embedded_idents[s] = scid, conn_nrecs[s]
 
-                    make_subgraph_rows(s, scid, replica)
                     bnode_replicas[s] = replica
 
                     link_seen_s.pop(s)
@@ -1651,6 +1673,7 @@ def process_bnode(
                                 chunk, ocdn,
                                 constant_dict={'graph_bnode_identity': graph_bnode_identity})
 
+    dout['bnode_record_identities'] = subject_embedded_idents
     dout['bnode_count'] = counter_batch
     dout['graph_bnode_identity'] = graph_bnode_identity
     yield None, None
@@ -1718,7 +1741,10 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embe
 
     if path_embedded is None:
         _accum_embedded = []
-        append_embedded = _accum_embedded.append
+        def append_embedded(s, seid, rc):
+            subject_embedded_idents[s] = seid, rc
+            _accum_embedded.append(seid)
+
         write_final_embedded = (lambda : None)
         read_embedded = lambda : _accum_embedded
     else:
@@ -1726,7 +1752,8 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embe
         _aefd = open(path_embedded, 'wb')
         _aefd_buff = b''  # this is probably dumb
         _aefd_ct = 0
-        def append_embedded(seid):
+        def append_embedded(s, seid, rc):
+            subject_embedded_idents[s] = seid, rc  # TODO write this to disk as well probably
             nonlocal _aefd_ct
             nonlocal _aefd_buff
             if _aefd_ct == 1023:
@@ -1771,7 +1798,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embe
         # then we would know if we should go over batch size
         subject_condensed_identity = sid(accum_pair)
         subject_embedded_identity = oid(oid(s.encode()), subject_condensed_identity)
-        append_embedded(subject_embedded_identity)
+        append_embedded(s, subject_embedded_identity, this_subject_count)
         batch_idents.append((subject_embedded_identity, this_subject_count))
         batch_idni.extend([(subject_embedded_identity, tid) for tid in accum_trip])
         if batch_after_this_subject:
@@ -1793,6 +1820,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embe
     expected_count = None
     accum_pair = []
     accum_trip = []
+    subject_embedded_idents = {}
     batch_uri_rows = []
     batch_lit_rows = []
     batch_idents = []
@@ -1900,6 +1928,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embe
     else:
         dout['named_count'] = i + 1
 
+    dout['named_record_identities'] = subject_embedded_idents
     dout['graph_named_identity'] = graph_named_identity
     yield None, None
     log.debug('end named')

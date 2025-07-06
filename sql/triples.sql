@@ -285,6 +285,7 @@ CREATE TYPE named_type AS ENUM ('empty',
                                 'local_conventions', -- (sid ((prefix namespace) ...))
                                 --'graph', -- ill specified
                                 'graph_combined', -- (oid named_embedded_seq bnode_embedded_seq)
+                                'record_combined', -- (oid named_embedded bnode_embedded)
                                 'bnode_embedded', -- this is specifically for bnode records for conn triples of the form (s ((p id) ...)) where id is a bnode_condensed identity it is the nei mentioned for bnode_conn_free_seq
                                 'bnode_conn_free_seq', -- this uses the named embedded identity for connected subjects and condensed identity for free subgraphs, this means that bnode_conn_free_seq cannot be calculated directly from just the bnode_condensed identities
                                 'bnode_condensed_seq', -- (sid ((us ((up uo) ...)) ...)) aka (sid (bnode-record ...)) subClassOf bnode_graph
@@ -389,6 +390,7 @@ CREATE TABLE identities(
 
 CREATE INDEX identities_identity_index ON identities (identity);
 CREATE INDEX identities_first_seen_index ON identities (first_seen);
+CREATE INDEX identities_type_index ON identities (type);
 
 /*
 name_to_identity is a many to many table, it is not a prov table
@@ -510,6 +512,7 @@ CREATE UNIQUE INDEX un__identity_relations__n1p_s_p
        WHERE p NOT IN ('hasPart', 'dereferencedTo', 'hasBnodeRecord', 'hasNamedRecord');
 
 CREATE INDEX identity_relations_s_index ON identity_relations (s);
+CREATE INDEX identity_relations_p_index ON identity_relations (p);
 CREATE INDEX identity_relations_o_index ON identity_relations (o);
 -- TODO we are renaming qualifiers to frames to clarify the process
 
