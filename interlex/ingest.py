@@ -1545,6 +1545,7 @@ def process_bnode(
                     _csid = oid(cs.encode())
                     batch_idni.extend([(cseid, oid(_csid, pi)) for pi in cscids])
                     batch_idents_emb.append((cseid, conn_nrecs[cs]))
+                    subject_embedded_idents[cs] = cseid, conn_nrecs[cs]
                     if debug:
                         accum_connected.append((cs, cseid, cscid, cscids))
 
