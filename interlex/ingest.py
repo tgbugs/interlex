@@ -1075,10 +1075,11 @@ def process_post(
         # because the semantics for missing on or the other are clear
         _nid, nrc = nri[_s] if _s in nri else (None, 0)
         _bid, brc = bri[_s] if _s in bri else (None, 0)
-        rcid = oid(_nid, _bid)
+        rcid = oid(_hbn.null_identity if _nid is None else _nid,
+                   _hbn.null_identity if _bid is None else _bid)
         idents += (('record_combined', rcid, nrc + brc),)  # FIXME lol alloc
-        if _nid is not None;
-        irels += ((rcid, 'hasNamedRecord', _nid),)
+        if _nid is not None:
+            irels += ((rcid, 'hasNamedRecord', _nid),)
         if _bid is not None:
             irels += ((rcid, 'hasBnodeRecord', _bid),)
 
