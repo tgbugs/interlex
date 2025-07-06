@@ -1233,14 +1233,6 @@ join identity_relations as irs1 on irs1.o = irs.s
 join identities as ids on ids.identity = irs1.s
 where
 t.s = :uri
-union
-select t.subgraph_identity as ident, irs1.s, irs1.p --, ids.type
-from triples as t
-join identity_relations as irs on irs.o = t.subgraph_identity
-join identity_relations as irs1 on irs1.o = irs.s
-join identities as ids on ids.identity = irs1.s
-where
-t.s = :uri
 )
 where p != 'hasMetadataGraph' -- amazingly this does NOT have the perf clif!
 order by p, ident, s

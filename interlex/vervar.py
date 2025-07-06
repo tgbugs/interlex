@@ -13,7 +13,7 @@ log = _log.getChild('vervar')
 te = TripleExporter()
 
 
-def process_vervar(s, snr, ttsr, tsr, trr):
+def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=True):
     """ subject source_named tripset_to_source tripsets triples """
     # TODO missing the query that joints these to perspectives to say
     # which ones are variants etc. but since we don't have variants
@@ -42,21 +42,30 @@ def process_vervar(s, snr, ttsr, tsr, trr):
     known_bstarts = set()
     for tr in trr:
         if tr.triple_identity is not None:
-            dd_tindex[tr.triple_identity].append(tr)  # obs there should only ever be one in this case, but for type uniformity we append
-        elif tr.subgraph_identity is not None:
-            dd_tindex[tr.subgraph_identity].append(tr)
-            if tr.s_blank is None:
-                known_bstarts.add(tr.subgraph_identity)  # these should match what appears in tsr where type is hasBnodeGraph
+            dd_tindex[tr.triple_identity].append(tr)
+            if tr.subgraph_identity is not None:
+                # we now start from triple_identity due to potential
+                # confiusion between cases like (s0 p0 id0) (s0 p1 id0)
+                known_bstarts.add(tr.triple_identity)
+                dd_siadj[tr.triple_identity].append(tr.subgraph_identity)
+
+        if tr.subgraph_identity is not None:
+            if tr.triple_identity is None:
+                # can't append with triple identity because those are conn
+                # triples and if a predicate changes then the triple changes
+                # so we can't include conn triples here or versions can cross
+                # pollute eachother
+                dd_tindex[tr.subgraph_identity].append(tr)
             if tr.next_subgraph_identity is not None:
                 dd_siadj[tr.subgraph_identity].append(tr.next_subgraph_identity)
-        else:
-            breakpoint()
-            raise NotImplementedError('sigh')
 
     # siadj -> subgraph identity -> transitive subgraph identities
     # (include these other triples as well with these nested subgraph identities)
     # this has to be resolved after we have seen all triples using e.g. neurondm.orders
-    assert known_bstarts == known_bstarts_ts, 'sigh'
+    if known_bstarts != known_bstarts_ts:
+        breakpoint()
+
+    assert known_bstarts == known_bstarts_ts, 'sigh'  # can't check this anymore because for any case where s is a uri they won't match
     siadj = [(k, v) for k, vs in dd_siadj.items() for v in vs]
     hrm = toposort(siadj, unmarked_key=lambda mv: 1)
     trans = defaultdict(list)
@@ -78,20 +87,36 @@ def process_vervar(s, snr, ttsr, tsr, trr):
         fst = frozenset(st)
         dd[fst].add(i)
 
+    tindex = dict(dd_tindex)
     uniques = dict(dd)
     dd = defaultdict(list)
+    done = set()
     for fst in uniques:
+        u_starts = set()
         for start, stype in fst:
-            dd[fst].extend(dd_tindex[start])
+            dd[fst].extend(tindex[start])
             if stype == 'hasBnodeGraph' and start in sub_starts:
+                # we do it this way to avoid multi-parent causing
+                # repeatedly adding shared substructure
+                u_starts.update(sub_starts[start])
                 for sub_start in sub_starts[start]:
-                    dd[fst].extend(dd_tindex[sub_start])
+                    if sub_start in done:
+                        break
+
+        for us in u_starts:
+            dd[fst].extend(tindex[us])
+
+    if debug:
+        debug_asm = dict(dd)
+        nd = [sorted([r.triple_identity for r in rs if r.triple_identity]) for rs in debug_asm.values()]
 
     # vervar graphs
     vvgraphs = {}
     for fst, trows in dd.items():
         graph = OntGraph().populate_from_triples((te.triple(*r[1:-1], 0, r[-1], 0) for r in trows))
         vvgraphs[fst] = graph
+        if debug:
+            graph.debug()
 
     # from here we use uniques to do a second query to get first_seen or some other
     # timestamp for the various versions of a term, we already have the triples in trr
@@ -110,6 +135,15 @@ def process_vervar(s, snr, ttsr, tsr, trr):
 
     # unified graph (everything any resource ever included about a subject)
     ugraph = OntGraph().populate_from_triples((te.triple(*r[1:-1], 0, r[-1], 0) for r in trr))
+    # make sure we get back what we put in
+    rtugraph = OntGraph()
+    [rtugraph.populate_from(vg) for vg in vvgraphs.values()]
+
+    oops = set(ugraph) - set(rtugraph)
+    if oops:
+        breakpoint()
+
+    assert not oops, oops
 
     # the frozensets that are they keys for uniques make links as follows
     # [metagraphs[meta_identity] for start_identity in uniques[triple_idents_frozenset] for meta_identity in start_to_meta[start_identity]]
@@ -136,6 +170,7 @@ def process_vervar(s, snr, ttsr, tsr, trr):
         _idg = IdentityBNode(vg, as_type=ibn_it['triple-seq'], id_method=idf['graph-combined'])
         _ids = IdentityBNode(rdflib.URIRef(s), id_method=idf['record-combined'], in_graph=vg)
         # FIXME TODO we shouldn't need to compute record-combined here because it should be pulled from irels once we update the query
+        # and I can confirm that the record-combined entires in identities do match what we get here could compute here as debug check
         version = {
             # both identities are the -combined equivalent for their level
             'identity-graph': _idg.identity.hex(),  # use graph-combined because that is what ingest computes and stores
