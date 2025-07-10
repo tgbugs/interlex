@@ -666,6 +666,9 @@ class TripleExporter:
                 # THERE CAN BE ONLY NONE
                 subgraph_replica = 'n'
 
+            if object_replica is None:
+                object_replica = subgraph_replica
+
             si = 'sg_' + str(self.subgraph_identities[subgraph_identity]) + '_' + str(subgraph_replica)
             if object_subgraph_identity is not None:
                 if object_subgraph_identity not in self.subgraph_identities:

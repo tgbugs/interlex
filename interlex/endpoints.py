@@ -343,6 +343,9 @@ class Endpoints(EndBase):
             'ilx': self.ilx,
             'other': self.other,
             '*versions': self.versions,
+            #'*versions_': self.versions,
+            '<record_combined_identity>': self.get_version,
+
             #ilx_get: self.ilx_get,
             '*ilx_get': self.ilx,
 
@@ -559,8 +562,42 @@ class Endpoints(EndBase):
         return json.dumps(resp), 200, ctaj
 
     @basic
-    def dns(self, dns_host, dns_path):
-        abort(501, 'TODO')
+    def get_version(self, group, frag_pref_id, record_combined_identity):
+        # FIXME TODO variant with no deps on frag pref just return whatever is at the id
+        uri = f'http://uri.interlex.org/base/{frag_pref_id}'
+        # FIXME TODO use the new better query
+        snr, ttsr, tsr, trr = self.queries.getVerVarBySubject(uri)
+        vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(uri, snr, ttsr, tsr, trr)
+        # FIXME obviously bad
+        fst = None
+        for fst, u in uniques.items():
+            if 'versions' in u:
+                if u['versions']['identity-record'] == record_combined_identity:
+                    break
+
+        vg = vvgraphs[fst]
+        title = f'version graph for {uri} at {record_combined_identity}'
+        resp = tripleRender(request, vg, group, None, None,
+                            tuple(), title, redirect=False, simple=True)
+        return resp
+
+    @basic
+    def dns(self, group, dns_host, dns_path, extension=None):
+        # FIXME TODO perspective head
+        subject = f'http://{dns_host}/{dns_path}'
+        # FIXME do we want ot use original source curies in this case?
+        #curies = {p: n for p, n in self.queries.getCuriesByName(spec_uri)}
+        curies = self.queries.getGroupCuries(group)
+        resp = self.queries.getBySubject(subject, group)
+        graph = OntGraph(bind_namespaces='none')
+        graph.namespace_manager.populate_from(curies)
+        te = TripleExporter()
+        for r in resp:
+            graph.add(te.triple(*r[:-1], None, r[-1]))
+
+        title = f'graph for {subject}'
+        return tripleRender(request, graph, group, None, None, tuple(),
+                            title, redirect=False, simple=True)
 
     @basic
     def lexical(self, group, label, db=None):
@@ -609,7 +646,7 @@ class Endpoints(EndBase):
             te = TripleExporter()
             for iri in iri, _ in identifiers_or_defs:
                 resp = self.queries.getBySubject(iri, group)
-                _ = [g.g.add(te.triple(*r)) for r in resp]
+                _ = [g.g.add(te.triple(*r[:-1], None, r[-1])) for r in resp]
                 object_to_existing += self.queries.getResponseExisting(resp, type='o')
 
 
@@ -756,7 +793,7 @@ class Endpoints(EndBase):
 
                         resp = self.queries.getBySubject(iri, group)  # FIXME shouldn't we not be using self.queries for this?
                         te = TripleExporter()
-                        _ = [graph.add(te.triple(*r)) for r in resp]
+                        _ = [graph.add(te.triple(*r[:-1], None, r[-1])) for r in resp]
                         object_to_existing = self.queries.getResponseExisting(resp, type='o')
                         # FIXME we need to abstract TripleRender to work with any ontology name
                         # FIXME we probably need a uri.interlex.org/base/iri/purl.obolibrary.org/obo/ trick ...

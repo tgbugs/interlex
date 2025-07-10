@@ -70,6 +70,8 @@ def uriStructure():
         '*dns_ont': 'dns',
         '<dns_ont_host>': '<dns_host>',
         '*<path:dns_ontpath>': '<path:ont_path>',
+        '*<path:dns_path>': '<path:dns_path>',
+        '*<path:dns_path>.<extension>': '<path:dns_path>.<extension>',
         '*dns_version': 'version',
         '*uris_ont': 'uris',
         '*uris_version': 'version',
@@ -173,6 +175,7 @@ def uriStructure():
         '<review>':            [None, 'vote'],
         '*ops-pull':           ['merge', 'close', 'reopen', 'lock'],
         '*ilx_pattern':        [None, 'other', '*versions'],  # FIXME this is now doing a stupid redirect to ilx_pattern/ >_<
+        '*versions':           [None, '<record_combined_identity>'],  # FIXME rci naming FIXME also this can be top level too /u/record-combined/{id}
         '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
         '<other_group_diff>':  basic + ['lexical'] + branches,
         'lexical':             ['<label>'],
@@ -192,7 +195,7 @@ def uriStructure():
         '<qt_start>':          ['<qt_predicate>'],
 
         'dns':                 ['<dns_host>'],
-        '<dns_host>':          ['*<path:dns_path>'],
+        '<dns_host>':          ['*<path:dns_path>', '*<path:dns_path>.<extension>'],
         '*<path:dns_path>':    [None, '*dns_version'],
 
         '*dns_ont':            ['<dns_ont_host>'],
@@ -340,6 +343,8 @@ def add_leafbranches(nodes):
             #nodes = prefix + ('ontologies_',)
         elif 'contributions' in nodes:
             nodes = prefix + ('contributions_',)
+        elif '*versions' in nodes:
+            nodes = prefix + ('*versions',)
         elif '*ilx_pattern' in nodes:
             nodes = prefix + ('ilx',)
         elif 'role' in nodes:
