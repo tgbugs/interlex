@@ -427,6 +427,17 @@ class TestRoutes(RouteTester, unittest.TestCase):
         finally:
             endpoints._reset_mock = False
 
+    def test_dns(self):
+        url = f'{self.prefix}/base/dns/purl.obolibrary.org/obo/GO_0007275.html?links=internal'
+        resp = self.client.get(url)
+        return
+
+        url = f'{self.prefix}/base/dns/purl.obolibrary.org/obo/RO_0002492.html?links=internal'
+        resp = self.client.get(url)
+
+        url = f'{self.prefix}/base/dns/purl.obolibrary.org/obo/RO_0002492'
+        resp = self.client.get(url)
+
 
 class TestApiDocs(RouteTester, unittest.TestCase):
     def test_docs(self):

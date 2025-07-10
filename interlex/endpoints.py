@@ -539,8 +539,12 @@ class Endpoints(EndBase):
         else:
             func = self._even_more_basic(group, frag_pref, id, db)
             graph, object_to_existing, title, labels = self._ilx_impl(group, frag_pref, id, func)
+            if 'links' in request.args and request.args['links'].lower() == 'internal':
+                internal_links = self.reference_host, request.host, f'{group}/dns', '.html?links=internal'
+            else:
+                internal_links = False
             return tripleRender(request, graph, group, frag_pref, id,
-                                object_to_existing, title, labels=labels)
+                                object_to_existing, title, labels=labels, internal_links=internal_links)
 
     @basic
     def ilx_get(self, group, frag_pref_id, extension, db=None):
@@ -596,8 +600,13 @@ class Endpoints(EndBase):
             graph.add(te.triple(*r[:-1], None, r[-1]))
 
         title = f'graph for {subject}'
+        if 'links' in request.args and request.args['links'].lower() == 'internal':
+            internal_links = self.reference_host, request.host, f'{group}/dns', '.html?links=internal'
+        else:
+            internal_links = False
+
         return tripleRender(request, graph, group, None, None, tuple(),
-                            title, redirect=False, simple=True)
+                            title, redirect=False, simple=True, internal_links=internal_links)
 
     @basic
     def lexical(self, group, label, db=None):
