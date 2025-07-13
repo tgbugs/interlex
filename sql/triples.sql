@@ -274,11 +274,13 @@ CREATE TYPE named_type AS ENUM ('empty',
                                          --   quint nope says bound_name is in 1:1 with reference_name and need to be able to reconstruct the actual name
                                 -- 'source',  -- (name, metadata_identity, data_identity) but could be any subset of those, and we can reconstruct using the load data
 
+                                /* -- unused
                                 'data',  -- triples s p o type + lang
                                 'subgraph', -- FIXME how is this any different from data? unnamed subgraphs
                                 'qualifier',
                                 'load',
                                 'subject_graph',
+                                ,*/
 
                                 -- new clearer names with better semantics
                                 'graph_combined_local_conventions', -- (oid local_conventions graph_combined) subClassOf ??? TODO naming
@@ -292,22 +294,27 @@ CREATE TYPE named_type AS ENUM ('empty',
                                 'bnode_condensed', -- (us ((us uo) ...)) subClassOf bnode_record, but does not include any named subject id, be == bc
                                 'named_embedded_seq', -- (sid ((ns ((np no) ...)) ...)) aka (sid (named-record ...)) subClassOf named_graph
                                 'named_embedded', -- (ns ((np no) ...)) subClassOf named_record
-                                'named_condensed', -- ((np no) ...) for consistency
+                                'named_condensed' -- ((np no) ...) for consistency
 
                                 -- these are for cases where the graph is not split into named/bnode
                                 -- but where the named record and bnode record are paired and then
                                 -- identified, we don't use it for a full graph right now but we
                                 -- do use it for metadata
-                                'graph',
+                                --'graph', -- FIXME we can't use this because it will overwrite the named_embedded_seq in cases where there are no bnodes in the graph, this is why we use graph_combined to distinguish, we can spot these cases by looking for hasBnodeGraph null-identity cases in irels
+                                /* -- these also cannot be used due to conflicts in cases where there are no bnodes
                                 'condensed_seq',
                                 'condensed',
                                 'embedded_seq',
-                                'embedded',
+                                'embedded'
+                                */
 
+                                /* -- these cannot be separate types because a graph with a single metadata record
+                                -- will then have two types which will break reconstruction queries
                                 'metadata_graph',
                                 'metadata_graph_combined',
                                 'truncated_metadata_graph', -- multi-parent shared subgraph case
                                 'truncated_metadata_graph_combined'
+                                */
 
                                 -- singletion identified by hash on triple set  these are not named, that is the whole point, so they don't need to be here
                                 -- 'name-metadata' -- (name, metadata_identity)
@@ -445,23 +452,23 @@ CREATE TYPE source_process AS ENUM ('FileFromIRI',  -- transitive closure be imp
 
 
 CREATE TYPE identity_relation AS ENUM (
-       'hasPart',
-       'dereferencedTo',
+       --'hasPart', -- unused
+       --'dereferencedTo', -- unused
        'parsedTo', -- serialization -> graph_and_local_conventions
 
-       'hasEquivalent', -- use to assert that two different ids produced via different methods identify the same underlying source
+       --'hasEquivalent', -- use to assert that two different ids produced via different methods identify the same underlying source XXX should NOT be used in cases where the inverse edge is already present, i.e. hasNamedGraph XXX also probably shouldn't be used at all in general because it is symmetric and can induce cycles
 
        'hasMetadataGraph', -- ser -> meta (aka 'hasMetadata', but better to match conventions)
-       'hasMetadataRecord', -- metadata_graph -> metadata_record
+       --'hasMetadataRecord', -- metadata_graph -> metadata_record -- XXX metadata_graph no longer exists so remove this
 
        'hasCondensed', -- embedded -> condensed (currently used for metadata to e.g. id unchanged metadata)
 
        'hasLocalConventions', -- graph_and_local_conventions -> local_conventions
-       'hasGraph', -- graph_and_local_conventions -> graph
-       'hasRecord', -- graph -> record (untyped)
-       'hasBnodeGraph', -- graph -> bnode_graph
+       'hasGraph', -- graph_and_local_conventions -> graph_combined
+       --'hasRecord', -- graph -> record (untyped) -- don't use
+       'hasBnodeGraph', -- graph_combined -> bnode_graph
        'hasBnodeRecord', -- bnode_graph -> bnode_record
-       'hasNamedGraph', -- graph -> named_graph XXX note that this is NOT the RDF named graph
+       'hasNamedGraph', -- graph_combined -> named_graph XXX note that this is NOT the RDF named graph
        'hasNamedRecord' -- named_graph -> named_record
 ); -- , 'named', 'pointedTo', 'resolvedTo');
 -- dereferencedTo history can be reconstructed for names -> serialization without a bound name
@@ -490,6 +497,7 @@ CREATE TABLE identity_relations(
        s bytea NOT NULL,
        p identity_relation,
        o bytea NOT NULL,
+       CHECK s != o, -- prevent simple cycles especially e.g. ones involving the null identity
        CONSTRAINT pk__serialization_parts PRIMARY KEY (s, p, o),
        CONSTRAINT fk__identity_relations__s__identities
                   FOREIGN key (s)
@@ -509,7 +517,7 @@ CREATE UNIQUE INDEX un__identity_relations__n1p_s_p
        -- on the object and thus should always be unique, this is not strictly true for
        -- serialization parsesTo graph_and_local_conventions, however it indicates that
        -- the identity function has changed (thus the need for the version field)
-       WHERE p NOT IN ('hasPart', 'dereferencedTo', 'hasBnodeRecord', 'hasNamedRecord');
+       WHERE p NOT IN ('hasBnodeRecord', 'hasNamedRecord');
 
 CREATE INDEX identity_relations_s_index ON identity_relations (s);
 CREATE INDEX identity_relations_p_index ON identity_relations (p);
