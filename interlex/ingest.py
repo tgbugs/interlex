@@ -977,14 +977,9 @@ def process_name_metadata(metadata_to_fetch,
             named, bnode = split_named_bnode(mg)  # sigh, but metadata is small so ok
             named_record_count = len(named)
             bnode_record_count = len(bnode)
+            assert record_count == named_record_count + bnode_record_count
 
             truncated = _dangling(mg)
-            if truncated:  # metadata_embedded is None:
-                _type = 'truncated_metadata'
-                #embedded = metadata_truncated_embedded
-                #condensed = metadata_truncated_condensed
-            else:
-                _type = 'metadata'
 
             graph = metadata_graph.identity
             embedded = metadata_embedded
@@ -1002,6 +997,8 @@ def process_name_metadata(metadata_to_fetch,
             bnode_condensed = metadata_bnode_condensed
 
             ident_rows = (
+                ('graph_combined', combined, record_count),
+
                 ('named_embedded_seq', named, named_record_count),
                 ('named_embedded', named_embedded, named_record_count),
                 ('named_condensed', named_condensed, named_record_count),
