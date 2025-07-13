@@ -497,7 +497,7 @@ CREATE TABLE identity_relations(
        s bytea NOT NULL,
        p identity_relation,
        o bytea NOT NULL,
-       CHECK s != o, -- prevent simple cycles especially e.g. ones involving the null identity
+       CHECK (s != o), -- prevent simple cycles especially e.g. ones involving the null identity
        CONSTRAINT pk__serialization_parts PRIMARY KEY (s, p, o),
        CONSTRAINT fk__identity_relations__s__identities
                   FOREIGN key (s)
