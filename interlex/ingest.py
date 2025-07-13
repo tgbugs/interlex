@@ -894,6 +894,7 @@ def process_name_metadata(metadata_to_fetch,
     irels = set()
     name_rows = []
     name_to_idents = []
+    _other_combined = None
     for metadata in (metadata_not_to_fetch, metadata_to_fetch):
         if metadata is None:
             continue
