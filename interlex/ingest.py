@@ -39,6 +39,9 @@ except ModuleNotFoundError as e:
 
 log = log.getChild('ingest')
 
+# sometimes we need to fix conflicting values that are otherwise immutable
+# e.g. because I screwed up the implementation
+temp_fix = False
 
 # ocdn is used extensively at the moment because it uses less memory
 # to try to insert and fail than it does to compute collective identities
@@ -51,6 +54,10 @@ log = log.getChild('ingest')
 # table then this will mask the issue, ANOTHER area that is a risk
 # is if the identity function changes, inducing silent conflicts
 ocdn = 'ON CONFLICT DO NOTHING'
+
+# ociut is used in cases where we have made a mistake in the impl and
+# need to fix existing data, and a temporary grant is needed
+ociut = 'ON CONFLICT (identity) DO UPDATE SET type = EXCLUDED.type, record_count = EXCLUDED.record_count'
 
 _batchsize = 20000  # good enough, could profile more to tune better
 
@@ -138,6 +145,16 @@ class GenNTParser(nt.W3CNTriplesParser):
             raise ParseError("Trailing garbage: {}".format(self.line))
 
         return subject, predicate, object_
+
+
+def check_metadata_subjects(metadata):
+    metadata_subjects = set(
+        s for s in metadata.graph.subjects()
+        if isinstance(s, rdflib.URIRef))
+    if len(metadata_subjects) > 1:
+        msg = (f'{len(metadata_subjects)} > 1 subject in the metadata graph for '
+               f'{metadata} {metadata_subjects}')
+        raise ValueError(msg)
 
 
 def gent(path):
@@ -873,8 +890,8 @@ def process_name_metadata(metadata_to_fetch,
     # we can store the distance from the identity in the resolution chain
 
     # bound name can dereference vs can't dereference
-    idents = []
-    irels = []
+    idents = set()
+    irels = set()
     name_rows = []
     name_to_idents = []
     for metadata in (metadata_not_to_fetch, metadata_to_fetch):
@@ -935,6 +952,7 @@ def process_name_metadata(metadata_to_fetch,
         if bound_name is not None:
             # trunc first because non-trunc is impossible at this point if dangling
             mg = metadata.graph
+            check_metadata_subjects(metadata)
             # we are not using graph_combined for this
             # also, metadata_graph is needed in cases where we have non-truncated multi-parent
             # but that can usually only be calculated from the full graph, so a separate phase
@@ -982,60 +1000,83 @@ def process_name_metadata(metadata_to_fetch,
             named_condensed = metadata_named_condensed
             bnode_condensed = metadata_bnode_condensed
 
-            idents.extend((
-                (f'{_type}_graph', graph, record_count),
-                (f'{_type}_graph_combined', combined, record_count),
-                # FIXME this isn't quite right ... conn free seq needs to be in here
-
-                ('embedded', embedded, record_count),
-                ('condensed', condensed, record_count),
-
+            ident_rows = (
                 ('named_embedded_seq', named, named_record_count),
                 ('named_embedded', named_embedded, named_record_count),
                 ('named_condensed', named_condensed, named_record_count),
 
                 ('bnode_conn_free_seq', bnode, bnode_record_count),
                 ('bnode_condensed', bnode_condensed, bnode_record_count),
-            ))
+            )
+            for _r in ident_rows:
+                _t, _i, _c = _r
+                if _c == 0:
+                    # empty is empty so we can't change the type
+                    continue
+
+                idents.add(_r)
 
             si_or_gclc_identity = serialization_identity or graph_combined_local_conventions_identity
             if si_or_gclc_identity:
-                irels.extend(
-                    ((si_or_gclc_identity, 'hasMetadataGraph', graph),
-                     (si_or_gclc_identity, 'hasMetadataGraph', combined),
-                     ))
+                # XXX DUH unique constraint on s p >_<
+                if _other_combined is None:
+                    _other_combined = combined
+                elif _other_combined != combined:
+                    # XXX FIXME BEWARE if for some reason metadata_to_fetch and
+                    # metadata_not_to_fetch are different for whatever reason
+                    # then the second insert will fail silently so we raise here
+                    breakpoint()
+                    msg = f'{_other_combined} != {combined}'
+                    raise ValueError(msg)
 
-            irels.extend(
-                ((graph, 'hasEquivalent', combined),
+                irels.add((si_or_gclc_identity, 'hasMetadataGraph', combined))
 
-                 (graph, 'hasMetadataRecord', embedded),
-                 (embedded, 'hasCondensed', condensed),
+            irels_rows = (
+                (combined, 'hasNamedGraph', named),
+                (combined, 'hasBnodeGraph', bnode),
+                (named, 'hasNamedRecord', named_embedded),
+                (named_embedded, 'hasCondensed', named_condensed),
+                (bnode, 'hasBnodeRecord', bnode_condensed),  # XXX might miss free but dedupe should cover it?
+                # FIXME if this is not truncated then bnode_condensed
+                # will be a subgraph identity, if it is truncated then
+                # we have map metadata_graph_combined to truncated_metadata_graph_combined
+                # i think going via bound name will work
+                )
+            for _r in irels_rows:
+                _s, _p, _o = _r
+                if _s == _hbn.null_identity:
+                    continue
 
-                 (combined, 'hasNamedGraph', named),
-                 (combined, 'hasBnodeGraph', bnode),
-                 (named, 'hasNamedRecord', named_embedded),
-                 (named_embedded, 'hasCondensed', named_condensed),
-                 (bnode, 'hasBnodeRecord', bnode_condensed),  # XXX might miss free but dedupe should cover it?
-                 # FIXME if this is not truncated then bnode_condensed
-                 # will be a subgraph identity, if it is truncated then
-                 # we have map metadata_graph_combined to truncated_metadata_graph_combined
-                 # i think going via bound name will work
-
-                ))
+                irels.add(_r)
 
     if name_rows:
         yield prepare_batch('INSERT INTO names (name) VALUES', [(n,) for n in name_rows], ocdn)
 
     if idents:
-        yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 8 */',
-                            idents,
-                            ocdn,)
+        yield prepare_batch(
+            'INSERT INTO identities (type, identity, record_count) VALUES /* 8 */',
+            list(idents),
+            (ociut if temp_fix else ocdn),
+        )
 
     if name_to_idents:
         yield prepare_batch('INSERT INTO name_to_identity (name, identity, type) VALUES', name_to_idents, ocdn)
 
     if irels:
-        yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
+        if temp_fix:
+            # plpgsql doesn't support multiple conflict targets at the moment
+            # so we have to hand primary key issues first before dealing with
+            # the unique partial index
+            yield prepare_batch(
+                'CREATE TEMP TABLE toinsirs(s bytea, p identity_relation, o bytea); INSERT INTO toinsirs (s, p, o) VALUES',
+                list(irels),
+                ("; INSERT INTO identity_relations (s, p, o) "
+                 "SELECT * FROM toinsirs AS ti "
+                 "WHERE (ti.s, ti.p, ti.o) NOT IN "
+                 "(select * from identity_relations) ON CONFLICT (s, p) WHERE p NOT IN ('hasBnodeRecord', 'hasNamedRecord') "
+                 "DO UPDATE SET o = EXCLUDED.o"))
+        else:
+            yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', list(irels), ocdn)
 
 
 def process_local_conventions(local_conventions, local_conventions_count, dout=None):
@@ -1103,7 +1144,7 @@ def process_post(
     irels += ((graph_combined_local_conventions_identity, 'hasGraph', graph_combined_identity),
               (graph_combined_local_conventions_identity, 'hasLocalConventions', local_conventions_identity),)
 
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */', idents, ocdn)
+    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */', idents, (ociut if temp_fix else ocdn))
     yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
 
     if serialization_identity is None:
@@ -1700,7 +1741,7 @@ def prepare_batch(sql, values, suffix='', constant_dict=None):
 
 
 def prepare_batch_named(uri_rows, lit_rows, batch_idents, batch_idni):
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 4 */', batch_idents, ocdn, constant_dict={'nt': 'named_embedded'})
+    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 4 */', batch_idents, (ociut if temp_fix else ocdn), constant_dict={'nt': 'named_embedded'})
     if uri_rows:
         yield prepare_batch('INSERT INTO triples (s, p, o, triple_identity) VALUES', uri_rows, ocdn)
     if lit_rows:
@@ -1917,7 +1958,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embe
     graph_named_identity = sid(accum_embedded)  # FIXME TODO consider inserting serialization hasPart graph_named_identity as temp for recovery?
     irels = [(e,) for e in accum_embedded]
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 6 */',
-                        ((graph_named_identity, total),), ocdn,
+                        ((graph_named_identity, total),), (ociut if temp_fix else ocdn),
                         constant_dict={'nt': 'named_embedded_seq'})
 
     # FIXME pr hits missing identities here somehow possibly an off by one error at the end of the loop?
@@ -2139,6 +2180,7 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
 
     # XXX XXX XXX preamble
     metadata.graph
+    check_metadata_subjects(metadata)
     bound_name = metadata.identifier_bound
     bound_version_name = metadata.identifier_version
 

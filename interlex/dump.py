@@ -994,7 +994,7 @@ with ser_idtys as (
   select irs.o
   from identity_relations as irs
   join identities as ids on irs.o = ids.identity
-  where irs.p = 'hasGraph' and(ids.type = 'graph_combined') and irs.s in (select * from gclc_idtys)
+  where irs.p = 'hasGraph' and (ids.type = 'graph_combined') and irs.s in (select * from gclc_idtys)
 ), named_idtys as (
   select irs.o
   from identity_relations as irs
