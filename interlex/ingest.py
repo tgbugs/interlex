@@ -79,9 +79,16 @@ CustomTurtleSerializer.symmetric_predicates = []
 
 
 class no_lower(str):
+
     def lower(self):
         # for when you really need to make sure no one can downcase
         return self
+
+    def __hash__(self):
+        return str.__hash__(self)
+
+    def __eq__(self, other):
+        return type(self) == type(other) and str(self) == str(other)
 
 
 def _nonorm__new__(cls, *args, normalize=False, **kwargs):
