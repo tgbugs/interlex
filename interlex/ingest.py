@@ -1103,8 +1103,11 @@ def process_post(
     if dout is None:
         dout = {}
 
-    idents = tuple()
-    irels = tuple()
+    # use set here because there can be duplicate identities in cases
+    # where there are e.g. annotated restrictions where the subject
+    # and predicate are different but the literal bnode has the same ident
+    idents = set()
+    irels = set()
 
     nri = dout['named_record_identities']
     bri = dout['bnode_record_identities']
@@ -1116,11 +1119,14 @@ def process_post(
         _bid, brc = bri[_s] if _s in bri else (None, 0)
         rcid = oid(_hbn.null_identity if _nid is None else _nid,
                    _hbn.null_identity if _bid is None else _bid)
-        idents += (('record_combined', rcid, nrc + brc),)  # FIXME lol alloc
+        idents.add(('record_combined', rcid, nrc + brc))  # FIXME lol alloc
         if _nid is not None:
-            irels += ((rcid, 'hasNamedRecord', _nid),)
+            irels.add((rcid, 'hasNamedRecord', _nid))
         if _bid is not None:
-            irels += ((rcid, 'hasBnodeRecord', _bid),)
+            irels.add((rcid, 'hasBnodeRecord', _bid))
+
+    idents = tuple(idents)
+    irels = tuple(irels)
 
     graph_combined_identity = oid(graph_named_identity, graph_bnode_identity)
     dout['graph_combined_identity'] = graph_combined_identity
