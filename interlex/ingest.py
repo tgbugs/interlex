@@ -873,6 +873,25 @@ def process_serialization(serialization_identity, record_count):
     yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 7 */', idents, ocdn)
 
 
+def compare_metadata(metadata, metadata_version):
+    hu = metadata._progenitors['stream-http'].headers
+    hv = metadata_version._progenitors['stream-http'].headers
+    keys = 'ETag', 'Last-Modified', 'Content-Length'
+    not_matched = False
+    for k in keys:
+        if k in hu and k in hv:
+            matched = hu[k] == hv[k]
+            if not matched:
+                not_matched = k, hu[k], hv[k]
+                break
+
+    # not_matched and matched are intentionally asymmetric
+    # because missing keys are both matched and not_matched
+    # and we can only act on mismatched keys, if they are not
+    # explicitly mismatched then we need to check the diff
+    return not_matched
+
+
 def process_name_metadata(metadata_to_fetch,
                           metadata_not_to_fetch,
                           serialization_identity=None,
@@ -895,6 +914,16 @@ def process_name_metadata(metadata_to_fetch,
     # FIXME we want more than just name -> identity
     # we need the date, we can flattenthe dereference chain for now
     # we can store the distance from the identity in the resolution chain
+
+    if metadata_to_fetch and metadata_not_to_fetch:
+        _a, _r, _nc = metadata_to_fetch.graph.diffFromGraph(metadata_not_to_fetch.graph)
+        if _a or _r:
+            # if we somehow get both of these a mismatch should already
+            # have been handled before we get here because any difference
+            # means by definition that the identities will be different
+            msg = (f'diff added {list(_a)} diff removed {list(_r)} '
+                   f'for {metadata_to_fetch} {metadata_not_to_fetch}')
+            raise ValueError(msg)
 
     # bound name can dereference vs can't dereference
     idents = set()
@@ -1023,17 +1052,6 @@ def process_name_metadata(metadata_to_fetch,
 
             si_or_gclc_identity = serialization_identity or graph_combined_local_conventions_identity
             if si_or_gclc_identity:
-                # XXX DUH unique constraint on s p >_<
-                if _other_combined is None:
-                    _other_combined = combined
-                elif _other_combined != combined:
-                    # XXX FIXME BEWARE if for some reason metadata_to_fetch and
-                    # metadata_not_to_fetch are different for whatever reason
-                    # then the second insert will fail silently so we raise here
-                    breakpoint()
-                    msg = f'{_other_combined} != {combined}'
-                    raise ValueError(msg)
-
                 irels.add((si_or_gclc_identity, 'hasMetadataGraph', combined))
 
             irels_rows = (
@@ -2208,9 +2226,30 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
             # switching them here in this case because that is already handled
             # using localfs and the relevant name metadata will be inserted as
             # expected TODO consider storing a compressed checksum as well?
-            metadata_to_fetch = metadata_version
-            metadata_not_to_fetch = metadata
-        except requests.exceptions.HTTPError:
+            not_matched = compare_metadata(metadata, metadata_version)
+            if not_matched:
+                msg = (f'metadata and metadata_version mismatch {not_matched} '
+                       'not fetching metadata_version')
+                log.error(msg)
+                metadata_to_fetch = metadata
+                metadata_not_to_fetch = None
+            else:
+                _a, _r, _nc = metadata.graph.diffFromGraph(metadata_version.graph)
+                if _a or _r:
+                    # if metadata_version does not match then abort because it means that
+                    # the bound version in metadata is garbage
+                    msg = (f'diff added {list(_a)} diff removed {list(_r)} '
+                           f'for {metadata} {metadata_version} '
+                           'not fetching metadata_version')
+                    log.error(msg)
+                    metadata_to_fetch = metadata
+                    metadata_not_to_fetch = None
+                else:
+                    # as far as we can tell everything is ok
+                    metadata_to_fetch = metadata_version
+                    metadata_not_to_fetch = metadata
+        except requests.exceptions.HTTPError as e:
+            log.exception(e)
             metadata_to_fetch = metadata
             metadata_not_to_fetch = None
 
