@@ -98,7 +98,7 @@ import base64
 from pathlib import Path
 from urllib.parse import urlparse
 import requests
-from pyontutils import clifun as clif
+import clifn as clif
 from pyontutils.utils import setPS1
 from pyontutils.namespaces import PREFIXES as uPREFIXES
 from interlex.utils import printD, log as _log

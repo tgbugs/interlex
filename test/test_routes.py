@@ -35,6 +35,12 @@ def makeTestRoutes(limit=1):
     #operations = ('user-new', 'login')
     #pages = 'email-verify', 'orcid-verify', 'api-tokens', 'org-new', 'logout', 'settings'
     users_role = 'tgbugs',
+    pulls = '1', '3129', '2',
+    qt_starts = 'ILX:0101431',
+    qt_preds = 'rdfs:subClassOf', 'ilx.partOf:',
+    dns_hosts = 'purl.obolibrary.org',
+    dns_paths = 'obo/UBERON_0000955',
+    dns_path_exts = tuple(f'{p}.{e}' for p in dns_paths for e in extensions)
 
     options = {
         '*ilx_pattern': ilx_patterns,
@@ -66,6 +72,17 @@ def makeTestRoutes(limit=1):
         '*ont_ilx_get': ilx_patterns_extensions,
         '*<uris_filename>': filenames,
         '*<path:uris_ont_path>': ont_paths,
+
+        '<dns_host>': dns_hosts,
+        '*<path:dns_path>': dns_paths,
+        '*<path:dns_path>.<extension>': dns_path_exts,
+
+        '<pull>': pulls,
+
+        '<qt_start>': qt_starts,
+        '<qt_predicate>': qt_preds,
+        # TODO
+        # '<record_combined_identity>': record_combined_identities,
     }
     # make cartesian product of combinations
     paths = make_paths(parent_child, options=options, limit=limit)
@@ -190,7 +207,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
         data2, (r3, r4) = self.test_post_entity_new(endpoint='entity-check')
         assert r4.status_code == 200, r4.status_code
         assert not r4.json['existing'], r4.json['existing']
-        breakpoint()
+        #breakpoint()
 
     def test_post_entity_new(self, endpoint='entity-new', data=None):
         self.app.debug = True
@@ -249,7 +266,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
         ent[spred].append(f'lol test brain {diff}')
 
         resp_patch = client.patch(url, headers=headers_patch, json=jld)
-        breakpoint()
+        #breakpoint()
 
     def test_00_post_ontspec(self):
         self.app.debug = True
@@ -259,6 +276,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
         headers = {'Authorization': f'Bearer {token}'}
         data = {'title': 'test ontology',
                 'subjects': [
+                    # FIXME not in test db by default
                     'http://uri.interlex.org/base/ilx_0101431',
                     'http://uri.interlex.org/base/ilx_0101432',
                     #'http://uri.interlex.org/base/ilx_0101433',
@@ -333,7 +351,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         assert resp2.data != resp3_1.data, 'no change?'
         with self.app.app_context():
-            breakpoint()
+            #breakpoint()
             ''
 
     def test_post_user_new(self):

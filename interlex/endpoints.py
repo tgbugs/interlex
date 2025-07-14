@@ -350,6 +350,8 @@ class Endpoints(EndBase):
             '*ilx_get': self.ilx,
 
             'dns': self.dns,
+            '*dns_versions': self.dns_versions,
+            '*<record_combined_identity>': self.dns_get_version,
 
             'lexical': self.lexical,
             'readable': self.readable,
@@ -363,7 +365,7 @@ class Endpoints(EndBase):
             '*ontologies': self.ontologies_,  # Endpoints only
             'ontologies': self.ontologies,
             'version': self.ontologies_version,  # FIXME collision prone?
-            '*dns_version': self.ontologies_dns_version,
+            '*dns_ont_version': self.ontologies_dns_version,
 
             '*ont_ilx_pattern': self.ontologies_ilx,
             '*ont_ilx_get': self.ontologies_ilx,
@@ -558,19 +560,19 @@ class Endpoints(EndBase):
     def other(self, group, frag_pref_id, epoch_verstr_id=None, db=None):
         abort(501, 'TODO')
 
-    @basic
-    def versions(self, group, frag_pref_id, epoch_verstr_id=None, db=None):
-        uri = f'http://uri.interlex.org/base/{frag_pref_id}'
+    def _vers(self, group, uri):
         snr, ttsr, tsr, trr = self.queries.getVerVarBySubject(uri)
+        if not trr:
+            abort(404)
         vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(uri, snr, ttsr, tsr, trr)
         return json.dumps(resp), 200, ctaj
 
-    @basic
-    def get_version(self, group, frag_pref_id, record_combined_identity):
-        # FIXME TODO variant with no deps on frag pref just return whatever is at the id
-        uri = f'http://uri.interlex.org/base/{frag_pref_id}'
+    def _get_ver(self, group, uri, record_combined_identity):
         # FIXME TODO use the new better query
         snr, ttsr, tsr, trr = self.queries.getVerVarBySubject(uri)
+        if not trr:
+            abort(404)
+
         vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(uri, snr, ttsr, tsr, trr)
         # FIXME obviously bad
         fst = None
@@ -586,13 +588,45 @@ class Endpoints(EndBase):
         return resp
 
     @basic
+    def versions(self, group, frag_pref_id, db=None):
+        uri = f'http://uri.interlex.org/base/{frag_pref_id}'
+        return self._vers(group, uri)
+
+    @basic
+    def dns_versions(self, group, dns_host, dns_path):
+        uri = f'http://{dns_host}/{dns_path}'
+        return self._vers(group, uri)
+
+    @basic
+    def dns_get_version(self, group, dns_host, dns_path, record_combined_identity):
+        uri = f'http://{dns_host}/{dns_path}'
+        return self._get_ver(group, uri, record_combined_identity)
+
+    @basic
+    def get_version(self, group, frag_pref_id, record_combined_identity):
+        # FIXME TODO variant with no deps on frag pref just return whatever is at the id
+        # FIXME TODO group ...
+        uri = f'http://uri.interlex.org/base/{frag_pref_id}'
+        return self._get_ver(group, uri, record_combined_identity)
+
+    @basic
     def dns(self, group, dns_host, dns_path, extension=None):
         # FIXME TODO perspective head
         subject = f'http://{dns_host}/{dns_path}'
+        try:
+            resp = self.queries.getBySubject(subject, group)
+        except sa.exc.DataError as e:
+            if e.orig.diag.source_function == 'parse_uri':
+                msg = f'{request.origin} {request.url} {subject} {e.orig.diag.message_primary}'
+                log.debug(msg)
+            else:
+                log.exception(e)
+
+            abort(404)
+
         # FIXME do we want ot use original source curies in this case?
         #curies = {p: n for p, n in self.queries.getCuriesByName(spec_uri)}
         curies = self.queries.getGroupCuries(group)
-        resp = self.queries.getBySubject(subject, group)
         graph = OntGraph(bind_namespaces='none')
         graph.namespace_manager.populate_from(curies)
         te = TripleExporter()
@@ -3713,6 +3747,19 @@ class Versions(Endpoints):
     def curies(self, group, epoch_verstr_id, prefix_iri_curie, db=None):
         return request.path, 501
 
+    @basic
+    def get_version(self, **kwargs):
+        # in theory this could work if the hash version older than the
+        # date provided but that is stilly so abort here instead of
+        # making the uris endpoint generation logic more complicated
+        abort(404)  # TODO ideally remove from uri gen
+
+    @basic
+    def versions(self, **kwargs):
+        # in theory this could return a list of versions older than
+        # the provided epoch but that is a super niche use case
+        abort(404)  # TODO ideally remove from uri gen
+
 
 class Own(Ontologies):
     @basic2
@@ -3944,6 +3991,10 @@ class Diff(Ontologies):
     @basic2
     def versions(self, *args, **kwargs):
         abort(404)  # FIXME ideally remove from uri generation
+
+    @basic2
+    def get_version(self, *args, **kwargs):
+        abort(404)  # TODO ideally remove from uri gen
 
 
 class DiffVersions(Diff, Versions):

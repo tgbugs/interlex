@@ -193,8 +193,8 @@ class InterLexLoad:
         # we want to make sure that only ids that have been minted can be inserted into the triples
         # table ... might need a trigger for that one though
         serialization_identity = None
-        metadata_to_fetch = None
-        metadata_not_to_fetch = self._mntf  # FIXME TODO populate from self._meta_triples
+        metadata_to_fetch = self._mntf  # FIXME TODO populate from self._meta_triples
+        metadata_not_to_fetch = None
         local_conventions = None
         triples = self._meta_triples + self._triples
         do_process_into_session(self._db.session, process_triple_seq,

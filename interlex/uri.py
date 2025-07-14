@@ -72,7 +72,9 @@ def uriStructure():
         '*<path:dns_ontpath>': '<path:ont_path>',
         '*<path:dns_path>': '<path:dns_path>',
         '*<path:dns_path>.<extension>': '<path:dns_path>.<extension>',
-        '*dns_version': 'version',
+        '*dns_versions': 'versions',
+        '*<record_combined_identity>': '<record_combined_identity>',
+        '*dns_ont_version': 'version',
         '*uris_ont': 'uris',
         '*uris_version': 'version',
         '*<uris_filename>': '<filename>',
@@ -196,12 +198,13 @@ def uriStructure():
 
         'dns':                 ['<dns_host>'],
         '<dns_host>':          ['*<path:dns_path>', '*<path:dns_path>.<extension>'],
-        '*<path:dns_path>':    [None, '*dns_version'],
+        '*<path:dns_path>':    [None, '*dns_versions'],
+        '*dns_versions':       [None, '*<record_combined_identity>'],
 
         '*dns_ont':            ['<dns_ont_host>'],
         '<dns_ont_host>':      ['*<path:dns_ontpath>'],
-        '*<path:dns_ontpath>': [None, '*dns_version'],
-        '*dns_version':        ['<epoch_verstr_ont>'],  # FIXME possibly only epoch/dt for these?
+        '*<path:dns_ontpath>': [None, '*dns_ont_version'],
+        '*dns_ont_version':    ['<epoch_verstr_ont>'],  # FIXME possibly only epoch/dt for these?
 
         '<path:ont_path>':     intermediate_filename,  # FIXME this would seem to only allow a single extension?
         '*<path:uris_ont_p>':  uris_intermediate_filename,  # FIXME this would seem to only allow a single extension?

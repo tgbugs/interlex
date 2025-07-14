@@ -11,14 +11,15 @@ class TestQueries(unittest.TestCase):
         queries = Queries(session)
         ss = (
             'http://uri.interlex.org/base/ilx_0101431',
+            # FIXME not ingested by default
             'http://purl.obolibrary.org/obo/UBERON_0000955',
             'http://purl.obolibrary.org/obo/UBERON_0004829',
             'http://purl.obolibrary.org/obo/RO_0002131',  # XXX broken reconstruction of lists for property chain axiom
             'http://purl.obolibrary.org/obo/HP_0003001',
             'http://purl.obolibrary.org/obo/HP_0002001',
-            'http://uri.interlex.org/tgbugs/ontologies/uris/test-6bfbce3594c2/spec',
+            'http://uri.interlex.org/tgbugs/ontologies/uris/test-6bfbce3594c2/spec',  # FIXME def not present
             'http://uri.interlex.org/tgbugs/uris/readable/s0',  # XXX yeah test_ingest_versions and this reveal a nasty bug in getVerVarBySubject
-              )
+        )
         res = []
         for s in ss:
             asdf = snr, ttsr, tsr, trr = queries.getVerVarBySubject(s)

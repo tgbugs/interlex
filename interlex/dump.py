@@ -1251,11 +1251,9 @@ with starts as (
 )
 select s from starts
 )
-and irs0.p != 'hasEquivalent'
 union all
 select irs.s, irs.p, ip.o from identity_relations as irs
 join id_parent as ip on irs.o = ip.s
-and irs.p != 'hasEquivalent'
 )
 '''
         ts_src_common2 = '''
@@ -1277,8 +1275,9 @@ select distinct idp.o as gstart, ids.identity, ids.type, ids.first_seen
 select distinct ids.identity,
 t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity
 {ts_src_common2}
-join identity_relations as irsf1 on irsf1.p = 'hasNamedRecord' and irsf1.s = irsf0.o -- for this use case the named metadata record subset is sufficient
-join identity_named_triples_ingest as inti on inti.named_embedded_identity = irsf1.o
+join identity_relations as irsf1 on irsf1.p = 'hasNamedGraph' and irsf1.s = irsf0.o -- for this use case the named metadata record subset is sufficient
+join identity_relations as irsf2 on irsf2.p = 'hasNamedRecord' and irsf2.s = irsf1.o
+join identity_named_triples_ingest as inti on inti.named_embedded_identity = irsf2.o
 join triples as t on t.triple_identity = inti.triple_identity
 {ts_src_common3}
 '''
