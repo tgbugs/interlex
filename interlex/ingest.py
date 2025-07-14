@@ -42,6 +42,7 @@ log = log.getChild('ingest')
 # sometimes we need to fix conflicting values that are otherwise immutable
 # e.g. because I screwed up the implementation
 temp_fix = False
+ttn = 0
 
 # ocdn is used extensively at the moment because it uses less memory
 # to try to insert and fail than it does to compute collective identities
@@ -1090,11 +1091,13 @@ def process_name_metadata(metadata_to_fetch,
             # plpgsql doesn't support multiple conflict targets at the moment
             # so we have to hand primary key issues first before dealing with
             # the unique partial index
+            global ttn
+            ttn += 1  # ensure temp table has a unique name since we can pass a session and only commit at the end
             yield prepare_batch(
-                'CREATE TEMP TABLE toinsirs(s bytea, p identity_relation, o bytea); INSERT INTO toinsirs (s, p, o) VALUES',
+                f'CREATE TEMP TABLE toinsirs{ttn}(s bytea, p identity_relation, o bytea); INSERT INTO toinsirs{ttn} (s, p, o) VALUES',
                 list(irels),
                 ("; INSERT INTO identity_relations (s, p, o) "
-                 "SELECT * FROM toinsirs AS ti "
+                 f"SELECT * FROM toinsirs{ttn} AS ti "
                  "WHERE (ti.s, ti.p, ti.o) NOT IN "
                  "(select * from identity_relations) ON CONFLICT (s, p) WHERE p NOT IN ('hasBnodeRecord', 'hasNamedRecord') "
                  "DO UPDATE SET o = EXCLUDED.o"))
