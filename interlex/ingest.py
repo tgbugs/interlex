@@ -22,9 +22,9 @@ from rdflib.exceptions import ParserError as ParseError
 from rdflib.plugins.parsers import ntriples as nt
 from sqlalchemy.sql import text as sql_text
 from ttlser.serializers import natsort, CustomTurtleSerializer
-from pyontutils.core import OntGraph, OntMetaIri, OntResIri, OntResPath
+from pyontutils.core import OntGraph, OntMeta, OntMetaIri, OntResIri, OntResPath
 from pyontutils.utils_fast import chunk_list
-from pyontutils.namespaces import owl
+from pyontutils.namespaces import owl, rdf
 from pyontutils.identity_bnode import IdentityBNode, toposort, idf, it as ibn_it, split_named_bnode
 from . import exceptions as exc
 from .core import getScopedSession, makeParamsValues
@@ -1106,15 +1106,20 @@ def process_name_metadata(metadata_to_fetch,
 
 
 def process_local_conventions(local_conventions, local_conventions_count, dout=None):
-    local_conventions_identity = IdentityBNode(local_conventions, as_type=ibn_it['pair-seq']).identity
-    dout['local_conventions_identity'] = local_conventions_identity
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 1 */',
-                        (('local_conventions', local_conventions_identity, local_conventions_count),),
-                        ocdn,)
-    yield prepare_batch('INSERT INTO curies (local_conventions_identity, curie_prefix, iri_namespace) VALUES',
-                        [(p, str(n)) for p, n in local_conventions],
-                        ocdn,
-                        constant_dict={'si': local_conventions_identity})
+    if local_conventions:
+        local_conventions_identity = IdentityBNode(local_conventions, as_type=ibn_it['pair-seq']).identity
+        yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 1 */',
+                            (('local_conventions', local_conventions_identity, local_conventions_count),),
+                            ocdn,)
+        yield prepare_batch('INSERT INTO curies (local_conventions_identity, curie_prefix, iri_namespace) VALUES',
+                            [(p, str(n)) for p, n in local_conventions],
+                            ocdn,
+                            constant_dict={'si': local_conventions_identity})
+    else:
+        local_conventions_identity = _hbn.null_identity
+
+    if dout is not None:
+        dout['local_conventions_identity'] = local_conventions_identity
 
 
 def process_post(
@@ -2110,6 +2115,68 @@ def recons_uri(uri_string, name_type='pointer', debug=True):
         breakpoint()
 
     assert resp == redout['graph_combined_local_conventions_identity'], 'oops'
+
+
+def reingest_gclc(gclc_identity, session=None, debug=False, commit=False, force=False):
+    # TODO will also want reingest_ser
+    if session is None:
+        session = getScopedSession(echo=False, query_cache_size=0)
+
+    q = Queries(session)
+    te = TripleExporter()
+
+    local_convention_rows = q.getCuriesByGCLCIdentity(gclc_identity)
+    curies = {p: n for p, n in local_convention_rows}
+
+    # FIXME this uses quite a bit of memory, we can do better by
+    # replicating what we do with rapper, or even just using rapper
+    # and writing ntriples directly from graph rows instead of using
+    # process_triple_seq ... query from db in named conn link term
+    # though as usual session query_cache_size was part of the issue
+    graph_rows = q.getGraphByGCLCIdentity(gclc_identity)
+    trip_seq = [te.triple(*r) for r in graph_rows]
+
+    # FIXME horribly inefficient, but then this is reingest so whatever
+    s = None
+    for s, p, o in trip_seq:
+        if p == rdf.type and o == owl.Ontology:
+            break
+
+    metagraph = OntGraph(bind_namespaces='none')
+    metagraph.namespace_manager.populate_from(curies)
+    for _s, p, o in trip_seq:
+        if _s == s:
+            if isinstance(o, rdflib.BNode):
+                msg = 'yeah at this point populate a whole graph instead'
+                raise NotImplementedError(msg)
+            metagraph.add((_s, p, o))
+
+    class OntMetaL(OntMeta):
+        def __init__(self):
+            self._identifier = s
+            self._graph = metagraph
+
+    metadata = OntMetaL()
+
+    process_fun = process_triple_seq
+    (serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions
+     ) = (             None, metadata,          None,                  (metagraph.namespace_manager if curies else None))
+    process_args = (trip_seq, serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions)
+    dout = {}
+    do_process_into_session(
+        session, process_fun, *process_args,
+        commit=commit, debug=debug, force=force, dout=dout)
+
+    new_gclc_identity = dout['graph_combined_local_conventions_identity']
+    if gclc_identity != new_gclc_identity:
+        new_graph_rows = q.getGraphByGCLCIdentity(new_gclc_identity)
+        new_trip_seq = [te.triple(*r) for r in new_graph_rows]
+        og = OntGraph().populate_from_triples(trip_seq)
+        ng = OntGraph().populate_from_triples(new_trip_seq)
+        _a, _r, _nc = og.diffFromGraph(ng)
+        breakpoint()
+
+    assert gclc_identity == new_gclc_identity, 'oops'
 
 
 def ingest_ontspec(graph, session=None, debug=False):

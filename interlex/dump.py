@@ -931,8 +931,8 @@ select * from gclc_idtys
         if resp:
             return resp[0][0].tobytes()
 
-    def getCuriesByName(self, name, type='bound', serialization_identity=None):
-        if serialization_identity is None:
+    def getCuriesByName(self, name, type='bound', serialization_identity=None, gclc_identity=None):
+        if serialization_identity is None and gclc_identity is None:
             args = dict(name=name, type=type)
             _sql_ser_idtys = '''
   select ids.identity
@@ -941,16 +941,20 @@ select * from gclc_idtys
   where ids.type = 'serialization' and nti.type = :type and nti.name = :name
   order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
 '''
-
+            _gclc_stuff = self._gclc_stuff
+        elif serialization_identity is None:
+            args = dict(gclc_identity=gclc_identity, type=None, name=None)
+            _sql_ser_idtys = 'select null'
+            _gclc_stuff = '), gclc_idtys as (select :gclc_identity'
         else:
             args = dict(serialization_identity=serialization_identity, type=None, name=None)
             _sql_ser_idtys = 'select :serialization_identity'
-
+            _gclc_stuff = self._gclc_stuff
 
         sql = f'''
 with ser_idtys as (
 {_sql_ser_idtys}
-{self._gclc_stuff}
+{_gclc_stuff}
 ), lc_idtys as (
   select irs.o
   from identity_relations as irs
@@ -967,12 +971,15 @@ where c.local_conventions_identity in (select * from lc_idtys)
     def getCuriesBySerializationIdentity(self, serialization_identity):
         return self.getCuriesByName(None, None, serialization_identity=serialization_identity)
 
-    def getGraphByName(self, name, type='bound', serialization_identity=None):
+    def getCuriesByGCLCIdentity(self, gclc_identity):
+        return self.getCuriesByName(None, None, gclc_identity=gclc_identity)
+
+    def getGraphByName(self, name, type='bound', serialization_identity=None, gclc_identity=None):
         # defaults to latest probably
         # FIXME need to do a query to get the latest first and then call getGraphByIdentity instead of the direct way we do it here, but this is ok for now
         # if we ran this once there were multiple identities pulled in we would serialize all versions into a single file
 
-        if serialization_identity is None:
+        if serialization_identity is None and gclc_identity is None:
             args = dict(name=name, type=type)
             _sql_ser_idtys = '''
   select ids.identity
@@ -981,15 +988,20 @@ where c.local_conventions_identity in (select * from lc_idtys)
   where ids.type = 'serialization' and nti.type = :type and nti.name = :name
   order by first_seen desc limit 1 -- only the most recently first seen identity (not always accurate if we ingest earlier versions later in time, but in principle we can insert a first seen value manually)
 '''
-
+            _gclc_stuff = self._gclc_stuff
+        elif serialization_identity is None:
+            args = dict(gclc_identity=gclc_identity, type=None, name=None)
+            _sql_ser_idtys = 'select null'
+            _gclc_stuff = '), gclc_idtys as (select :gclc_identity'
         else:
             args = dict(serialization_identity=serialization_identity, name=None, type=None)
             _sql_ser_idtys = 'select :serialization_identity'
+            _gclc_stuff = self._gclc_stuff
 
         _sql_common = f'''
 with ser_idtys as (
 {_sql_ser_idtys}
-{self._gclc_stuff}
+{_gclc_stuff}
 ), gc_idtys as (
   select irs.o
   from identity_relations as irs
@@ -1100,6 +1112,9 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
 
     def getGraphBySerializationIdentity(self, serialization_identity):
         return self.getGraphByName(None, None, serialization_identity=serialization_identity)
+
+    def getGraphByGCLCIdentity(self, gclc_identity):
+        return self.getGraphByName(None, None, gclc_identity=gclc_identity)
 
     def getGraphByIdentity(self, identity):
         # TODO smart version that will search the identities table to

@@ -29,8 +29,7 @@ Usage:
     interlex ops api-key   [options]
     interlex ops curies    [options] [<curies-filename>]
     interlex ops curies    [options] (<curie-prefix> <iri-namespace>) ...
-
-
+    interlex ops reingest  [options] <gclc-identity> ...
 
 Commands:
     server api      start a server running the api endpoint (WARNING: OLD)
@@ -90,6 +89,8 @@ Options:
     --proxy=N               number of proxies you are behind [default: 0]
 
     --do-cdes               when running sync include the cdes
+    --force                 force ingest even if ser already parsedTo gclc
+    --commit                commit after each batch during ingest
 
 """
 
@@ -460,7 +461,7 @@ class Ops(clif.Dispatcher):
 
     _post = Post._post
 
-    def _get_session_etc(self):
+    def _get_session_etc(self, query_cache_size=500):
         from .core import getScopedSession, dbUri
         from .config import auth
         if self.options.production:
@@ -473,7 +474,7 @@ class Ops(clif.Dispatcher):
             kwargs['dbuser'] = auth.get('db-user')
             dburi = dbUri(**kwargs)
 
-        session = getScopedSession(dburi=dburi, echo=False)
+        session = getScopedSession(dburi=dburi, echo=False, query_cache_size=query_cache_size)
         return session, group, kwargs
 
     _curies = Post.curies
@@ -615,6 +616,22 @@ class Ops(clif.Dispatcher):
             session.commit()
 
         breakpoint()
+
+    def reingest(self):
+        # pypy3 -m interlex.cli ops reingest a87b9633042221c0f5552ecb7426933e3fa71e354a40d9c42cb9314b4e8f2c90
+        if self.options.production:
+            self._post = lambda : (None, None, None, None)
+
+        # FIXME need to check on hasMetadataGraph mapping because
+        # if there is a serialization identity then it will already
+        # exist and this would duplicate it
+        session, group, db_kwargs = self._get_session_etc(query_cache_size=0)
+        log.debug(db_kwargs)
+        from interlex.ingest import reingest_gclc
+        gis = [bytes.fromhex(i) for i in self.options.gclc_identity]
+        for gclc_identity in gis:
+            reingest_gclc(gclc_identity, session=session, commit=self.options.commit, debug=self.options.debug)
+
 
 def main():
     from docopt import docopt, parse_defaults
