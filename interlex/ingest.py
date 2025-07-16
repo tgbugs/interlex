@@ -510,6 +510,13 @@ def shellout(iri, path, rapper_input_type, logfile, only_local=False):
     return sort_ntriples_files(path)
 
 
+def shellout_from_xz(xz_path):
+    # this is two phase, first is to
+    # xz --decompress ${fn}
+    # the second is to run make-ntriples.xz with with no_xz set
+    raise NotImplementedError('TODO')
+
+
 def sort_ntriples_files(path):
     # it is WAY faster and more memory efficient to
     # topo sort the lines at this stage and rewrite
@@ -2377,6 +2384,18 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
             raw_sord = shellout(name_to_fetch, path, rapper_input_type, logfile, only_local=only_local)
             # FIXME may want to write raw_sord to disk given the time it can take
         else:
+            # can't use *.ntriples or *-bnode.ntriples because they are removed
+            # when we split into subsets
+            ntrip_name_file = working_path / f'{path.stem}-name.ntriples'
+            if not ntrip_name_file.exists():
+                # ntriples cleanup but xz present so rerun case
+                xz_file = path.with_suffix(path.suffix + '.xz')
+                if not xz_file.exists():
+                    msg = f'{final_file} exists but {ntrip_name_file} does not and no xz at {xz_file}'
+                    raise NotImplementedError(msg)
+
+                shellout_from_xz(xz_file)
+
             with open(raw_sord_path, 'rt') as f:
                 # since we write this from python instead of e.g. grep
                 # there is no trailing newline to discard so no [:-1]
