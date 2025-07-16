@@ -184,6 +184,13 @@ def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=True):
                 log.warning(msg)
                 continue
             for mid in sorted(start_to_meta[sid], key=lambda m: meta_first_seen[m]):
+                if mid not in metagraphs:
+                    # something is extremely wrong, usually bad data in irels and idents
+                    # due to a bad checksumming commit or similar
+                    msg = f'no metagraph known for {mid} starting from {sid}'
+                    log.critical(msg)
+                    continue
+
                 g = metagraphs[mid]
                 fsm = isoformat(meta_first_seen[mid].astimezone(timezone.utc))
                 apin = {'first_seen': fsm}
