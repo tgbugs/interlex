@@ -91,6 +91,7 @@ Options:
     --do-cdes               when running sync include the cdes
     --force                 force ingest even if ser already parsedTo gclc
     --commit                commit after each batch during ingest
+    --no-fail               don't error on check failures
 
 """
 
@@ -474,7 +475,8 @@ class Ops(clif.Dispatcher):
             kwargs['dbuser'] = auth.get('db-user')
             dburi = dbUri(**kwargs)
 
-        session = getScopedSession(dburi=dburi, echo=False, query_cache_size=query_cache_size)
+        echo = self.options.debug  # FIXME maybe decouple
+        session = getScopedSession(dburi=dburi, echo=echo, query_cache_size=query_cache_size)
         return session, group, kwargs
 
     _curies = Post.curies
@@ -622,16 +624,29 @@ class Ops(clif.Dispatcher):
         if self.options.production:
             self._post = lambda : (None, None, None, None)
 
+        from interlex.dump import Queries
         # FIXME need to check on hasMetadataGraph mapping because
         # if there is a serialization identity then it will already
         # exist and this would duplicate it
         session, group, db_kwargs = self._get_session_etc(query_cache_size=0)
+        q = Queries(session)
         log.debug(db_kwargs)
         from interlex.ingest import reingest_gclc
         gis = [bytes.fromhex(i) for i in self.options.gclc_identity]
         for gclc_identity in gis:
-            reingest_gclc(gclc_identity, session=session, commit=self.options.commit, debug=self.options.debug)
+            ser = q.getIrelsUp(gclc_identity, match_type='serialization')
+            mg = q.getIrelsDown(gclc_identity, match_predicate='hasMetadataGraph')
+            for r in mg:
+                derp = q.getIrelsDown(r.o, match_type='named_embedded')
+                for dr in derp:
+                    log.debug(q.getNamedEmbeddedSubject(dr.o))
 
+                log.debug([[c.tobytes().hex() if isinstance(c, memoryview) else c for c in r] for r in derp])
+
+            log.debug(([[c.tobytes().hex() if isinstance(c, memoryview) else c for c in r] for r in ser],
+                       [[c.tobytes().hex() if isinstance(c, memoryview) else c for c in r] for r in mg]))
+            reingest_gclc(gclc_identity, session=session, commit=self.options.commit, debug=self.options.debug, force=self.options.force,
+                          no_fail=self.options.no_fail)
 
 def main():
     from docopt import docopt, parse_defaults

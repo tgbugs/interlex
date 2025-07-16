@@ -29,6 +29,34 @@ from interlex.utils import printD, log
 from interlex.config import auth
 from interlex.namespaces import fma
 
+metadata_type_marker_priority = (
+    ilxtr.OntologySpec,  # ilxtr.TermSet needs to be shifted from this ... also reingest the termsets entirely to be proper specs
+    owl.Ontology,
+)
+
+record_types = (
+    owl.Class,
+    owl.AnnotationProperty,
+    owl.ObjectProperty,  # TODO we likely need to include the subproperties here
+    owl.DatatypeProperty,
+    # TODO.FDE
+    # TODO.CDE
+    # TODO.PDE
+    # TODO prov records etc.
+)
+
+non_creatable_record_types = (
+    owl.NamedIndividual,  # this may change at some point but for now no creating named individuals via interlex, though we can display them
+)
+
+conditional_record_types = {
+    ilxtr.OntologySpec: [owl.Ontology,],
+}
+
+# these are the only things that interlex knows about
+# any other rdf:type that is declared will have issues
+known_types = metadata_type_marker_priority + record_types
+
 synonym_types = {'abbrev':ilxtr['synonyms/abbreviation'],
                  'oboInOwl:hasBroadSynonym': ilxtr['synonyms/broad'],  # FIXME just use oboInOwl?
                  'oboInOwl:hasExactSynonym': ilxtr['synonyms/exact'],

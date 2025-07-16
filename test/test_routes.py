@@ -6,8 +6,10 @@ from pyontutils.ontutils import url_blaster
 from interlex import endpoints
 from interlex.uri import uriStructure, run_uri
 from interlex.core import make_paths, remove_terminals
+from interlex.dump import Queries
 from interlex.config import ilx_pattern, auth
 from interlex.config import test_host, test_port
+from interlex.ingest import reingest_gclc
 from interlex.utils import log
 
 
@@ -304,7 +306,12 @@ class TestRoutes(RouteTester, unittest.TestCase):
             assert False, 'oops'
 
         with self.app.app_context():
-            #breakpoint()
+            session = self.app.extensions['sqlalchemy'].session
+            q = Queries(session)
+            s = url.replace(self.prefix, 'http://' + q.reference_host)
+            gclc_id = q.getLatestIdentityByName(s)
+            dout = reingest_gclc(gclc_id, session=session)
+            assert dout['graph_combined_local_conventions_identity'] == gclc_id
             ''
 
     def test_01_patch_ontspec(self):

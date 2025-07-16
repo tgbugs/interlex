@@ -27,7 +27,7 @@ from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import owl, rdf
 from pyontutils.identity_bnode import IdentityBNode, toposort, idf, it as ibn_it, split_named_bnode
 from . import exceptions as exc
-from .core import getScopedSession, makeParamsValues
+from .core import getScopedSession, makeParamsValues, metadata_type_marker_priority
 from .dump import Queries, TripleExporter
 from .utils import log
 
@@ -931,7 +931,6 @@ def process_name_metadata(metadata_to_fetch,
     irels = set()
     name_rows = []
     name_to_idents = []
-    _other_combined = None
     for metadata in (metadata_not_to_fetch, metadata_to_fetch):
         if metadata is None:
             continue
@@ -1879,6 +1878,7 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embe
         subject_condensed_identity = sid(accum_pair)
         subject_embedded_identity = oid(oid(s.encode()), subject_condensed_identity)
         append_embedded(s, subject_embedded_identity, this_subject_count)
+        # duplicates happen here for the metadata graph named metadata record
         batch_idents.append((subject_embedded_identity, this_subject_count))
         batch_idni.extend([(subject_embedded_identity, tid) for tid in accum_trip])
         if batch_after_this_subject:
@@ -2117,7 +2117,7 @@ def recons_uri(uri_string, name_type='pointer', debug=True):
     assert resp == redout['graph_combined_local_conventions_identity'], 'oops'
 
 
-def reingest_gclc(gclc_identity, session=None, debug=False, commit=False, force=False):
+def reingest_gclc(gclc_identity, session=None, debug=False, commit=False, force=False, no_fail=False, dout=None):
     # TODO will also want reingest_ser
     if session is None:
         session = getScopedSession(echo=False, query_cache_size=0)
@@ -2135,14 +2135,29 @@ def reingest_gclc(gclc_identity, session=None, debug=False, commit=False, force=
     # though as usual session query_cache_size was part of the issue
     graph_rows = q.getGraphByGCLCIdentity(gclc_identity)
     trip_seq = [te.triple(*r) for r in graph_rows]
+    #log.debug(len(trip_seq))
 
     # FIXME horribly inefficient, but then this is reingest so whatever
     s = None
+    cands = []
     for s, p, o in trip_seq:
-        if p == rdf.type and o == owl.Ontology:
-            break
+        if p == rdf.type and o in metadata_type_marker_priority:
+            # XXX sadly we cannot break here because we don't know the order
+            # the better way is to do a smarter retrieval from the database
+            cands.append((s, p, o))
+
+    cands = sorted(cands)
+    for ty in metadata_type_marker_priority:
+        # ty is outer to ensure we check higher priority
+        # against all candidates before ending our search
+        for s, p, o in cands:
+            if o == ty:
+                break
 
     metagraph = OntGraph(bind_namespaces='none')
+    # set markers to the matched marker to ensure that the rest of the process
+    # correctly identifies the metadata record
+    metagraph.metadata_type_markers = (o,)
     metagraph.namespace_manager.populate_from(curies)
     for _s, p, o in trip_seq:
         if _s == s:
@@ -2162,7 +2177,8 @@ def reingest_gclc(gclc_identity, session=None, debug=False, commit=False, force=
     (serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions
      ) = (             None, metadata,          None,                  (metagraph.namespace_manager if curies else None))
     process_args = (trip_seq, serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions)
-    dout = {}
+    if dout is None:
+        dout = {}
     do_process_into_session(
         session, process_fun, *process_args,
         commit=commit, debug=debug, force=force, dout=dout)
@@ -2171,12 +2187,24 @@ def reingest_gclc(gclc_identity, session=None, debug=False, commit=False, force=
     if gclc_identity != new_gclc_identity:
         new_graph_rows = q.getGraphByGCLCIdentity(new_gclc_identity)
         new_trip_seq = [te.triple(*r) for r in new_graph_rows]
-        og = OntGraph().populate_from_triples(trip_seq)
-        ng = OntGraph().populate_from_triples(new_trip_seq)
+        og = OntGraph(bind_namespaces='none')
+        og.namespace_manager = metagraph.namespace_manager
+        og.populate_from_triples(trip_seq)
+        ng = OntGraph(bind_namespaces='none')
+        ng.namespace_manager = metagraph.namespace_manager
+        ng.populate_from_triples(new_trip_seq)
         _a, _r, _nc = og.diffFromGraph(ng)
         breakpoint()
 
-    assert gclc_identity == new_gclc_identity, 'oops'
+    if no_fail:
+        if gclc_identity != new_gclc_identity:
+            msg = f'gclc_identity != new_gclc_identity {gclc_identity} != {new_gclc_identity}'
+            log.debug(msg)
+
+    else:
+        assert gclc_identity == new_gclc_identity, 'oops'
+
+    return dout
 
 
 def ingest_ontspec(graph, session=None, debug=False):

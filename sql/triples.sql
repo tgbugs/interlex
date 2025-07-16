@@ -567,6 +567,64 @@ CREATE TABLE identity_named_triples_ingest(
        CONSTRAINT pk__id_nti__named_embedded_identity_triple_identity PRIMARY KEY (named_embedded_identity, triple_identity)
 );
 
+-- name and identity functions that use inti to reconstruct the named embedded identity
+
+CREATE OR REPLACE FUNCTION namedEmbeddedSubject(named_embedded_identity bytea) RETURNS uri AS
+$$
+DECLARE
+subject uri;
+BEGIN
+SELECT t.s into subject
+from identity_named_triples_ingest as inti
+join triples as t on inti.triple_identity = t.triple_identity
+where inti.named_embedded_identity = namedEmbeddedSubject.named_embedded_identity
+limit 1;
+RETURN subject;
+END;
+$$ language plpgsql;
+
+CREATE OR REPLACE FUNCTION reNamedEmbeddedIdentity(named_embedded_identity bytea) RETURNS bytea AS
+$$
+BEGIN
+RETURN
+digest(
+  digest(namedEmbeddedSubject(named_embedded_identity)::text, 'sha256') ||
+  reNamedCondensedIdentity(named_embedded_identity)
+, 'sha256');
+END;
+$$ language plpgsql;
+
+CREATE OR REPLACE FUNCTION reNamedCondensedIdentity(named_embedded_identity bytea) RETURNS bytea AS
+$$
+DECLARE
+res bytea;
+BEGIN
+select digest(string_agg(i, ''::bytea), 'sha256') into res from
+(
+select i from (
+select digest(digest(p::text, 'sha256') || digest(o::text, 'sha256'), 'sha256') as i
+from identity_named_triples_ingest as inti
+join triples as t on inti.triple_identity = t.triple_identity
+where inti.named_embedded_identity = reNamedCondensedIdentity.named_embedded_identity and t.o is not null
+union
+select digest(
+  digest(p::text, 'sha256') ||
+  digest(
+    digest(o_lit, 'sha256') ||
+    digest(coalesce(datatype::text, ''), 'sha256') ||
+    digest(coalesce(language, ''), 'sha256') ,
+    'sha256')
+, 'sha256') as i
+from identity_named_triples_ingest as inti
+join triples as t on inti.triple_identity = t.triple_identity
+where inti.named_embedded_identity = reNamedCondensedIdentity.named_embedded_identity and t.o_lit is not null
+) order by i
+);
+RETURN res;
+END;
+$$ language plpgsql;
+
+
 CREATE TABLE subgraph_triples( -- FIXME not clear whether we need this at all
        triple integer NOT NULL, -- see alters below
        -- subgraph_id integer NOT NULL references identities (id) -- FIXME TODO will almost cert need this for perf

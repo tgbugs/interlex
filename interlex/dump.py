@@ -1591,3 +1591,69 @@ order by p, o, o_lit
 '''
         return list(self.session_execute(sql, args, [bindparam('subjects', type_=ARRAY(uri)),
                                                      bindparam('predicates', type_=ARRAY(uri)),]))
+
+    def getIrelsDown(self, identity, match_type=None, match_predicate=None):
+        args = dict(start=identity)
+        if match_type and match_predicate:
+            where = f'WHERE ot = {match_type!r} and p = {match_predicate!r}'
+        elif match_type:
+            where = f'WHERE ot = {match_type!r}'
+        elif match_predicate:
+            where = f'WHERE p = {match_predicate!r}'
+        else:
+            where = ''
+
+        sql = f'''
+with recursive irstype(s, st, p, ot, o, l) as (
+select irs.s, idss.type as st, irs.p, idso.type as ot, irs.o, 0 as l
+from identity_relations as irs
+join identities as idss on idss.identity = irs.s
+join identities as idso on idso.identity = irs.o
+where irs.s = :start
+UNION ALL
+select irs.s, idss.type as st, irs.p, idso.type as ot, irs.o, it.l + 1 as l
+from identity_relations as irs
+join identities as idss on idss.identity = irs.s
+join identities as idso on idso.identity = irs.o
+join irstype as it on it.o = irs.s
+--where it.l < 10
+--and idss.type != 'named_embedded_seq' -- exclude for big sync
+) select distinct s, st, p, ot, o from irstype
+{where}
+'''
+        return list(self.session_execute(sql, args))
+
+    def getIrelsUp(self, identity, match_type=None, match_predicate=None):
+        args = dict(start=identity)
+        if match_type and match_predicate:
+            where = f'WHERE st = {match_type!r} and p = {match_predicate!r}'
+        elif match_type:
+            where = f'WHERE st = {match_type!r}'
+        elif match_predicate:
+            where = f'WHERE p = {match_predicate!r}'
+        else:
+            where = ''
+
+        sql = f'''
+with recursive irstype_up(s, st, p, ot, o, l) as (
+select irs.s, idss.type as st, irs.p, idso.type as ot, irs.o, 0 as l
+from identity_relations as irs
+join identities as idss on idss.identity = irs.s
+join identities as idso on idso.identity = irs.o
+where irs.o = :start
+UNION ALL
+select irs.s, idss.type as st, irs.p, idso.type as ot, irs.o, it.l + 1 as l
+from identity_relations as irs
+join identities as idss on idss.identity = irs.s
+join identities as idso on idso.identity = irs.o
+join irstype_up as it on it.s = irs.o
+--where it.l < 10
+) select distinct s, st, p, ot, o from irstype_up
+{where}
+'''
+        return list(self.session_execute(sql, args))
+
+    def getNamedEmbeddedSubject(self, named_embedded_identity):
+        args = dict(nei=named_embedded_identity)
+        sql = 'select namedEmbeddedSubject(:nei)'
+        return list(self.session_execute(sql, args))

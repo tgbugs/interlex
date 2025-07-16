@@ -3375,7 +3375,7 @@ class Ontologies(Endpoints):
                 # TODO also make sure that the subjects are actually in interlex
                 subject_types = dbstuff.subjectsObjects(rdf.type, subjects)  # FIXME handle this elsewhere
                 bads = []
-                record_types = {str(owl.Ontology), }
+                record_types = {str(owl.Ontology),}
                 sts = set()
                 for s, o in subject_types:
                     sts.add(s)
