@@ -924,6 +924,7 @@ class Endpoints(EndBase):
         tt = self.queries.getTransitive([s], [p], obj_to_sub=obj_to_sub, depth=depth)
         te = TripleExporter()
         graph = OntGraph()
+        graph.namespace_manager = nm
         for r in tt:
             t = te.triple(r.s, None, r.p, r.o, r.o_lit, r.datatype, r.language)
             graph.add(t)
