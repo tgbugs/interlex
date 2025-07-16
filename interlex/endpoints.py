@@ -279,7 +279,7 @@ def return_page(html=None, data={}, status=200):
     window.close();
 </script>
 </body>
-</html>'''
+</html>''', status
 
 
 class EndBase:
