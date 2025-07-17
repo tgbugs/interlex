@@ -676,6 +676,15 @@ def process_triple_seq(triple_seq, serialization_identity=None,
             return lsp1, natsortlz(t[2])
 
     triple_count = len(triple_seq)
+    unique_triple_count = len(set(triple_seq))
+    if triple_count != unique_triple_count:
+        # despite potential memory usage issues, we have to enforce this check
+        # here, for process_prepared we ensure uniquess in advance, but here
+        # we have to act as a gate keeper, otherwise the identities that we
+        # calculate will be wrong due to duplicate triples and the upstream
+        # process needs to fix that
+        msg = f'triples are not unique {triple_count} != {unique_triple_count}'
+        raise ValueError(msg)
 
     if isinstance(triple_seq, OntGraph):
         if local_conventions is None:
@@ -2142,10 +2151,13 @@ def reingest_gclc(gclc_identity, session=None, debug=False, commit=False, force=
     # though as usual session query_cache_size was part of the issue
     graph_rows = q.getGraphByGCLCIdentity(gclc_identity)
     trip_seq = [te.triple(*r) for r in graph_rows]
+    if not trip_seq:
+        raise ValueError(f'no results for that identity {gclc_identity.hex()} are you on the right database?')
     #log.debug(len(trip_seq))
 
     # FIXME horribly inefficient, but then this is reingest so whatever
     s = None
+    o = None
     cands = []
     for s, p, o in trip_seq:
         if p == rdf.type and o in metadata_type_marker_priority:
@@ -2209,7 +2221,7 @@ def reingest_gclc(gclc_identity, session=None, debug=False, commit=False, force=
             log.debug(msg)
 
     else:
-        assert gclc_identity == new_gclc_identity, 'oops'
+        assert gclc_identity == new_gclc_identity, f'gclc_identity != new_gclc_identity {gclc_identity} != {new_gclc_identity}'
 
     return dout
 

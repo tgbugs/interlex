@@ -3,6 +3,7 @@ import pytest
 import requests
 import secrets
 from pyontutils.ontutils import url_blaster
+from pyontutils.core import OntGraph
 from interlex import endpoints
 from interlex.uri import uriStructure, run_uri
 from interlex.core import make_paths, remove_terminals
@@ -246,29 +247,51 @@ class TestRoutes(RouteTester, unittest.TestCase):
         token = auth.get('interlex-test-api-key')
         headers = {'Authorization': f'Bearer {token}'}
         headers_get = {**headers, 'Accept': 'application/ld+json'}
-        headers_patch = {**headers, 'Content-Type': 'application/ld+json'}
+        headers_patch= {**headers, 'Content-Type': 'application/json'}
+        headers_patch_alt = {**headers, 'Content-Type': 'application/ld+json'}
         diff = secrets.token_hex(6)
 
+        _g = OntGraph()
+        nm = _g.namespace_manager
         url = f'{self.prefix}/{tuser}/ilx_0101431'
         resp = client.get(url, headers=headers_get)
         jld = resp.json
+        nm.populate_from(jld['@context'])
         ont = [o for o in jld['@graph'] if o['@type'] == 'owl:Ontology'][0]
         pred = 'isAbout' if 'isAbout' in ont else 'http://purl.obolibrary.org/obo/IAO_0000136'
-        frag_pref_id = ont[pred]['@id'].rsplit('/')[-1]
+        subject = ont[pred]['@id']
+        frag_pref_id = subject.rsplit('/')[-1]
         # FIXME isAbout also may fail to expand if {group} does not
         # use that curie since we aren't yet merging with base curies
         # XXX this happens if the test user doesn't have curies loaded during config
+        adds = [
+            # XXX NOTE these need to be fully expanded at the moment
+            [subject, nm.expand('ilxr:synonym'), {'type': 'literal', 'value': f'lol wut {diff}',},],
+            [subject, nm.expand('ilxtr:some-predicate'), {'type': 'uri', 'value': nm.expand(f'ilxtr:some-object-{diff}'),},],
+        ]
+        dels = [
+            #[],
+        ]
+        j = {
+            'add': adds,
+            'del': dels,
+        }
+        resp_patch_1 = client.patch(url, headers=headers_patch, json=j)
+        # TODO iterative changes to hit all the states
+        breakpoint()
 
-        # FIXME isAbout iri mismatch somehow base vs group, not unexpected
-        # but is a rendering bug because we don't currently require the group
-        # because we are still using queries.getById instead of
-        # getPerspectiveHeadForId or however it will be named
-        ent = [o for o in jld['@graph'] if o['@id'].endswith(frag_pref_id)][0]
-        spred = 'ilxr:synonym' if 'ilxr:synonym' in ent else 'http://uri.interlex.org/base/readable/synonym'
-        ent[spred].append(f'lol test brain {diff}')
+        alt_way = False
+        if alt_way:
+            # FIXME isAbout iri mismatch somehow base vs group, not unexpected
+            # but is a rendering bug because we don't currently require the group
+            # because we are still using queries.getById instead of
+            # getPerspectiveHeadForId or however it will be named
+            ent = [o for o in jld['@graph'] if o['@id'].endswith(frag_pref_id)][0]
+            spred = 'ilxr:synonym' if 'ilxr:synonym' in ent else 'http://uri.interlex.org/base/readable/synonym'
+            ent[spred].append(f'lol test brain {diff}')
 
-        resp_patch = client.patch(url, headers=headers_patch, json=jld)
-        #breakpoint()
+            resp_patch = client.patch(url, headers=headers_patch, json=jld)
+            #breakpoint()
 
     def test_00_post_ontspec(self):
         self.app.debug = True
@@ -463,6 +486,23 @@ class TestRoutes(RouteTester, unittest.TestCase):
         url = f'{self.prefix}/base/dns/purl.obolibrary.org/obo/RO_0002492'
         resp = self.client.get(url)
 
+    def test_ilx_version_rci(self):
+        self.app.debug = True
+        client = self.app.test_client()
+        tuser = auth.get('test-api-user')
+        token = auth.get('interlex-test-api-key')
+        headers = {'Authorization': f'Bearer {token}'}
+        headers_get_vers = headers
+        headers_get_ver = {**headers, 'Accept': 'text/turtle'}
+
+        base_url = f'{self.prefix}/{tuser}/ilx_0101431'
+        vers_url = base_url + '/versions'
+        resp1 = client.get(vers_url, headers=headers_get_vers)
+        j = resp1.json
+        ver = j['versions'][0]['identity-record']
+        ver_url = vers_url + '/' + ver
+        resp2 = client.get(ver_url, headers=headers_get_ver)
+        breakpoint()
 
 class TestApiDocs(RouteTester, unittest.TestCase):
     def test_docs(self):

@@ -242,11 +242,17 @@ class InterLexLoad:
 
         vervals = list(verwat.values())
 
+        dexr = set()
+        duplicate_ex_rec = defaultdict(list)  # catches multiple rows with identical curies in addition to multiple curies
         ver_curies = defaultdict(lambda:[None, set()])
         for (pref, ilx), rows in verwat.items():
             for row in rows:
                 iri = row.iri  # row[ind('iri')]
                 curie = row.curie  # [ind('curie')]
+                if (pref, ilx, iri, row.version) in dexr:
+                    duplicate_ex_rec[(pref, ilx, iri, row.version)].append(row)
+                else:
+                    dexr.add((pref, ilx, iri, row.version))
                 ver_curies[iri][0] = (pref, ilx)
                 ver_curies[iri][1].add(curie)
 
@@ -281,6 +287,7 @@ class InterLexLoad:
         skips = []
         bads = []
         bads += [(p, a, b) for p, a, b, _ in values if b in dupes]
+        bads += [(p, i, r) for p, i, r, v in duplicate_ex_rec]
         # TODO one of these is incorrect can't quite figure out which, so skipping entirely for now
         for pref, id_, iri, version in values:  # FIXME
             if ' ' in iri:  # sigh, skip these for now since pguri doesn't seem to handled them
@@ -290,11 +297,12 @@ class InterLexLoad:
 
         bads = sorted(bads, key=lambda ab:ab[1])
         # XXX reminder: values comes from start_values and already excludes self referential external ids
+        sbads, sskips, sbad_versions = set(bads), set(skips), set(bad_versions)
         _ins_values = [
             (pref, ilx, iri) for pref, ilx, iri, ver in values if
-            (pref, ilx, iri) not in bads and
-            (pref, ilx, iri) not in skips and
-            (pref, ilx, ver) not in bad_versions]
+            (pref, ilx, iri) not in sbads and
+            (pref, ilx, iri) not in sskips and
+            (pref, ilx, ver) not in sbad_versions]
         ins_values = [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' not in iri]
         user_iris = [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' in iri and 'org/base/' not in iri]
         # base are excluded because existing_iris only refer out HOWEVER
@@ -595,7 +603,8 @@ class InterLexLoad:
         log.debug('synonyms ingest starting')
         synWTF = []
         synWTF_ids = []
-        syn_annos = defaultdict(list)
+        syn_annos = defaultdict(set)
+        done_sy = set()
         for row in data['synonyms']:
             synid, tid, literal, type, version, time = row  # FIXME there are definitely duplicates in here
             if not literal:
@@ -606,11 +615,16 @@ class InterLexLoad:
                 # FIXME somehow possible to get tids that aren't in terms?
                 t = baseUri(tid), ilxr.synonym, rdflib.Literal(literal)  # FIXME TODO whitespace cleanup
                 # FIXME TODO ilxr.exactSynonym is needed in order to more sanely detect and enforce uniqueness beyond just labels
-                triples.append(t)
+                if t not in done_sy:
+                    done_sy.add(t)
+                    triples.append(t)
+
                 if type:  # yay for empty string! >_<
                     stype = self.stype_lookup[type]
-                    syn_annos[t].append((ilxtr.synonymType, stype))
+                    at = (ilxtr.synonymType, stype)
+                    syn_annos[t].add(at)
 
+        done_sy = None
         # FIXME determine whether we add these or whether we return all
         # the rdfstar like things that come out of this and insert them
         # into a proper table, noting that it is really only possible to
@@ -633,14 +647,20 @@ class InterLexLoad:
 
         log.debug('object properties ingest starting')
         WTF = []
+        done_op = set()
         for row in data['object_properties']:
             _, s_id, o_id, p_id, *rest = row
             ids_triple = s_id, p_id, o_id
             try:
                 t = tuple(baseUri(e) for e in ids_triple)
+                if t in done_op:
+                    continue
+                done_op.add(t)
                 triples.append(t)
             except KeyError as e:
                 WTF.append(row)
+
+        done_op = None
 
         re_https = re.compile('^https?://')
         def normalize_annotation_property_object(context, o_raw):
@@ -662,12 +682,16 @@ class InterLexLoad:
         log.debug('annotation properties ingest starting')
         ap_annos = defaultdict(list)
         WTFa = []
+        done_ap = set()
         for row in data['annotation_properties']:  # oof knocks total triples to 12.5 mil
             _, s_id, p_id, o_value, comment, *rest = row
             try:
                 s = baseUri(s_id)
                 o = normalize_annotation_property_object(s, o_value)
                 t = s, baseUri(p_id), o
+                if t in done_ap:
+                    continue
+                done_ap.add(t)
                 triples.append(t)
                 if comment:
                     cstrp = norm_obj(s, comment)
@@ -676,6 +700,7 @@ class InterLexLoad:
             except KeyError as e:
                 WTFa.append(row)
 
+        done_ap = None
         # XXX definitely cannot do this, it explodes the actual number of triples by 3x
         # these need a dedicated table to make it tractable, also the combinator is extremely slow it seems
         # TODO ingest another way
@@ -689,8 +714,12 @@ class InterLexLoad:
         log.debug('subClassOf ingest starting')
         WTF2 = []
         WTF3 = []
+        done_sc = set()
         for row in data['subClassOf']:
             _, s_id, o_id, *rest = row
+            if (s_id, o_id) in done_sc:
+                continue
+            done_sc.add((s_id, o_id))
             try:
                 s, o = baseUri(s_id), baseUri(o_id)
             except KeyError as e:
@@ -713,6 +742,7 @@ class InterLexLoad:
             t = s, p, o
             triples.append(t)
 
+        done_sc = None
         #engine.execute()
         #breakpoint()
 

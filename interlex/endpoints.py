@@ -12,7 +12,7 @@ import requests
 import sqlalchemy as sa
 import flask_login as fl
 from flask import request, redirect, url_for, abort, Response, session as fsession
-from rdflib import URIRef  # FIXME grrrr
+from rdflib import URIRef, Literal  # FIXME grrrr
 from htmlfn import atag, btag, h2tag, htmldoc
 from htmlfn import table_style, render_table, redlink_style
 from pyontutils.core import OntGraph, makeGraph, populateFromJsonLd
@@ -515,7 +515,8 @@ class Endpoints(EndBase):
         frag_pref, id = frag_pref_id.split('_')
         # TODO allow PATCH here with {'add':[triples], 'delete':[triples]}
         # TODO better to accept just modified jsonld
-        if request.method == 'PATCH':
+        patch_alt = False
+        if request.method == 'PATCH' and patch_alt:
             # accepts jsonld or ttl coming back, but it must be well formed
             # and must have the reference to the previous identity
             jld = request.json
@@ -537,6 +538,136 @@ class Endpoints(EndBase):
             graph.namespace_manager.populate_from(jld['@context'])  # FIXME complex contexts
             populateFromJsonLd(graph, jld)
             abort(501)
+        elif request.method == 'PATCH':
+            # this is the add-remove approach
+            # 1. we only allow adds and removes that match the subject being patched
+            # 2. we only allow new adds and existing removes
+            # 3. we always go from the current perspective head or from base or curated
+            j = request.json
+
+            # well formed request
+            if 'add' in j:
+                adds = j['add']
+            else:
+                adds = tuple()
+
+            if 'del' in j:
+                dels = j['del']
+            else:
+                dels = tuple()
+
+            if not adds and not dels:
+                abort(422, 'request missing both "add" and "del" properties or both are empty')
+
+            # valid subject
+            subject = f'http://{self.reference_host}/{group}/{frag_pref_id}'
+            #invalid_adds = [(s, p, o) for s, p, o in adds if isbad(s) or isbad(p) or isbad(o)]
+            # ok, so technically we do now allow triples that have mixed groups
+            # so for example I can't have tgbugs/ilx_1 partOf jgrethe/ilx2
+            # the way we would handle that is to create a new perspective where the underlying
+            # records present a consistent view of the graph at a given point in time and
+            # where the history shows that tgbugs-jgrethe-merge/ilx_1 partOf tgbugs-jgrethe-merge/ilx_2
+            # if we allow random cross group references then the resulting graphs are never well defined
+            # the only exception would be where we have a graph that uses fully materialized versions
+            # that is, the resources refer to exact versions of records using base, then we can mix and match
+            # and have a well defined graph, otherwise point it time requres that records are closed under perspective
+
+            # for sake of simplicity I'm not going to bother with ensuring that the group matches the endpoint
+            # maybe just base or group is sufficient
+
+            # FIXME we need to know the types on the objects, specifically o_lit vs o, s and p are easy for now
+            # FIXME we need a way to track which group originated a given record I don't think we track that at all right now?
+            # basically like perspective head except it is first seen came from group, otherwise when someone
+            # changes to a new perspective head it is lost ... ah yes, actually that is already handled here because
+            # it will be in the metadata bound name that we will insert here, that's how we track it, so if we have
+            # reconvergence we will see that there are two paths and we will be able to select the current group's path
+            # or pick the earliest path, what we don't have when we get the perspective head right now is which
+            # history branch it came from
+            def normtrip(t):
+                if len(t) != 3:
+                    return t, 'not a triple'
+
+                _s, _p, o_or_lit = t
+                if not isinstance(o_or_lit, dict) or 'type' not in o_or_lit or 'value' not in o_or_lit:
+                    return t, 'object missing type'
+
+                o, o_lit = None, None
+                if o_or_lit['type'] == 'literal':
+                    datatype, language = None, None
+                    if 'datatype' in o_or_lit:
+                        datatype = o_or_lit['datatype']
+                    if 'language' in o_or_lit:
+                        language = o_or_lit['language']
+
+                    o_lit = Literal(o_or_lit['value'], datatype=datatype, lang=language)
+                elif o_or_lit['type'] == 'uri':
+                    _o = o_or_lit
+                    #o = rdflib.URIRef(o_or_lit)
+                else:
+                    return t, f'unknown object type {o_lit["type"]}'
+
+                if o is None:
+                    spo = (_s, 's'), (_p, 'p')
+                else:
+                    spo = (_s, 's'), (_p, 'p'), (_o, 'o')
+
+                for e, position in spo:
+                    u = urlparse(e)
+                    if u.netloc == self.reference_host:  # FIXME concerns about frag_pref_id from other hosts
+                        _, u_group, u_frag_pref_id, *u_rest = u.path.split('/')
+                        if u_group not in (group, 'base'):
+                            return t, f'group mismatch {u_group} not in ({group}, base)'
+                        if position == 's' and u_frag_pref_id != frag_pref_id:
+                            return t, f'bad subject {u_frag_pref_id} != {frag_pref_id}'
+
+                        # FIXME replace probably inefficient also, if group base but somehow netloc
+                        # appears a second time prefixed by group then we will have problems
+                        _un = e.replace(f'{u.netloc}/{group}/', f'{u.netloc}/base/', 1)
+                        #npath = f'/base/{u_frag_pref_id}' + ('/' + '/'.join(u_rest) if u_rest else '')
+                        # FIXME beware params vs query and any strange normalization better to use
+                        # some other mechanism probably
+                        #_un = u.__class__(u.scheme, u.netloc, npath, u.params, u.query, u.fragment)
+                        #u_norm = URIRef(_un.geturl())
+                        u_norm = URIRef(_un)
+
+                        if position == 's':
+                            s = u_norm
+                        if position == 'p':
+                            p = u_norm
+                        if position == 'o':
+                            o = u_norm
+
+                return (s, p, o or o_lit), None
+
+            # parse don't validate, but then we have to store the errors until the end
+
+            neadds = [normtrip(t) for t in adds]
+            nedels = [normtrip(t) for t in dels]
+            invalid_adds = [(nt, error) for nt, error in neadds if error]
+            invalid_dels = [(nt, error) for nt, error in nedels if error]
+            invalids = {}
+            if invalid_adds:
+                invalids['add'] = invalid_adds
+            if invalid_dels:
+                invalids['del'] = invalid_dels
+            if invalids:
+                msg = (f'at least one bad triple, see individual records for details\n{invalids}')
+                abort(422, msg)
+
+            nadds = [nt for nt, error in neadds]
+            ndels = [nt for nt, error in nedels]
+
+            # get perspective head TODO maybe cache this at the cost of two roundtrips to the db on a miss?
+            graph_rows = self.queries.getRecordHeadGraphForGroupSubject(group, subject)
+            te = TripleExporter()
+            graph_ex = OntGraph()
+            # FIXME do predicates need to match as well? this part is super tricky
+            for r in graph_rows:
+                graph_ex.add(te.triple(*r))
+
+            self.queries.getPerspectiveHeadFor()
+            # no add     existing
+            # no del non-existing
 
         else:
             func = self._even_more_basic(group, frag_pref, id, db)
@@ -568,22 +699,26 @@ class Endpoints(EndBase):
         return json.dumps(resp), 200, ctaj
 
     def _get_ver(self, group, uri, record_combined_identity):
-        # FIXME TODO use the new better query
-        snr, ttsr, tsr, trr = self.queries.getVerVarBySubject(uri)
-        if not trr:
+        rci = bytes.fromhex(record_combined_identity)
+        grows = self.queries.getByRecordCombined(rci)
+        if not grows:
             abort(404)
 
-        vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(uri, snr, ttsr, tsr, trr)
-        # FIXME obviously bad
-        fst = None
-        for fst, u in uniques.items():
-            if 'versions' in u:
-                if u['versions']['identity-record'] == record_combined_identity:
-                    break
+        te = TripleExporter()
+        graph = OntGraph()
+        for i, *r, f in grows:
+            t = te.triple(*r, None, f)
+            graph.add(t)
 
-        vg = vvgraphs[fst]
+        gs = set(s for s in graph.subjects() if isinstance(s, URIRef))
+        ruri = URIRef(uri)
+        if ruri not in gs:
+            abort(422, f'record combined identity is not for {ruri} rather {gs}')
+
+        # FIXME TODO add metadata record with the relevant metadata for this record
+        # including the record combined identity etc.
         title = f'version graph for {uri} at {record_combined_identity}'
-        resp = tripleRender(request, vg, group, None, None,
+        resp = tripleRender(request, graph, group, None, None,
                             tuple(), title, redirect=False, simple=True)
         return resp
 

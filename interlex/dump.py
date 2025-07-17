@@ -1317,6 +1317,68 @@ join triples as t on t.triple_identity = inti.triple_identity
         triples_resp = f(self.session_execute(triples_sql, args))
         return source_named_resp, ts_to_source_resp, tripsets_resp, triples_resp
 
+    # almost the same as triples_sql for getVerVarBySubject
+    _sql_rec_comb = '''
+with recursive tis as (
+select inti.triple_identity
+from identity_relations as irs
+join identity_named_triples_ingest as inti on irs.o = inti.named_embedded_identity
+where irs.p in ('hasNamedRecord', 'hasBnodeRecord') and
+{where_start}
+), subgraphs(triple_identity, s, s_blank, p, o, o_lit, datatype, language, o_blank, subgraph_identity, next_subgraph_identity) AS (
+    SELECT sg.triple_identity, sg.s, sg.s_blank, sg.p, sg.o,
+           sg.o_lit, sg.datatype, sg.language,
+           sg.o_blank, sg.subgraph_identity,
+           sd.object_subgraph_identity as next_subgraph_identity
+    FROM triples as sg
+    LEFT OUTER JOIN subgraph_deduplication as sd on sg.subgraph_identity = sd.subject_subgraph_identity and sg.o_blank = sd.o_blank
+    WHERE sg.triple_identity in (select * from tis)
+    UNION ALL
+    SELECT tsg.triple_identity, tsg.s, tsg.s_blank, tsg.p, tsg.o,
+           tsg.o_lit, tsg.datatype, tsg.language,
+           tsg.o_blank, tsg.subgraph_identity,
+           sd.object_subgraph_identity as next_subgraph_identity
+    FROM subgraphs as sgs
+    JOIN triples as tsg on
+        (tsg.triple_identity is null or
+         tsg.triple_identity in (select * from tis)
+        ) and (
+         tsg.subgraph_identity = sgs.next_subgraph_identity
+         or (sgs.subgraph_identity = tsg.subgraph_identity and tsg.s_blank is not null and tsg.s_blank >= sgs.o_blank))
+    LEFT OUTER JOIN subgraph_deduplication as sd on
+         tsg.subgraph_identity = sd.subject_subgraph_identity and tsg.o_blank = sd.o_blank
+)
+select distinct * from subgraphs
+order by subgraph_identity, o_blank, p
+'''
+
+    def getByRecordCombined(self, record_combined_identity):
+        """ return the record graph for record_combined_identity """
+        args = dict(rci=record_combined_identity)
+        where_start = 'irs.s = :rci'
+        sql = self._sql_rec_comb.format(where_start=where_start)
+        return list(self.session_execute(sql, args))
+
+    _sql_grh = '''
+select head_identity from perspective_heads
+where
+perspective_id = persFromGroupname(:group)
+and subject = :subject
+'''
+
+    def getRecordHeadForGroupSubject(self, group, subject):
+        """ return the current identity of the perspective head for group and subject """
+        args = dict(group=group, subject=subject)
+        sql = self._sql_grh
+        return list(self.session_execute(sql, args))
+
+    def getRecordHeadGraphForGroupSubject(self, group, subject):
+        """ return the record graph for the identity for perspective head for group and subject """
+        args = dict(group=group, subject=subject)
+        where_start = f'irs.s in ({self._sql_grh})'
+        sql = self._sql_rec_comb.format(where_start=where_start)
+        return list(self.session_execute(sql, args))
+
     def getById(self, frag_pref, id, user):
         """ return all triples associated with an interlex id (curie suffix) """
         uri = f'http://uri.interlex.org/base/{frag_pref}_{id}'  # FIXME reference_host from db ...

@@ -91,6 +91,7 @@ Options:
     --do-cdes               when running sync include the cdes
     --force                 force ingest even if ser already parsedTo gclc
     --commit                commit after each batch during ingest
+    --echo                  enable echo of sql independent of debug
     --no-fail               don't error on check failures
 
 """
@@ -145,7 +146,7 @@ class Main(clif.Dispatcher):
         class db:
             session = _session
 
-        il = InterLexLoad(db, do_cdes=self.options.do_cdes)
+        il = InterLexLoad(db, do_cdes=self.options.do_cdes, debug=self.options.debug)
         il.setup()
         il.load()  # do this one yourself  WARNING high memory usage ~ 17 gigs
         self = il
@@ -475,7 +476,7 @@ class Ops(clif.Dispatcher):
             kwargs['dbuser'] = auth.get('db-user')
             dburi = dbUri(**kwargs)
 
-        echo = self.options.debug  # FIXME maybe decouple
+        echo = self.options.echo
         session = getScopedSession(dburi=dburi, echo=echo, query_cache_size=query_cache_size)
         return session, group, kwargs
 
