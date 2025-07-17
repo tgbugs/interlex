@@ -1121,7 +1121,7 @@ def process_name_metadata(metadata_to_fetch,
 
 
 def process_local_conventions(local_conventions, local_conventions_count, dout=None):
-    if local_conventions:
+    if local_conventions and local_conventions_count > 0:
         local_conventions_identity = IdentityBNode(local_conventions, as_type=ibn_it['pair-seq']).identity
         yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 1 */',
                             (('local_conventions', local_conventions_identity, local_conventions_count),),
@@ -1159,6 +1159,7 @@ def process_post(
 
     nri = dout['named_record_identities']
     bri = dout['bnode_record_identities']
+    cri = set()
     for _s in (set(nri) | set(bri)):
         # we don't insert the null identity into irels here unlike in the
         # graph case because there are way more records than graphs and
@@ -1168,10 +1169,13 @@ def process_post(
         rcid = oid(_hbn.null_identity if _nid is None else _nid,
                    _hbn.null_identity if _bid is None else _bid)
         idents.add(('record_combined', rcid, nrc + brc))  # FIXME lol alloc
+        cri.add(rcid)
         if _nid is not None:
             irels.add((rcid, 'hasNamedRecord', _nid))
         if _bid is not None:
             irels.add((rcid, 'hasBnodeRecord', _bid))
+
+    dout['record_combined_identities'] = sorted(cri)
 
     idents = tuple(idents)
     irels = tuple(irels)
@@ -2241,6 +2245,15 @@ def ingest_ontspec(graph, session=None, debug=False):
     metadata_to_fetch.data_next = nofetch
     metadata_to_fetch._graph = g
     (serialization_identity, metadata_not_to_fetch, local_conventions) = None, None, graph.namespace_manager
+    process_args = (graph, serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions)
+
+    dout = {}
+    do_process_into_session(session, process_triple_seq, *process_args, commit=False, close=False, debug=debug, dout=dout)
+    return dout
+
+def ingest_record(graph, session=None, debug=False):
+    metadata_to_fetch = None  # FIXME TODO put the previous version in the metadata record DUH ? or not, too much space :/
+    (serialization_identity, metadata_not_to_fetch, local_conventions) = None, None, None
     process_args = (graph, serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions)
 
     dout = {}

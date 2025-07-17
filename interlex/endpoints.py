@@ -30,7 +30,7 @@ from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
 from interlex.utils import log as _log
 from interlex.config import ilx_pattern  # FIXME pull from database probably
-from interlex.ingest import ingest_ontspec
+from interlex.ingest import ingest_ontspec, ingest_record
 from interlex.dbstuff import Stuff
 from interlex.vervar import process_vervar
 from interlex.render import TripleRender  # FIXME need to move the location of this
@@ -591,7 +591,7 @@ class Endpoints(EndBase):
                 if not isinstance(o_or_lit, dict) or 'type' not in o_or_lit or 'value' not in o_or_lit:
                     return t, 'object missing type'
 
-                o, o_lit = None, None
+                o, _o, o_lit = None, None, None
                 if o_or_lit['type'] == 'literal':
                     datatype, language = None, None
                     if 'datatype' in o_or_lit:
@@ -601,12 +601,11 @@ class Endpoints(EndBase):
 
                     o_lit = Literal(o_or_lit['value'], datatype=datatype, lang=language)
                 elif o_or_lit['type'] == 'uri':
-                    _o = o_or_lit
-                    #o = rdflib.URIRef(o_or_lit)
+                    _o = o_or_lit['value']
                 else:
                     return t, f'unknown object type {o_lit["type"]}'
 
-                if o is None:
+                if _o is None:
                     spo = (_s, 's'), (_p, 'p')
                 else:
                     spo = (_s, 's'), (_p, 'p'), (_o, 'o')
@@ -665,10 +664,49 @@ class Endpoints(EndBase):
             for r in graph_rows:
                 graph_ex.add(te.triple(*r))
 
-            self.queries.getPerspectiveHeadFor()
             # no add     existing
             # no del non-existing
+            sadds = set(nadds)
+            sdels = set(ndels)
+            idel = set(graph_ex) & sdels
+            abs_del = sdels - idel
+            iadd = set(graph_ex) & sadds
+            msg = ''
+            if iadd:
+                msg += f'attempt to add triples that are already present {iadd}'
+            if abs_del:
+                if iadd:
+                    msg += '\n'
+                msg += f'attempt to del triples that are already absent {abs_del}'
 
+            if msg:
+                # FIXME likely need json resp here as well
+                abort(422, msg)
+
+            graph = OntGraph(bind_namespaces='none')
+            for t in graph_ex:
+                if t not in sdels:
+                    graph.add(t)
+
+            for t in sadds:
+                graph.add(t)
+
+            # TODO add a metadata section on ingest or no? yes! it is where we can put the previous id ... or not, too much space?
+            # but it certainly would simplify things ... maybe the base64 version or something ...
+            dout = ingest_record(graph, self.session)
+            # TODO update history, possibly in irels? or should we do that in ingest record?
+            # or do we move this more complex implementation out of endpoints so it is easier
+            # to test without setting up the test app ... hrm
+            # TODO update perspective head
+            self.session.commit()
+            # FIXME TODO see whether we need to return the updated record
+            # or let the frontend make another query because we don't know
+            # what or when they will need, e.g. adding predicate -> new
+            # options for the hierarchies query, instead we return the new
+            # record combined identity which can be used to get the new version
+            nrci = dout['record_combined_identities'][0]
+            nrcih = nrci.hex()
+            return nrcih, 201
         else:
             func = self._even_more_basic(group, frag_pref, id, db)
             graph, object_to_existing, title, labels = self._ilx_impl(group, frag_pref, id, func)
