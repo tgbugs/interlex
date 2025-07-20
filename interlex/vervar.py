@@ -21,12 +21,12 @@ def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=True):
     # dns terms that are imported/redefined/used in obo ontologies
 
     dd_tindex = defaultdict(list)
-    start_to_meta = defaultdict(set)  # yes the same record can indeed appear in multiple resources, converse not true unless sha256 is broken ...
-    meta_first_seen = {}
+    start_to_gclc = defaultdict(set)  # yes the same record can indeed appear in multiple resources, converse not true unless sha256 is broken ...
+    gclc_first_seen = {}  # FIXME
 
     for tup in ttsr:
-        start_to_meta[tup.gstart].add(tup.identity)
-        meta_first_seen[tup.identity] = tup.first_seen
+        start_to_gclc[tup.gstart].add(tup.identity)
+        gclc_first_seen[tup.identity] = tup.first_seen
 
     dd = defaultdict(set)
     known_bstarts_ts = set()
@@ -113,7 +113,7 @@ def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=True):
     # vervar graphs
     vvgraphs = {}
     for fst, trows in dd.items():
-        graph = OntGraph().populate_from_triples((te.triple(*r[1:-1], 0, r[-1], 0) for r in trows))
+        graph = OntGraph(bind_namespaces='none').populate_from_triples((te.triple(*r[1:-1], 0, r[-1], 0) for r in trows))
         vvgraphs[fst] = graph
         if debug:
             graph.debug()
@@ -125,18 +125,18 @@ def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=True):
 
     # metadata graphs
     dd = defaultdict(list)
-    for mid, *trow in snr:
-        dd[mid].append(trow)
+    for gid, *trow in snr:
+        dd[gid].append(trow)
 
     metagraphs = {}
-    for mid, trows in dd.items():
-        graph = OntGraph().populate_from_triples((te.triple(*r) for r in trows))
-        metagraphs[mid] = graph
+    for gid, trows in dd.items():
+        graph = OntGraph(bind_namespaces='none').populate_from_triples((te.triple(*r) for r in trows))
+        metagraphs[gid] = graph
 
     # unified graph (everything any resource ever included about a subject)
-    ugraph = OntGraph().populate_from_triples((te.triple(*r[1:-1], 0, r[-1], 0) for r in trr))
+    ugraph = OntGraph(bind_namespaces='none').populate_from_triples((te.triple(*r[1:-1], 0, r[-1], 0) for r in trr))
     # make sure we get back what we put in
-    rtugraph = OntGraph()
+    rtugraph = OntGraph(bind_namespaces='none')
     [rtugraph.populate_from(vg) for vg in vvgraphs.values()]
 
     oops = set(ugraph) - set(rtugraph)
@@ -146,7 +146,7 @@ def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=True):
     assert not oops, oops
 
     # the frozensets that are they keys for uniques make links as follows
-    # [metagraphs[meta_identity] for start_identity in uniques[triple_idents_frozenset] for meta_identity in start_to_meta[start_identity]]
+    # [metagraphs[meta_identity] for start_identity in uniques[triple_idents_frozenset] for meta_identity in start_to_gclc[start_identity]]
     # [vervar_graph for vervar_graph in vvgraphs[triple_idents_frozenset]]
     resp = {'type': 'vervar-record',
             'subject': s,
@@ -179,21 +179,24 @@ def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=True):
         }
         appears_in = []
         for sid in sids:
-            if sid not in start_to_meta:  # FIXME something is off here because specs are their own meta record ...
+            if sid not in start_to_gclc:  # FIXME something is off here because specs are their own meta record ...
                 msg = f'sigh {s} {sid.tobytes().hex() if isinstance(sid, memoryview) else sid}'
                 log.warning(msg)
                 continue
-            for mid in sorted(start_to_meta[sid], key=lambda m: meta_first_seen[m]):
-                if mid not in metagraphs:
+            for gid in sorted(start_to_gclc[sid], key=lambda m: gclc_first_seen[m]):
+                if gid not in metagraphs:
                     # something is extremely wrong, usually bad data in irels and idents
                     # due to a bad checksumming commit or similar
-                    msg = f'no metagraph known for {mid} starting from {sid}'
+                    msg = f'no metagraph known for gclc {gid} starting from {sid}'
                     log.critical(msg)
                     continue
 
-                g = metagraphs[mid]
-                fsm = isoformat(meta_first_seen[mid].astimezone(timezone.utc))
-                apin = {'first_seen': fsm}
+                g = metagraphs[gid]
+                fsm = isoformat(gclc_first_seen[gid].astimezone(timezone.utc))
+                apin = {
+                    'identity-gclc': gid,  # FIXME make sure it is actually gclc, need to adjust how we attach metadata
+                    'first_seen': fsm,
+                }
                 types = list(g[:rdf.type:])
                 _s, ty = types[0]
                 apin['uri'] = _s
@@ -217,3 +220,100 @@ def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=True):
         resp['versions'] = versions
 
     return vv, uniques, metagraphs, ugraph, vvgraphs, resp
+
+
+def get_latest_group_subject_hack(queries, group, subject_base):
+    # get perspective head TODO maybe cache this at the cost of two roundtrips to the db on a miss?
+    rci_ex = None
+    graph_rows = queries.getRecordHeadGraphForGroupSubject(group, subject_base)
+    if not graph_rows:
+        # XXX this is a hacked workaround until we have proper history and perspective history and head tracking
+        snr, ttsr, tsr, trr = queries.getVerVarBySubject(subject_base)  # FIXME more efficient single result query please
+        if not trr:
+            return None, None
+
+        vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(subject_base, snr, ttsr, tsr, trr)
+        # XXX ignore vvgraphs that don't include s rdf:type also if there is not metagraph things are
+        # complicated, so yes, we likely want a metagraph record but actually not strictly necessary because
+        # if it is misisng it means that it was just entered, but yeah, we do want to know who originally put it
+        # in and stuff, and now that I have some garbage data in the graph we need a way to separate those out
+
+        if 'versions' in resp:
+            # FIXME this whole approach is bad, and we should not be working from vervar for this
+            # it is a temp hack, but we need a real solution based on perspective_heads
+
+            # FIXME ah, ttsr is not being used to make the mapping because start to gclc is not exported
+            #valid_n_or_b_graph_combined = set(v for vs in uniques.values() for v in vs)  # XXX this is the issue
+
+            # we want the newest version but the oldest appears_in
+            # for group then base (or curated or latest or whatever)
+            newest_group = None
+            newest_base = None
+            newest_other = None
+            for v in resp['versions']:
+                rcid = v['identity-record']
+                group_done, base_done, other_done = False, False, False
+                if 'appears_in' in v:
+                    for ai in v['appears_in'][::-1]:
+                        # oldest last
+                        if group_done and base_done and other_done:
+                            break
+                        if not group_done and group in ai['uri']:  # FIXME bad test
+                            group_done = ai['first_seen'], rcid, group, ai['identity-gclc']
+                        if not base_done and 'base' in ai['uri']:  # FIXME bad test
+                            base_done = ai['first_seen'], rcid, 'base', ai['identity-gclc']
+                        if not (group_done or base_done):
+                            _other_group = ai['uri'].split('/', 4)[-2]
+                            other_done = ai['first_seen'], rcid, _other_group, ai['identity-gclc']
+
+                if group_done:
+                    if newest_group is None:
+                        newest_group = group_done
+                    elif newest_group[0] < group_done[0]:
+                        newest_group = group_done
+
+                elif base_done:
+                    if newest_base is None:
+                        newest_base = base_done
+                    elif newest_base[0] < base_done[0]:
+                        newest_base = base_done
+
+                elif other_done:
+                    if newest_other is None:
+                        newest_other = other_done
+                    elif newest_other[0] < other_done[0]:
+                        newest_other = other_done
+
+            newest = newest_group if newest_group else (newest_base if newest_base else newest_other)
+            if newest:
+                # FIXME and here we see why we need a proper implementation
+                # because this is nonsense
+                gclc_to_start = {r.identity: r.gstart for r in ttsr}
+                nfs, rci_ex, _g, ngclc = newest
+                nstart = gclc_to_start[ngclc]
+                fst = None
+                for fst, u in uniques.items():
+                    if nstart in u:
+                        break
+                if fst is None:
+                    breakpoint()
+                    raise ValueError('derp')
+                graph_ex = vvgraphs[fst]
+            else:
+                graph_ex = OntGraph(bind_namespaces='none')
+        else:
+            graph_ex = OntGraph(bind_namespaces='none')
+
+        rci_ex = bytes.fromhex(rci_ex)  # FIXME sigh
+    else:
+        # FIXME make it a single query
+        rci_rows = queries.getRecordHeadForGroupSubject(group, subject_base)
+        rci_ex = rci_rows[0].head_identity.tobytes()
+
+        te = TripleExporter()
+        graph_ex = OntGraph(bind_namespaces='none')
+        # FIXME do predicates need to match as well? this part is super tricky
+        for i, *r, f in graph_rows:
+            graph_ex.add(te.triple(*r, None, f))
+
+    return graph_ex, rci_ex

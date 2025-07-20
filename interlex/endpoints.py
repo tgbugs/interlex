@@ -30,9 +30,9 @@ from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
 from interlex.utils import log as _log
 from interlex.config import ilx_pattern  # FIXME pull from database probably
-from interlex.ingest import ingest_ontspec, ingest_record
+from interlex.ingest import ingest_ontspec, ingest_record, reingest_gclc
 from interlex.dbstuff import Stuff
-from interlex.vervar import process_vervar
+from interlex.vervar import process_vervar, get_latest_group_subject_hack
 from interlex.render import TripleRender  # FIXME need to move the location of this
 from interlex.notifications import send_message, get_smtp_spec, msg_email_verify, msg_user_recover, msg_user_recover_alt
 
@@ -478,14 +478,25 @@ class Endpoints(EndBase):
         abort(404)
 
     def _ilx_impl(self, group, frag_pref, id, func):
-        PREFIXES, graph = self.getGroupCuries(group)
-        resp = self.queries.getById(frag_pref, id, group)
-        #log.debug(resp)
-        # TODO formatting rules for subject and objects
-        object_to_existing = self.queries.getResponseExisting(resp, type='o')
+        subject_base = f'http://{self.reference_host}/base/{frag_pref}_{id}'
+        graph, erci = get_latest_group_subject_hack(self.queries, group, subject_base)
+        if not graph:
+            abort(404)
 
-        te = TripleExporter()
-        _ = [graph.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
+        # TODO stick erci in graph metadata
+        PREFIXES = self.queries.getGroupCuries(group)
+        graph.namespace_manager.populate_from(PREFIXES)
+        object_to_existing = self.queries.getSimpleExisting(frag_pref, id)
+
+        if False:  # OLD
+            PREFIXES, graph = self.getGroupCuries(group)
+            resp = self.queries.getById(frag_pref, id, group)
+            #log.debug(resp)
+            # TODO formatting rules for subject and objects
+            object_to_existing = self.queries.getResponseExisting(resp, type='o')
+
+            te = TripleExporter()
+            _ = [graph.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
 
         # TODO list users with variants from base and/org curated
         # we need an 'uncurated not latest' or do we?
@@ -561,6 +572,7 @@ class Endpoints(EndBase):
 
             # valid subject
             subject = f'http://{self.reference_host}/{group}/{frag_pref_id}'
+            subject_base = f'http://{self.reference_host}/base/{frag_pref_id}'
             #invalid_adds = [(s, p, o) for s, p, o in adds if isbad(s) or isbad(p) or isbad(o)]
             # ok, so technically we do now allow triples that have mixed groups
             # so for example I can't have tgbugs/ilx_1 partOf jgrethe/ilx2
@@ -621,7 +633,13 @@ class Endpoints(EndBase):
 
                         # FIXME replace probably inefficient also, if group base but somehow netloc
                         # appears a second time prefixed by group then we will have problems
-                        _un = e.replace(f'{u.netloc}/{group}/', f'{u.netloc}/base/', 1)
+                        if '/uris/' in e:
+                            # XXX FIXME TODO figure out whether we replace these or not,
+                            # a simple find and replace is not valid # which is why we
+                            # don't even try to map them back in for now
+                            _un = e
+                        else:
+                            _un = e.replace(f'{u.netloc}/{group}/', f'{u.netloc}/base/', 1)
                         #npath = f'/base/{u_frag_pref_id}' + ('/' + '/'.join(u_rest) if u_rest else '')
                         # FIXME beware params vs query and any strange normalization better to use
                         # some other mechanism probably
@@ -656,18 +674,61 @@ class Endpoints(EndBase):
             nadds = [nt for nt, error in neadds]
             ndels = [nt for nt, error in nedels]
 
-            # get perspective head TODO maybe cache this at the cost of two roundtrips to the db on a miss?
-            graph_rows = self.queries.getRecordHeadGraphForGroupSubject(group, subject)
-            te = TripleExporter()
-            graph_ex = OntGraph()
-            # FIXME do predicates need to match as well? this part is super tricky
-            for r in graph_rows:
-                graph_ex.add(te.triple(*r))
+            pred_no_add = (rdf.type, rdfs.label,)
+            pred_no_del = (rdf.type, rdfs.label, ilxtr.hasExactSynonym,)  # FIXME align ilxtr:hasExactSynonym
+            user_not_allowed_to_modify_special_predicates = True  # FIXME TODO admin only right now
+            if user_not_allowed_to_modify_special_predicates:
+                bads = []
+                for _t in nadds:
+                    _s, _p, _o = _t
+                    if _p in pred_no_add:
+                        # safe for rdf.type are additions and removals of
+                        # subtypes of ObjectProperty, but again, that is
+                        # something that ultimately needs to be coordinated and
+                        # should be merged back to curated as a part of core
+                        # interlex coordination facilities, that is, different
+                        # perspectives shouldn't have transitive/non-transitive
+                        # on the same predicate, there may be a way to design
+                        # around this that is fully flexible, but not sure atm
+                        msg = (f'Cannot add triples with predicate {_p}.'
+                               'We are working on a way to update these safely.')  # FIXME TODO
+                        bads.append((_t, msg))
+
+                bdls = []
+                for _t in ndels:
+                    _s, _p, _o = _t
+                    if _p in pred_no_del:
+                        msg = (
+                            f'Cannot remove triples with predicate {_p}.'
+                            'We are working on a way to update these safely.')  # FIXME TODO
+                        bdls.append((_t, msg))
+
+                invalids = {}
+                if bads:
+                    invalids['add'] = bads
+                if invalid_dels:
+                    invalids['del'] = bdsl
+                if invalids:
+                    msg = (f'at least one triple encountered a permission error, see individual records for details\n{invalids}')
+                    abort(422, msg)
 
             # no add     existing
             # no del non-existing
             sadds = set(nadds)
             sdels = set(ndels)
+            # we check for empty intersection here even though technically we
+            # will catch it later since either the triple must be in existing
+            # so add will fail or not in existing in which case del will fail
+            sad = sadds & sdels
+            if sad:
+                msg = f'cannot add and remove the same triple {sad}'
+                abort(422, msg)
+
+            graph_ex, erci = get_latest_group_subject_hack(self.queries, group, subject_base)
+            if not graph_ex:
+                log.critical(f'something went wrong {request.url}')
+                abort(404)
+
             idel = set(graph_ex) & sdels
             abs_del = sdels - idel
             iadd = set(graph_ex) & sadds
@@ -693,18 +754,40 @@ class Endpoints(EndBase):
 
             # TODO add a metadata section on ingest or no? yes! it is where we can put the previous id ... or not, too much space?
             # but it certainly would simplify things ... maybe the base64 version or something ...
-            dout = ingest_record(graph, self.session)
+            #metagraph = make_record_metagraph(
+            #    self.reference_host, group, frag_pref_id, request.datetime,
+            #    # FIXME TODO see if we really want insert this into triples
+            #    # i think irels or a separate history table would be better
+            #    #prev_record_combined_identity,
+            #    #this_record_combined_identity,  # FIXME work is doubled here
+            #)
+            # we need a minimal metadata record to keep the vervar queries happy right now i think?
+            # or we need a way to at least get first seen even if there is no uri? no we need the uri
+            # we can add version uri from database first seen
+            metagraph = OntGraph(bind_namespaces='none')
+            metasubject = URIRef(f'http://{self.reference_host}/{group}/ontologies/{frag_pref_id}')
+            metagraph.add((metasubject, rdf.type, owl.Ontology)) # FIXME consider an alternate type for interlex single record + metadata graphs
+            [graph.add(t) for t in metagraph]
+            dout = ingest_record(graph, self.session, metagraph=metagraph)
             # TODO update history, possibly in irels? or should we do that in ingest record?
             # or do we move this more complex implementation out of endpoints so it is easier
             # to test without setting up the test app ... hrm
             # TODO update perspective head
+            nrci = dout['record_combined_identities'][URIRef(subject_base)]
+            # TODO likely break out for reuse
+            args = dict(prev=erci, this=nrci, group=group, subject=subject_base)
+            sql = ('INSERT INTO record_combined_history (record_combined_identity, previous, perspective_id) VALUES '
+                   '(:this, :prev, persFromGroupname(:group)) ON CONFLICT DO NOTHING;'
+                   'INSERT INTO perspective_heads (perspective_id, subject, head_identity) VALUES '
+                   '(persFromGroupname(:group), :subject, :this) ON CONFLICT (perspective_id, subject) '
+                   'DO UPDATE SET head_identity = EXCLUDED.head_identity;')
+            self.session_execute(sql, args)
             self.session.commit()
             # FIXME TODO see whether we need to return the updated record
             # or let the frontend make another query because we don't know
             # what or when they will need, e.g. adding predicate -> new
             # options for the hierarchies query, instead we return the new
             # record combined identity which can be used to get the new version
-            nrci = dout['record_combined_identities'][0]
             nrcih = nrci.hex()
             return nrcih, 201
         else:
@@ -737,13 +820,18 @@ class Endpoints(EndBase):
         return json.dumps(resp), 200, ctaj
 
     def _get_ver(self, group, uri, record_combined_identity):
-        rci = bytes.fromhex(record_combined_identity)
+        try:
+            rci = bytes.fromhex(record_combined_identity)
+        except ValueError:
+            # not hex then it definitely doesn't exist
+            abort(404)
+
         grows = self.queries.getByRecordCombined(rci)
         if not grows:
             abort(404)
 
         te = TripleExporter()
-        graph = OntGraph()
+        graph = OntGraph(bind_namespaces='none')
         for i, *r, f in grows:
             t = te.triple(*r, None, f)
             graph.add(t)
@@ -3217,6 +3305,8 @@ class Priv(EndBase):
             resp = {'existing': ex}
             return json.dumps(resp), 409, ctaj
 
+        # FIXME TODO matching labels from the larger set to force promote
+
         return json.dumps({'existing': []}), 200, ctaj
 
     @basic
@@ -3343,7 +3433,7 @@ class Priv(EndBase):
             return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
-<head><title>InterLex New Api Token</title></head>
+<head><title>InterLex New Entity</title></head>
 <body>
 {_entity_new_form}
 </body>
@@ -3359,8 +3449,9 @@ class Priv(EndBase):
             rdf_type = nm.expand_curie(thing['rdf-type'])
             label = thing['label'].strip()
             exact = [e.strip() for e in thing['exact']] if 'exact' in thing else []
+            why_not_promote = None  # FIXME TODO required if there is a term with the label that has not been promoted
             try:
-                resp = dbstuff.newEntity(rdf_type, label, exact)
+                resp = dbstuff.newEntity(group, rdf_type, label, exact)
             except sa.exc.IntegrityError as e:
                 if e.orig.diag.constraint_name == 'current_interlex_labels_and_exacts_pkey':
                     self.session.rollback()
@@ -3374,9 +3465,13 @@ class Priv(EndBase):
                 log.exception(e)
                 abort(501, 'something went wrong')
 
-            new_uri = resp[0].newentity
-            #reiri = new_uri  # XXX this will double redirect in prod
-            reiri = new_uri.replace(self.reference_host, request.host).replace('http://', f'{request.scheme}://')
+            new_uri_gclc = resp[0].newentity
+            _new_uri_pref, new_frag_pref_id, _vgclc, gclc_hex = new_uri_gclc.rsplit('/', 3)
+            new_uri = _new_uri_pref + new_frag_pref_id
+            reiri = f'{request.scheme}://{request.host}/{group}/{new_frag_pref_id}'
+            gclc = bytes.fromhex(gclc_hex)
+
+            redout = reingest_gclc(gclc, self.session, force=True)  # FIXME remove once plpgsql bit is ok probably?
             self.session.commit()
             return redirect(reiri, 303)
         else:

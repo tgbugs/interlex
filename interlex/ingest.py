@@ -1159,7 +1159,7 @@ def process_post(
 
     nri = dout['named_record_identities']
     bri = dout['bnode_record_identities']
-    cri = set()
+    cri = {}
     for _s in (set(nri) | set(bri)):
         # we don't insert the null identity into irels here unlike in the
         # graph case because there are way more records than graphs and
@@ -1169,13 +1169,13 @@ def process_post(
         rcid = oid(_hbn.null_identity if _nid is None else _nid,
                    _hbn.null_identity if _bid is None else _bid)
         idents.add(('record_combined', rcid, nrc + brc))  # FIXME lol alloc
-        cri.add(rcid)
+        cri[_s] = rcid
         if _nid is not None:
             irels.add((rcid, 'hasNamedRecord', _nid))
         if _bid is not None:
             irels.add((rcid, 'hasBnodeRecord', _bid))
 
-    dout['record_combined_identities'] = sorted(cri)
+    dout['record_combined_identities'] = cri
 
     idents = tuple(idents)
     irels = tuple(irels)
@@ -2217,6 +2217,10 @@ def reingest_gclc(gclc_identity, session=None, debug=False, commit=False, force=
         ng.namespace_manager = metagraph.namespace_manager
         ng.populate_from_triples(new_trip_seq)
         _a, _r, _nc = og.diffFromGraph(ng)
+        hrm = [sorted(
+            [[c.tobytes().hex() if isinstance(c, memoryview) else c for c in r]
+             for r in q.getIrelsDown(sigh)]) for sigh in (gclc_identity, new_gclc_identity)]
+
         breakpoint()
 
     if no_fail:
@@ -2251,8 +2255,17 @@ def ingest_ontspec(graph, session=None, debug=False):
     do_process_into_session(session, process_triple_seq, *process_args, commit=False, close=False, debug=debug, dout=dout)
     return dout
 
-def ingest_record(graph, session=None, debug=False):
-    metadata_to_fetch = None  # FIXME TODO put the previous version in the metadata record DUH ? or not, too much space :/
+def ingest_record(graph, session=None, metagraph=None, debug=False):
+    if metagraph is None:
+        # FIXME TODO put the previous version in the metadata record DUH ? or not, too much space :/
+        metadata_to_fetch = None
+    else:
+        assert graph.boundIdentifier == metagraph.boundIdentifier
+        metadata_to_fetch = OntMetaIri(graph.boundIdentifier)
+        def nofetch(*args, **kwargs): return
+        metadata_to_fetch.data_next = nofetch
+        metadata_to_fetch._graph = metagraph
+
     (serialization_identity, metadata_not_to_fetch, local_conventions) = None, None, None
     process_args = (graph, serialization_identity, metadata_to_fetch, metadata_not_to_fetch, local_conventions)
 

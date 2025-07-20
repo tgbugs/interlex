@@ -2,6 +2,7 @@
  'auth-variables': {
      # basics
      'use-real-frag-pref': False,  # when minting ids always use tmp_, only set this to true in a prod config
+     'existing-user-map': None,
      'debug': {
          'default': False,
          'environment-variables': 'INTERLEX_DEBUG',},

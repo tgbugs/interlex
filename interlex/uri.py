@@ -1,13 +1,14 @@
 from pathlib import Path
 from datetime import timedelta
 from collections import OrderedDict as od
-from flask import Flask, url_for, abort, g as flask_context_globals
+from flask import Flask, url_for, abort, g as flask_context_globals, request
 from flask.sessions import SecureCookieSessionInterface
 from flask_restx import Api, Resource, apidoc
 from flask_restx.api import SwaggerView
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 from werkzeug.middleware.proxy_fix import ProxyFix
+from pyontutils.utils_fast import utcnowtz
 from interlex import config
 from interlex.core import dbUri, mqUri, diffCuries, remove_terminals, TERMINAL
 from interlex.core import RegexConverter, make_paths, makeParamsValues
@@ -519,6 +520,10 @@ class NoSessionForToken(SecureCookieSessionInterface):
         return super().save_session(*args, **kwargs)
 
 
+def request_datetime():
+    request.datetime = utcnowtz()
+
+
 def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
                echo=False, dbonly=False, db_kwargs=None, test=False, proxy_n=0):
     if db_kwargs is None:
@@ -555,6 +560,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
 
     app.url_map.converters['regex'] = RegexConverter
     app.session_interface = NoSessionForToken()
+    app.before_request(request_datetime)
 
     db.init_app(app)
     mq.init_app(app)

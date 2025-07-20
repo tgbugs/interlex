@@ -28,9 +28,9 @@ class MysqlExport:
     types = {'term': owl.Class,
              'annotation': owl.AnnotationProperty,
              'relationship': owl.ObjectProperty,
-             'cde': owl.Class,
-             'fde': owl.Class,
-             'pde': owl.Class,  # FIXME or is it a named individual?
+             'cde': owl.Class,  # FIXME BAD
+             'fde': owl.Class,  # FIXME BAD
+             'pde': owl.Class,  # FIXME or is it a named individual? XXX causes problems
              'TermSet': ilxr.TermSet,  # FIXME vs owl:Ontology view
              }
 
@@ -1033,25 +1033,7 @@ with ser_idtys as (
   where sd1.graph_bnode_identity in (select * from bnode_idtys)
 )
 '''
-        _old_sql = f'''{_sql_common}
-select
-t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, null::integer as subgraph_replica, null::bytea as object_subgraph_identity, null::integer as object_replica
-from identity_relations as ird
-join identity_named_triples_ingest as inti on ird.o = inti.named_embedded_identity
-join triples as t on inti.triple_identity = t.triple_identity
-where ird.p = 'hasNamedRecord' and ird.s in (select * from named_idtys)
 
-UNION
-
-select
-t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity, sr.replica as subgraph_replica , sd.object_subgraph_identity, sd.object_replica
-from subgraph_idtys as si
-join triples as t on si.o = t.subgraph_identity
--- NOTE join reps -> all replicas, left join reps -> none with risk of extra conn trips
-join reps as sr on sr.subgraph_identity = t.subgraph_identity and ((t.s is null and sr.s is null) or (sr.s = t.s and sr.p = t.p))
-left join deds as sd on sd.subject_subgraph_identity = sr.subgraph_identity and sd.subject_replica = sr.replica and sd.o_blank = t.o_blank
-
-'''
         _sql_new_part_1 = f'''{_sql_common}
 select
 t.s, t.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language
@@ -1081,14 +1063,22 @@ from reps as sr
 left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and sr.replica = sd.subject_replica
 '''
         # TODO the other option is to batch out the subgraphs i think?
-        yield from self.session_execute(_sql_new_part_1, args)
+        resp1 = self.session_execute(_sql_new_part_1, args)
         #resp1 = list(self.session_execute(_sql_new_part_1, args))
         #resp1 = [(*r, None, None, None) for r in _resp1]  # kwargs handle the nones
-        yield from self.session_execute(_sql_new_part_1_1, args)
+
+        resp1_1 = self.session_execute(_sql_new_part_1_1, args)
         #resp1_1 = list(self.session_execute(_sql_new_part_1_1, args))
 
         resp3 = self.session_execute(_sql_new_part_3, args)
         #resp3 = list(self.session_execute(_sql_new_part_3, args))
+
+        resp2 = self.session_execute(_sql_new_part_2, args)
+        #resp2 = list(self.session_execute(_sql_new_part_2, args))
+
+        yield from resp1
+        yield from resp1_1
+
         lu = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
         for r in resp3:
             if r.object_replica is None:
@@ -1096,8 +1086,6 @@ left join deds as sd on sr.subgraph_identity = sd.subject_subgraph_identity and 
             else:
                 lu[r.subgraph_identity][r.replica][r.o_blank] = (r.object_subgraph_identity, r.object_replica)
 
-        resp2 = self.session_execute(_sql_new_part_2, args)
-        #resp2 = list(self.session_execute(_sql_new_part_2, args))
         #derp = []
         for r in resp2:
             for replica, o_blanks in lu[r.subgraph_identity].items():
@@ -1276,6 +1264,7 @@ from id_parent as idp
 join identities as ids on ids.identity = idp.s
 join identity_relations as irsf0 on irsf0.p = 'hasMetadataGraph' and irsf0.s = idp.s
 '''
+        # FIXME hasMetadataGraph should always go on gclc for consistency
         ts_src_common3 = '''
 where ids.type in ('serialization', 'graph_combined_local_conventions')
 '''
@@ -1354,6 +1343,18 @@ order by subgraph_identity, o_blank, p
 
     def getByRecordCombined(self, record_combined_identity):
         """ return the record graph for record_combined_identity """
+        # FIXME WARNING: the computed record combined identity and the
+        # stored record combined identity may diverage in cases where
+        # there are identical duplicate replica subgraphs because we
+        # remove them when we reconstruct individual records, 99% of
+        # the time this will not matter, however, because what we insert
+        # into irels and idents is technically record_combined_with_replicas
+        # there are cases (as just described) where the ident is different
+        # we encounter the usual issue with overlapping type identity and
+        # can only put record_combined_with_replicas for duplicates, the
+        # other option is to recalculate *_condensed identities without
+        # duplicates, but I'm sure that will cause other issues ... hooray
+        # bnodes :/
         args = dict(rci=record_combined_identity)
         where_start = 'irs.s = :rci'
         sql = self._sql_rec_comb.format(where_start=where_start)
@@ -1547,6 +1548,12 @@ and t.subgraph_identity is not null
             return ilx_prefix, ilx_id
         else:
             return self.getById(group, ilx_prefix, ilx_id)
+
+    def getSimpleExisting(self, frag_pref, id, perspective=None):
+        args = dict(frag_pref=frag_pref, id=id)
+        sql = 'select * from existing_iris where ilx_prefix = :frag_pref and ilx_id = :id'
+        return [(f'http://{self.reference_host}/base/{r.ilx_prefix}_{r.ilx_id}', r.iri)
+                for r in self.session_execute(sql, args)]
 
     def getResponseExisting(self, resp, type='o'):
         rh = self.reference_host

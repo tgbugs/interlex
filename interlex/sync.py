@@ -16,10 +16,494 @@ from interlex.core import synonym_types, dbUri, makeParamsValues
 from interlex.dump import Queries, MysqlExport
 from interlex.load import TripleLoaderFactory, do_gc
 from interlex.utils import log as _log
+from interlex.config import existing_user_map
 from interlex.namespaces import ilxr
 from interlex.ingest import process_triple_seq, do_process_into_session
 
 log = _log.getChild('sync')
+
+
+def fix_laex(self, data, replaced, replacedBys):
+    type_to_owl = MysqlExport.types
+    # we have to deal with the labels and synonyms before we can generate triples
+    # FIXME TODO some of this should surely be fixed upstream, but not right now
+    # FIXME TODO we need to know which of these if any are deprecated
+    # a bunch of these are also just wrong because they somehow took the wrong field
+    # when the correct name is in synonyms ... also it is using subClassOf when it should be partOf oof
+    # consider these two of 12 cases ...
+    # https://uri.olympiangods.org/base/ilx_0742095.html?links=internal
+    # https://uri.olympiangods.org/base/ilx_0747061.html?links=internal
+    label_disaster = defaultdict(list)
+    deprecated = set()  # FIXME TODO
+    deleted = set()
+    derp_tid = {}
+    pi_type = {}  # needed to deal with duplicates that are termsets i think
+    pi_type_raw = {}
+    pi_ouid = {}
+    pi_lab = {}  # not downcased
+    bads = []
+    for row in data['terms']:
+        pref = row.ilx[:3]
+        ilx = row.ilx[4:]
+        pi = pref, ilx
+        derp_tid[row.id] = pi
+        label_disaster[row.label.lower()].append(pi)
+        pi_lab[pi] = row.label
+        if row.status == -1:
+            deleted.add(pi)  # review these because some were mistaken
+        elif row.status == -2:  # deprecated ???
+            deprecated.add(pi)
+
+        # FIXME TODO pi_ouid is needed for personal data elements,
+        # really these should all be merged into a single pde and the
+        # group will be it, but we have to translate all the groups
+        pi_ouid[pi] = row.orig_uid
+        pi_type_raw[pi] = row.type
+        try:
+            pi_type[pi] = type_to_owl[row.type]
+        except KeyError as e:
+            bads.append(row)
+            # troy_test_set not entirely sure what it should be
+            continue
+
+    pi_sco = {}  # there are no multi-parent cases at the moment
+    scobad = []
+    scobads = []
+    for row in data['subClassOf']:
+        if row.tid not in derp_tid:
+            scobad.append(row)
+            if row.superclass_tid not in derp_tid:
+                scobads.append(row)
+            continue
+        elif row.superclass_tid not in derp_tid:
+            scobads.append(row)
+            continue
+
+        pi = derp_tid[row.tid]
+        scopi = derp_tid[row.superclass_tid]
+        pi_sco[pi] = scopi
+
+    hrm = dict(label_disaster)
+    derp = sorted([(l, len(pis), sorted(pis)) for l, pis in hrm.items() if len(pis) > 1], key=lambda abc: (abc[1], abc[0], abc[2]), reverse=True)
+    anypis = {pi: l for l, pis in hrm.items() for pi in pis}
+    badpis = {pi: l for l, _, pis in derp for pi in pis}
+
+    noc = {pi: (l, pi_type[pi]) for pi, l in badpis.items() if pi_type[pi] != owl.Class}
+
+    _pisyn = defaultdict(list)
+    for row in data['synonyms']:
+        #synid, tid, literal, type, version, time = row  # FIXME there are definitely duplicates in here
+        if row.tid not in derp_tid:
+            log.error(f'sigh no term with tid {row.tid} {row.literal} {row.type}')
+            continue
+        pi = derp_tid[row.tid]
+        _pisyn[pi].append(row.literal)
+
+    pisyn = dict(_pisyn)  # candidates for replacement
+
+    hrmsyn = {l: [(pi, (pisyn[pi] if pi in pisyn else None)) for pi in pis] for l, pis in hrm.items() if len(pis) > 1}
+
+    pde_user = {}  # FIXME TODO
+
+    # FIXME also need existing ids for this ...
+
+    # cases where a label should be excluded, the original label can be retained
+    # these are for terms merged cases (for example)
+    exclude_pis = {}  # [pi] = reason
+
+    def getpi(u):
+        p_i = u.rsplit('/', 1)[-1]
+        if '_' not in p_i:
+            log.error((u, p_i))
+            return (None, None)
+        if p_i == '_':
+            # FIXME BAD BAD BAD
+            log.critical(u)
+            return (None, None)
+
+        try:
+            p, i = p_i.split('_')
+        except ValueError:
+            log.critical(u)
+            return (None, None)
+
+        return p, i
+
+    pirb = {getpi(s): getpi(o) for s, p, o in replacedBys}
+    pirbnc = {k: v for k, v in pirb.items() if v[0] != 'cde'}
+    #pieid = {(p, i): getpi(e) for p, i, e in self.eid_values if 'uri.interlex.org' in e}  # empty
+
+    _pieid = defaultdict(list)
+    for p, i, e in self.eid_values:
+        _pieid[(p, i)].append(e)
+    pieid = dict(_pieid)
+
+    already_replaced = set(pirb) & set(badpis)
+    arhrm = {}
+    adupes = set()
+    for ar in already_replaced:
+        _rep = pirb[ar]
+        adupes.add(_rep)
+        arhrm[ar] = (ar, anypis[ar]), (_rep, anypis[_rep])
+
+    # TODO candidate rules
+    # 2 and no syns on one perfer the one with syns, but always mark the duplicates with (duplicate) only on the higher, also check eid/rb
+    # cde and ilx add something to cde to differentiate
+    # many of the duplicate cdes are from NINDS vs ODC-SCI and so need subClassOf to differentiate these few cases
+
+    # time for some rules
+    cde_special_cases = {
+        ('cde', '0100060'): 'Species (CDE)',
+        ('cde', '0368502'): 'Species (VISION-SCI)',
+        ('cde', '0102228'): 'Investigator (ODC-SCI)',
+        ('cde', '0368503'): 'Investigator (VISION-SCI)',
+        ('cde', '0369439'): 'Actuator type (PRECISE-TBI CCIM)',  # possibly misisng a reference to CDE:0369390
+
+        ('cde', '0369968'): 'Barnes Maze test - pretest habituation handling time duration (minutes)',
+        ('cde', '0369971'): 'Barnes Maze test - pretest habituation handling time duration (seconds)',
+
+        ('cde', '0369917'): 'Craniotomy size value (animal)',  # ('cde', '0369935')
+
+        ('cde', '0370006'): 'Imaging slice orientation type (3D)',  # ('cde', '0369775')
+
+        ('cde', '0369906'): 'Neuroseverity score (NSS) - hind limb motor strength sub-score (left)',
+        ('cde', '0369907'): 'Neuroseverity score (NSS) - hind limb motor strength sub-score (right)',
+
+        ('cde', '0369391'): 'Test equipment manufacturer name (PRECISE-TBI CCIM)',  # possible version with ('cde', '0369427')
+
+        ('cde', '0370001'): 'Value of brain region of interest type other (qc)',
+    }
+    ilx_special_cases = {
+        # actually a pde
+        ('ilx', '0739361'): pi_lab[('ilx', '0739361')] + f' (user {existing_user_map[pi_ouid[("ilx", "0739361")]][0]})',
+
+        # http://terminologia-anatomica.org/en/Terms/View?sitemapItemId=100
+        # TODO merge these probably despite the difference in the hierachy also can ingest TA98 hierarchy maybe?
+        # for many of these TA98 cases we may move to merge them
+        # two different latin terms that map to the same english term
+        ('ilx', '0748106'): 'transverse (transversus) (TA98)',  # 26
+        ('ilx', '0743450'): 'transverse (transversalis) (TA98)',  # 27
+
+        # white substance
+        #('ilx', '0741479'):
+        ('ilx', '0747708'): 'white substance OF spinal cord (TA98) (duplicateOf ILX:0741479)',  # this one has more metadata though
+
+        # subthalamus ... confusion in source
+        #('ilx', '0742525'): 'subthalamus (ventral thalamus) (TA98)',  # has children
+        ('ilx', '0747093'): 'subthalamus (A14.1.08.701) (TA98)',
+
+        # venous plexus of cardiovascular system
+        ('ilx', '0747213'): 'venous plexus (rete venosum) (TA98)',
+        ('ilx', '0748123'): 'venous plexus (plexus venosus) (TA98)',
+
+        #thoracic cavity of thorax ... confusion in source
+        #('ilx', '0741602'):,  # has children
+        ('ilx', '0741733'): 'thoracic cavity (A02.3.04.002) (TA98)',
+
+        #thalamus of diencephalon of prosencephalon ... confusion in source
+        ('ilx', '0743241'): 'thalamus (A14.1.08.601) (TA98)',
+        #('ilx', '0748860'):,  # has children
+
+        #tectopontine tract of white substance of tegmentum of midbrain
+        #('ilx', '0743545'):,  # has children
+        ('ilx', '0748305'): 'tectopontine tract (A14.1.06.219) (TA98)',
+
+        # cuneiform tubercle ... confusion in source
+        #('ilx', '0744151'):,
+        ('ilx', '0748807'): 'cuneiform tubercle (A06.2.09.005) (TA98)',
+
+        # corniculate tubercle ... confusion in source
+        #('ilx', '0742514'):,
+        ('ilx', '0747746'): 'corniculate tubercle (A06.2.09.004) (TA98)',
+
+        # cusp OF valve
+        ('ilx', '0742984'): 'cusp OF valve (cuspis) (TA98)',
+        ('ilx', '0747460'): 'cusp OF valve (valvula) (TA98)',
+
+    }
+    ilx_label_special_cases = {
+        'jejunal &amp; ileal plexuses (swannt)': ('ilx', '0740800'),
+    }
+    xdupes = set()
+    repl = {}
+    maybe_multi = {}
+    label_duplicate_of = [
+        (('ilx', '0747708'), ('ilx', '0741479')),  # white substance (TA98)
+    ]
+    for pi, l_norm in badpis.items():
+        if pi in ilx_special_cases:
+            repl[pi] = ilx_special_cases[pi]
+            continue
+
+        p, i = pi
+        # LOL PYTHON comprehensions now allowd to use loop variables >_<
+        others = []
+        for o in  hrm[l_norm]:
+            if o != pi:
+                others.append(o)
+
+        l = pi_lab[pi]
+        if pi in arhrm:
+            _, ((tp, ti), tl) = arhrm[pi]
+            tilx = tp.upper() + ':' + ti
+            #log.info((l, tl))
+            # FIXME most of these aren't actually replacedBy
+            # they are termsMerged and "please don't use this id anymore"
+            # as in the identifier is deprecated, the class is not
+            # maybe equvalentClass is more appropriate in those cases
+            # but it adds noise, these are mostly for record keeping
+            repl[pi] = l + f' (replacedBy {tilx})'
+            continue
+
+        if pi in deprecated:
+            # this helps with maybe 14  # but 5 are still in conflict
+            if pi[0] == 'cde' and l == 'leak':
+                repl[pi] = f'cde leak CDE:{pi[1]} (deprecated)'
+                continue
+            else:
+                maybe_multi[pi] = repl[pi] = l + ' (deprecated)'  # XXX FIXME HACK TEMP
+                # let this fall through because there might be a label duplication we are expecting below
+                # that was missing
+
+        if pi in deleted:
+            # helps with maybe ... 2
+            maybe_multi[pi] = repl[pi] = l + ' (deleted)'  # XXX FIXME HACK TEMP
+
+        if pi in noc and noc[pi][-1] == ilxr.TermSet:
+            if '(termset)' not in l_norm:
+                repl[pi] = l + ' (TermSet)'
+                continue
+
+        if p == 'pde' or pi_type_raw == 'pde':
+            # FIXME this should do replacedBy and converge pdes on the group
+            # we will dedupe these later i think
+            _pouid = pi_ouid[pi]
+            if _pouid not in existing_user_map:  # 45505 looks like it was used for creating the cdes
+                repl[pi] = l + f' (guid {_pouid})'
+            else:
+                ud = existing_user_map[_pouid]
+                temp_group = ud[0]
+                repl[pi] = l + f' (user {temp_group})'
+            continue
+
+        if p == 'cde':
+            # TODO versions first
+            if pi in cde_special_cases:
+                # and let curation sort them out ALCSTO
+                repl[pi] = cde_special_cases[pi]
+                continue
+            elif pi in pi_sco:
+                scopi = pi_sco[pi]
+                pl = anypis[scopi]
+                if scopi == ('ilx', '0794760'):
+                    repl[pi] = l + ' (NINDS-TBI)'
+                    continue
+                elif scopi == ('ilx', '0794909'):
+                    repl[pi] = l + ' (TOP-NT)'
+                    continue
+                elif scopi == ('ilx', '0794941'):
+                    #repl[pi] = l + ' (PRECISE-TBI CCIM)'
+                    repl[pi] = l + ' (PRECISE-TBI)'
+                    continue
+                elif scopi == ('ilx', '0794911'):
+                    #repl[pi] = l + ' (PRECISE-TBI Rotarod)'
+                    repl[pi] = l + ' (PRECISE-TBI)'
+                    continue
+                elif scopi == ('ilx', '0794944'):
+                    #repl[pi] = l + ' (PRECISE-TBI Study)'
+                    repl[pi] = l + ' (PRECISE-TBI)'
+                    continue
+                elif scopi == ('ilx', '0793866'):
+                    #repl[pi] = l + ' (PRECISE-TBI CDE)'
+                    repl[pi] = l + ' (PRECISE-TBI)'
+                    continue
+                elif scopi == ('cde', '0102230'):
+                    # FIXME why does this one use cde and the others ilx?
+                    repl[pi] = l + ' (NDA-CDE)'
+                    continue
+                else:
+                    log.info((scopi, pl))
+
+        if l_norm in ilx_label_special_cases:
+            op, oi = opi = ilx_label_special_cases[l_norm]
+            label_duplicate_of.append((pi, opi))
+            tilx = op.upper() + ':' + oi
+            sighlx = p.upper() + ':' + i + ' '
+            repl[pi] = l + f' {sighlx}(duplicateOf {tilx})'
+            continue
+
+        if '(TA98)' not in l:
+            eid = pieid[pi] if pi in pieid else 'no-eid'
+            np_others = [o for o in others if o[0] != 'pde' and pi_type_raw[o] != 'pde']
+            if len(np_others) == 1:
+                opi = op, oi = np_others[0]
+                if p == 'ilx' and p == op and i > oi and opi not in deleted and opi not in deprecated:
+                    tilx = op.upper() + ':' + oi
+                    repl[pi] = l + f' (duplicateOf {tilx})'  # FIXME TODO merge down and add to replacedBys i think?
+                    label_duplicate_of.append((pi, (op, oi)))
+                elif p == 'ilx' and p == op and i < oi:  # debug (issue was that the one to rename had synonyms)
+                    xdupes.add(pi)
+                    #log.info(f'{pi} expected to be non-duplicate for {l}')
+                elif p == 'cde' and op == 'ilx':
+                    repl[pi] = l + ' (CDE)'
+
+                continue
+            elif len(np_others) == 2 and p == 'ilx':
+                ao = sorted([(p, i) for p, i in np_others if p == 'ilx'], key=lambda pi: pi[1])
+                #log.debug(f'aaaaaaaaaaa {l} {pi} {ao}')
+                if ao:
+                    opi = op, oi = ao[0]
+                    if i != oi and i > oi and opi not in deleted and opi not in deprecated:
+                        tilx = op.upper() + ':' + oi
+                        sighlx = p.upper() + ':' + i + ' '
+                        repl[pi] = l + f' {sighlx}(duplicateOf {tilx})'  # FIXME TODO merge down and add to replacedBys i think?
+                        label_duplicate_of.append((pi, (op, oi)))
+                        #log.debug(f'bbbbbbbbbbb {l} {pi} {ao}')
+                    elif i < oi:
+                        xdupes.add(pi)
+                    else:
+                        raise NotImplementedError('correctly')
+
+                    continue
+
+            else:
+                if np_others:
+                    log.debug(f'wat {pi} {l} {np_others}')
+
+        if pi in xdupes:
+            log.error(f'in xdupes but somehow we got here? {pi} {l}')
+
+        # FIXME some of these aren't hitting because the higher number has the synonyms?
+        if pi not in pisyn:
+            #log.warning(f'no alternative for {pi} {l} {eid} {others}')
+            continue
+
+        cands = pisyn[pi]
+        # start rules
+        if '(TA98)' in l:  # composition and bad ingest :/
+            # hits about 1000
+            if [o for o in others if o in ilx_special_cases] and l != 'white substance (TA98)':
+                # should already be dealt with, but possibly not?
+                continue
+            candl = [c for c in cands if 'OF' in c]
+            if len(candl) == 1:
+                cand = candl[0]
+                repl[pi] = cand + ' (TA98)'
+            elif not candl:
+                # presumably this is the actual parent class that is unqualified
+                pass
+            else:
+                log.warning((pi, candl))
+
+    PYTHON_SUCKS = True  # so much LOL PYTHON in here today
+    if PYTHON_SUCKS:
+        maybe_newsyns = {}
+        dd = defaultdict(list)
+        for pi, l in badpis.items():
+            if pi in repl:
+                maybe_newsyns[pi] = l
+                l = repl[pi]
+
+            dd[l.lower()].append(pi)
+
+        re_hrm = dict(dd)
+        re_hrmsyn = {l: [(pi, (pisyn[pi] if pi in pisyn else None)) for pi in pis] for l, pis in re_hrm.items() if len(pis) > 1}
+        re_derp = sorted([(l, len(pis), sorted(pis)) for l, pis in re_hrm.items() if len(pis) > 1], key=lambda abc: (abc[1], abc[0], abc[2]), reverse=True)
+        re_badpis = {pi: l for l, _, pis in re_derp for pi in pis}
+
+    [[pieid[o][0].split('=')[-1] for o in o] for l, _, o in re_derp if 'ta98' in l]
+
+    for pi, l_norm in re_badpis.items():
+        p, i = pi
+        others = []
+        for o in  re_hrm[l_norm]:
+            if o != pi:
+                others.append(o)
+
+        if pi in repl:
+            l = repl[pi]
+        else:
+            l = pi_lab[pi]
+
+        if '(TA98)' in pi_lab[pi]:
+            # at this point we'll deal with these later
+            repl[pi] = f'{l.replace(" (TA98)", "")} ({pieid[pi][0].split("=")[-1]}) (FIXME-TODO) (TA98)'
+
+        # versions i think
+        if p == 'cde' and l_norm.startswith('rotor rod test') and len(others) == 1:
+            repl.pop(pi)
+            l = pi_lab[pi]
+            if others[0][1] > i:
+                repl[pi] = l + ' (v0)'
+                continue
+
+        if p == 'cde' and len(others) <= 2 and set(p for p, i in others) == {'ilx'}:
+            remaining_others = []
+            for o in others:
+                if o not in xdupes and o not in repl and pi_type_raw[o] != 'pde':
+                    remaining_others.append(o)
+            if not remaining_others:
+                repl[pi] = l + ' (CDE)'
+                continue
+
+            log.debug((pi, l_norm, remaining_others))
+
+        if l.startswith('Aortic arch (replacedBy'):
+            sighlx = p.upper() + ':' + i
+            repl[pi] = l.replace('(', f'{sighlx} ', 1)
+            continue
+
+        if p == 'pde' or pi_type_raw[pi] == 'pde':
+            ao = sorted([(p, i) for p, i in others if p == 'pde' or pi_type_raw[p, i] == 'pde'], key=lambda pi: pi[1])
+            if ao:
+                op, oi = ao[0]
+                if i != oi and i > oi:
+                    tilx = op.upper() + ':' + oi
+                    sighlx = p.upper() + ':' + i + ' ' if len(others) > 1 else ''
+                    repl[pi] = l + f' {sighlx}(duplicateOf {tilx})'  # FIXME TODO merge down and add to replacedBys i think?
+                    label_duplicate_of.append((pi, (op, oi)))
+                    continue
+
+    if PYTHON_SUCKS:
+        maybe_newsyns = {}
+        dd = defaultdict(list)
+        for pi, l in badpis.items():
+            if pi in repl:
+                maybe_newsyns[pi] = l
+                l = repl[pi]
+
+            dd[l.lower()].append(pi)
+
+        re_hrm = dict(dd)
+        re_hrmsyn = {l: [(pi, (pisyn[pi] if pi in pisyn else None)) for pi in pis] for l, pis in re_hrm.items() if len(pis) > 1}
+        re_derp = sorted([(l, len(pis), sorted(pis)) for l, pis in re_hrm.items() if len(pis) > 1], key=lambda abc: (abc[1], abc[0], abc[2]), reverse=True)
+        re_badpis = {pi: l for l, _, pis in re_derp for pi in pis}
+
+    if len(label_duplicate_of) != len(set(label_duplicate_of)):
+        log.error(f'sigh {len(label_duplicate_of)} != {len(set(label_duplicate_of))}')
+
+    ldoo = [ref for d, ref in label_duplicate_of]
+    x_but_no_dupes = (xdupes - set(ldoo)) - adupes
+    if x_but_no_dupes:
+        _wat = sorted([badpis[x] for x in x_but_no_dupes])  # possibly replacedBy?
+        msg = f'expecting but missing a replaced by ??? {_wat}'
+        log.error(msg)
+
+    ldor = [d for d, ref in label_duplicate_of]
+    sldor = set(ldor)
+    if len(ldor) != len(sldor):
+        log.error(f'non-unique mappings {len(ldor)} != {len(sldor)}')
+        #qq = [(a, b) for a, b in Counter(ldor).most_common() if b > 1]
+    baddup = [(d, r) for d, r in label_duplicate_of if d[1] < r[1]]
+    if baddup:
+        log.error(f'bad duplicate direction {baddup}')
+
+    actually_multi = {pi: v for pi, v in maybe_multi.items() if pi in repl and '(deprecated)' not in repl[pi] and '(deleted)' not in repl[pi]}
+    not_multi = {pi: v for pi, v in maybe_multi.items() if pi not in repl or '(deprecated)' in repl[pi] or '(deleted)' in repl[pi]}
+    #multimapped = sorted([r for r in repl.values() if '(deprecated)' in r and '(duplicateOf' in r])
+    from pprint import pformat
+    log.debug('\n' + pformat(sorted([(l, n, [(f'http://uri.olympiangods.org/base/{p}_{i}.html', (p, i)) for p, i in sorted(pis)]) for l, n, pis in re_derp]), width=240))
+    return repl, label_duplicate_of
 
 
 # get interlex
@@ -57,7 +541,7 @@ class InterLexLoad:
         self.existing_ids()
         self.user_iris()
         self.make_triples()
-        self.ids()
+        self.ids()  # this runs at the end to ensure we always get latest though that is not how ops should work
         self.make_metadata()
         #self.engine.dispose()  # doesn't make any meaningful difference in memory usage
 
@@ -136,6 +620,7 @@ class InterLexLoad:
         # start sitting at around 10 gigs in pypy3 (oof)
         # now stays below 8 gigs in pypy3, and below about 1gig in postgres with 40k batch size, much better, 600mb at 20k
         lse(self.ilx_sql, self.ilx_params, 'interlex_ids')  # 3 gigs in postgres no batching
+        lse(self.label_exact_sql, self.label_exact_params, 'label_exact')
         lse(self.eid_sql, self.eid_params, 'existing_iris')  # 16.4 gigs in postgres with no batching
         lse(self.uid_sql, self.uid_params, 'uris')
 
@@ -220,13 +705,29 @@ class InterLexLoad:
             values = [(v[0], v[1], v[2].strip()) for v in values]
             values = [v for v in values if v[2]]
 
+        if False:  # TODO
+            fixed_values = []
+            for p, i, l in values:
+                if (p, i) in self.label_fixes:
+                    fixed_values.append((p, i, self.label_fixes[(p, i)]))
+                else:
+                    fixed_values.append((p, i, l))
+
+            values = fixed_values
+
         self.ilx_sql = []
         self.ilx_params = []
+        self.label_exact_sql = []
+        self.label_exact_params = []
         for chunk in chunk_list(values, self.batchsize):
             vt, params = makeParamsValues(chunk)
             sql = 'INSERT INTO interlex_ids (prefix, id, original_label) VALUES ' + vt + ' ON CONFLICT DO NOTHING'  # FIXME BAD
             self.ilx_sql.append(sql)
             self.ilx_params.append(params)
+            lvt = vt.replace(')', ', :label)')
+            lsql = 'INSERT INTO current_interlex_labels_and_exacts (prefix, id, o_lit, p) VALUES ' + lvt # can't ocdn on this one
+            self.label_exact_sql.append(sql)
+            self.label_exact_params.append({**params, 'pred': 'label'})
 
         prefixes = set(v[0] for v in values)
         self.current = {p:int([v for v in values if v[0] == p][-1][1]) for p in prefixes}
@@ -391,7 +892,7 @@ class InterLexLoad:
 
         self.replacedBys = replacedBys
 
-        if self.debug:
+        if self.debug or True:  # needed for label/syn dedue
             self.eid_raw = eternal_screaming
             self.eid_starts = start_values
             self.eid_values = values
@@ -522,11 +1023,13 @@ class InterLexLoad:
 
             return o_strip
 
+        replaced = set(s for s, p, o in self.replacedBys)
+        some_result = fix_laex(self, data, replaced, self.replacedBys)
         triples.extend(self.replacedBys)
         #replaced_lu = {s: o for s, p, o in self.replacedBys}  # FIXME check injective
         #replaced = set(self.replacedBys)
-        replaced = set(s for s, p, o in self.replacedBys)
         self.replacedBys = None  # a bit of cleanup foor memory hopefully
+
         obsReason, termsMerged = makeURIs('obsReason', 'termsMerged')
         deprecated = set()
         bads = []

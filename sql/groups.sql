@@ -427,6 +427,13 @@ BEGIN
 END;
 $idFromGroupname$ language plpgsql;
 
+CREATE OR REPLACE FUNCTION idFromUsername(username text, OUT user_id integer) RETURNS integer AS $idFromUsername$
+-- use in cases where you need to be sure that the group in question is actually a user
+BEGIN
+    SELECT u.id INTO STRICT user_id FROM groups AS g JOIN users AS u ON u.id = g.id WHERE g.groupname = idFromUsername.username;
+END;
+$idFromUsername$ language plpgsql;
+
 CREATE TABLE user_permissions(
        -- TODO owners of groups cannot give up their owner unless there is another owner that is owner of their user group (verified)
        -- AND has accepted the ownership role explicitly

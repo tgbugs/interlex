@@ -72,25 +72,122 @@ to allow divergence
        -- inside interlex label for ilx terms should be unique, always english (sciengtish?), and without specified data type
 );
 
-CREATE OR REPLACE FUNCTION newEntity(rdf_type uri, frag_pref text, label text, exacts text[]) RETURNS uri AS $$
+CREATE OR REPLACE FUNCTION newEntity(rdf_type uri, frag_pref text, label text, exacts text[], username text) RETURNS uri AS $$
 DECLARE
 id_suffix text;
+user_id integer;
 subject uri;
+metasubject uri;
+perspective_id integer;
+record_count integer;
+record_count_wmeta integer;
+metatripid bytea;
+null_identity bytea;
+named_embedded_identity bytea;
+
+meta_named_condensed_identity bytea;
+meta_named_embedded_identity bytea;
+meta_named_embedded_seq_identity bytea;
+meta_graph_combined_identity bytea;
+
+record_combined_identity bytea;
+named_embedded_seq_identity bytea;
+graph_combined_identity bytea;
+local_conventions_identity bytea;
+graph_combined_local_conventions_identity bytea;
 BEGIN
+null_identity := digest('', 'sha256');
+local_conventions_identity := null_identity;
+
+user_id := idFromUsername(username);
+perspective_id := persFromGroupname(username);
+
 id_suffix := newIdForPrefix(frag_pref, label); -- FIXME wrong type
 INSERT INTO current_interlex_labels_and_exacts (prefix, id, p, o_lit) VALUES (frag_pref, id_suffix, 'label', label);
 INSERT INTO current_interlex_labels_and_exacts (prefix, id, p, o_lit) SELECT frag_pref, id_suffix, 'exact', exact FROM unnest(exacts) AS exact;
 subject := 'http://' || reference_host() || '/base/' || frag_pref || '_' || id_suffix;
+metasubject := 'http://' || reference_host() || '/' || username || '/ontologies/' || frag_pref || '_' || id_suffix;
+metatripid := tripleIdentity(metasubject, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', 'http://www.w3.org/2002/07/owl#Ontology', null, null, null);
+
 INSERT INTO triples (triple_identity, s, p, o) VALUES
        (tripleIdentity(subject, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', rdf_type, null, null, null),
-        subject, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', rdf_type);
+        subject, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', rdf_type),
+       (metatripid, metasubject, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', 'http://www.w3.org/2002/07/owl#Ontology');
+
 INSERT INTO triples (triple_identity, s, p, o_lit) VALUES
        (tripleIdentity(subject, 'http://www.w3.org/2000/01/rdf-schema#label', null, label, null, null),
         subject, 'http://www.w3.org/2000/01/rdf-schema#label', label);
+
 INSERT INTO triples (triple_identity, s, p, o_lit)
        SELECT tripleIdentity(subject, 'http://uri.interlex.org/tgbugs/uris/readable/hasExactSynonym', null, exact, null, null),
               subject, 'http://uri.interlex.org/tgbugs/uris/readable/hasExactSynonym', exact FROM unnest(exacts) AS exact; -- FIXME FIXME determine predicate
-RETURN subject;
+
+select count(*) into record_count from triples as t where t.s = subject;
+record_count_wmeta := record_count + 1;
+named_embedded_identity := namedEmbeddedIdentity(subject);
+
+-- we skip things like meta_record_combined_identity for now
+meta_named_condensed_identity := namedCondensedIdentity(metasubject);
+meta_named_embedded_identity := namedEmbeddedIdentity(metasubject); -- FIXME rehashing
+meta_named_embedded_seq_identity := digest(meta_named_embedded_identity, 'sha256');
+meta_graph_combined_identity = digest(meta_named_embedded_seq_identity || null_identity, 'sha256');
+
+IF (named_embedded_identity < meta_named_embedded_identity) THEN
+named_embedded_seq_identity := digest(named_embedded_identity || meta_named_embedded_identity, 'sha256');
+ELSE
+named_embedded_seq_identity := digest(meta_named_embedded_identity || named_embedded_identity, 'sha256');
+END IF;
+
+record_combined_identity := digest(named_embedded_identity || null_identity, 'sha256');
+graph_combined_identity := digest(named_embedded_seq_identity || null_identity, 'sha256');
+graph_combined_local_conventions_identity := digest(null_identity || graph_combined_identity , 'sha256');
+
+-- for this we do not include a metadata record because the perspective is recorded so we know who originated it
+INSERT INTO identities (type, identity, record_count) VALUES
+('record_combined', record_combined_identity, record_count),
+('named_embedded', named_embedded_identity, record_count),
+('named_embedded_seq', named_embedded_seq_identity, record_count_wmeta),
+('graph_combined', graph_combined_identity, record_count_wmeta),
+('graph_combined_local_conventions', graph_combined_local_conventions_identity, record_count_wmeta),
+
+('named_embedded', meta_named_embedded_identity, 1),
+('named_embedded_seq', meta_named_embedded_seq_identity, 1),
+('graph_combined', meta_graph_combined_identity, 1)
+;
+
+INSERT INTO identities (type, identity, record_count) VALUES
+('named_condensed', meta_named_condensed_identity, 1) ON CONFLICT DO NOTHING;
+
+INSERT INTO identity_relations (s, p, o) VALUES
+(graph_combined_local_conventions_identity, 'hasLocalConventions', null_identity),
+(graph_combined_local_conventions_identity, 'hasGraph', graph_combined_identity),
+(graph_combined_identity, 'hasNamedGraph', named_embedded_seq_identity),
+(graph_combined_identity, 'hasBnodeGraph', null_identity),
+(named_embedded_seq_identity, 'hasNamedRecord', named_embedded_identity),
+(named_embedded_seq_identity, 'hasNamedRecord', meta_named_embedded_identity),
+(record_combined_identity, 'hasNamedRecord', named_embedded_identity),
+
+(graph_combined_local_conventions_identity, 'hasMetadataGraph', meta_graph_combined_identity),
+(meta_graph_combined_identity, 'hasNamedGraph', meta_named_embedded_seq_identity),
+(meta_graph_combined_identity, 'hasBnodeGraph', null_identity),
+(meta_named_embedded_seq_identity, 'hasNamedRecord', meta_named_embedded_identity),
+(meta_named_embedded_identity, 'hasCondensed', meta_named_condensed_identity)
+;
+
+INSERT INTO identity_named_triples_ingest (named_embedded_identity, triple_identity)
+       SELECT named_embedded_identity, t.triple_identity FROM triples AS t WHERE t.s = subject;
+
+INSERT INTO identity_named_triples_ingest (named_embedded_identity, triple_identity) VALUES
+(meta_named_embedded_identity, metatripid);
+
+INSERT INTO record_combined_history (record_combined_identity, previous, perspective_id) VALUES
+(record_combined_identity, null_identity, perspective_id);
+
+INSERT INTO perspective_heads (perspective_id, subject, head_identity) VALUES
+(perspective_id, subject, record_combined_identity);
+
+--RETURN subject; -- FIXME probably also need to return record combined identity
+RETURN (subject::text || '/versions-gclc/' || graph_combined_local_conventions_identity)::uri; -- FIXME probably also need to return record combined identity
 END;
 $$ language plpgsql;
 
@@ -624,6 +721,44 @@ RETURN res;
 END;
 $$ language plpgsql;
 
+CREATE OR REPLACE FUNCTION namedEmbeddedIdentity(subject uri) RETURNS bytea AS
+$$
+BEGIN
+RETURN
+digest(
+  digest(subject::text, 'sha256') ||
+  namedCondensedIdentity(subject)
+, 'sha256');
+END;
+$$ language plpgsql;
+
+CREATE OR REPLACE FUNCTION namedCondensedIdentity(subject uri) RETURNS bytea AS
+$$
+DECLARE
+res bytea;
+BEGIN
+select digest(string_agg(i, ''::bytea), 'sha256') into res from
+(
+select i from (
+select digest(digest(p::text, 'sha256') || digest(o::text, 'sha256'), 'sha256') as i
+from triples as t
+where t.s = subject and t.o is not null
+union
+select digest(
+  digest(p::text, 'sha256') ||
+  digest(
+    digest(o_lit, 'sha256') ||
+    digest(coalesce(datatype::text, ''), 'sha256') ||
+    digest(coalesce(language, ''), 'sha256') ,
+    'sha256')
+, 'sha256') as i
+from triples as t
+where t.s = subject and t.o_lit is not null
+) order by i
+);
+RETURN res;
+END;
+$$ language plpgsql;
 
 CREATE TABLE subgraph_triples( -- FIXME not clear whether we need this at all
        triple integer NOT NULL, -- see alters below
@@ -1476,13 +1611,103 @@ CREATE TABLE annotations(
                   REFERENCES triples (id)
 );
 
+/* both files and records have history, however for files we don't always know
+the order in which they are "versioned" we may have first seen, embedded metadata
+etc. on the other hand for records we do have the record combined identity from
+which something was modified, so we can record actual version history for that
+*/
+/*
+TODO see if we need a source perspective id ... i think we might
+because you need datetime + source_perspective_id in order to
+reconstruct the "forking" history, however 99% of the time it is
+likely to be the same is perspective_id and 1% of the time base,
+curated, or latest, issues with group records changing their history
+is a separate issue, but as long as we have the datetime here we can
+reconstruct what are essentially rebases or reset --hard, we have not
+yet addressed the issue of how/whether to auto pull request changes
+made from curated, or only do to it once the changes have been merged
+into curated and then reset to curated and continue on
+
+we will definitely need a way to handle merges that have multiple
+previous because adds can always be treated as separate events that
+don't interact across branches
+
+this is separate from pull requests because it a sense it is the
+real history of the changes
+
+the configuration of this table works such that as long as the
+previous is different then rci can be the same, if someone arrives
+at an rci by a different path in a different perspective, however
+at that point if two perspectives make the exact same change
+then the earlier change is the only one that is recorded in this table
+and the perspective head history which track subjects will contain
+any jumps between history, this means that there can be non-linearities
+in the history for a single perspective because if another perspective
+executed the change then we consider that operation the same as doing
+a reset --hard for the record, but we will also have the record of the
+change separately for the individual user because we have the metadata
+record as well
+
+in the case where the are multiple histories from multiple perspectives
+then the history for a given perspective is to match if it made the change
+itself, othwerise it is to take the shortest route (ugh?) in cases where there
+is only linear history all perspectives take whoever went first
+
+TODO we may also need to check to see if the record identity we are
+about to insert already exists in this case because it isn't really a new record
+and we may not way to insert with the metadata ... or maybe we do who knows
+if someone arrives at the same state as before we won't actually insert anything
+at all even in irels and only perspective head reflog would be updated
+
+not all records have entries in record combined history because
+the record may come from a composite file and thus reconstructing
+the history is not straight forward because interlex only knows when
+things are uploaded, not when changes were made in an external system
+*/
+CREATE TABLE record_combined_history(
+       record_combined_identity bytea references identities (identity),
+       previous bytea references identities (identity),
+       PRIMARY KEY (record_combined_identity, previous),
+       perspective_id integer NOT NULL references perspectives (id),
+       -- if multiple rcid/prev pairs share a datetime that indicates
+       -- that they were part of a composite merge, if there are different
+       -- datetimes it means that that particular rcid has been arrived at
+       -- via multiple different histories
+       datetime timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+-- FIXME TODO perspective reflog ... via a trigger so that it is always handled
 CREATE TABLE perspective_heads(
        -- this is how we are going to deal with multiple versions of multiple terms
        -- http://uri.interlex.org/tgbugs/ilx_0101431 will point to pers-tgbugs http://uri.interlex.org/base/ilx_0101431 some-identity
        -- http://purl.obolibrary.org/obo/UBERON_0000955 can work in a similar way
        -- but we don't have a where i can edit it right now
        -- http://uri.interlex.org/tgbugs/ontologies/uris/some-ontology works the same way
-       perspective_id integer NOT NULL,
+       perspective_id integer NOT NULL references perspectives (id),
        subject uri NOT NULL,
-       head_identity bytea NOT NULL
+       PRIMARY KEY (perspective_id, subject),
+       -- head identity can be record_combined, unfortunately there isn't a way to distingusih that from graph_combined for the same subject
+       -- however i think we could work around that by using the ontologies/dns uri since it shouldn't be embedded as a record
+       head_identity bytea NOT NULL references identities (identity)
 );
+
+CREATE TABLE perspective_reflog(
+       id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+       perspective_id integer NOT NULL references perspectives (id),
+       subject uri NOT NULL,
+       head_identity bytea NOT NULL references identities (identity),
+       -- in this case datetime is the datetime set
+       datetime timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+       UNIQUE (perspective_id, subject, head_identity, datetime)
+);
+
+CREATE OR REPLACE FUNCTION pers_log_heads() RETURNS trigger as $$
+BEGIN
+INSERT INTO perspective_reflog (perspective_id, subject, head_identity) VALUES (NEW.perspective_id, NEW.subject, NEW.head_identity);
+RETURN NEW;
+END;
+$$ language plpgsql;
+
+drop trigger if exists pers_log_heads;
+CREATE TRIGGER pers_log_heads AFTER INSERT OR UPDATE ON perspective_heads
+       FOR EACH ROW EXECUTE PROCEDURE pers_log_heads();

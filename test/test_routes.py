@@ -3,7 +3,7 @@ import pytest
 import requests
 import secrets
 from pyontutils.ontutils import url_blaster
-from pyontutils.core import OntGraph
+from pyontutils.core import OntGraph, populateFromJsonLd
 from interlex import endpoints
 from interlex.uri import uriStructure, run_uri
 from interlex.core import make_paths, remove_terminals
@@ -212,11 +212,15 @@ class TestRoutes(RouteTester, unittest.TestCase):
         assert not r4.json['existing'], r4.json['existing']
         #breakpoint()
 
-    def test_post_entity_new(self, endpoint='entity-new', data=None):
+    def test_post_entity_new(self, endpoint='entity-new', data=None, client=None, tuser=None, token=None):
         self.app.debug = True
-        client = self.app.test_client()
-        tuser = auth.get('test-api-user')
-        token = auth.get('interlex-test-api-key')
+        if client is None:
+            client = self.app.test_client()
+        if tuser is None:
+            tuser = auth.get('test-api-user')
+        if token is None:
+            token = auth.get('interlex-test-api-key')
+
         headers = {'Authorization': f'Bearer {token}'}
         diff = secrets.token_hex(6)
         if data is None:
@@ -233,10 +237,17 @@ class TestRoutes(RouteTester, unittest.TestCase):
             headers = {'Accept': 'text/turtle'}
             resp2 = client.get(resp1.location, headers=headers)
             if resp2.status_code != 200:
-                breakpoint()
-                ''
+                #breakpoint()
+                assert False, resp2.status_code
 
-            print(resp2.data.decode())
+            #print(resp2.data.decode())
+
+            resp3 = client.get(resp1.location.replace(tuser, 'base'), headers=headers)
+            if resp3.status_code != 200:
+                #breakpoint()
+                assert False, resp3.status_code
+
+            #print(resp3.data.decode())
 
         return data, (resp, resp1,)
 
@@ -245,18 +256,94 @@ class TestRoutes(RouteTester, unittest.TestCase):
         client = self.app.test_client()
         tuser = auth.get('test-api-user')
         token = auth.get('interlex-test-api-key')
+
+        #url = f'{self.prefix}/{tuser}/ilx_0101431'
+        _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=tuser, token=token)
+        url = _resp1.location
+
+        def makej_simple_add(subject, nm, diff, jld):
+            p = nm.expand('ilxtr:some-predicate')
+            adds = [
+                [subject, nm.expand('ilxr:synonym'), {'type': 'literal', 'value': f'lol wut {diff}',},],
+                [subject, p, {'type': 'uri', 'value': nm.expand(f'ilxtr:some-object-{diff}'),},],
+            ]
+            j = {
+                'add': adds,
+            }
+            return j
+
+        def makej_simple_del(subject, nm, diff, jld):
+            p = nm.expand('ilxtr:some-predicate')
+            g = OntGraph()
+            populateFromJsonLd(g, jld)
+            dels = [[s, p, o] for s, o in g[:p:]]
+            j = {
+                'del': dels,
+            }
+            return j
+
+        def makej_simple_adddel(subject, nm, diff, jld):
+            p = nm.expand('ilxtr:some-predicate')
+            adds = [
+                [subject, nm.expand('ilxr:synonym'), {'type': 'literal', 'value': f'lol wut {diff}',},],
+                [subject, p, {'type': 'uri', 'value': nm.expand(f'ilxtr:some-object-{diff}'),},],
+            ]
+
+            g = OntGraph()
+            populateFromJsonLd(g, jld)
+            dels = [[s, p, o] for s, o in g[:p:]]
+            j = {
+                'add': adds,
+                'del': dels,
+            }
+            return j
+
+        # FIXME TODO oh boy things we cannot delete ...
+        # rdf:type ...
+        # things that aren't actually in the record we already handle
+
+        # FIXME TODO current_interlex_labels_and_exacts needs to be updated
+        # when things are merged to curaged that remove exacts we can't handle
+        # it here ... however we probably do want to have a similar enforcement
+        # mechanism per perspective as well because once a user creates a term
+        # they can just go and change their exacts ... one solution is to allow
+        # synonyms but also have interlex communal controlled fields that
+        # cannot be modified the problem is that we have to be able to modify
+        # them to change them ... this really only impacts label and exact
+        # it also means that we need a rapid way obtain the state for curated
+        # because base is going to diverge from usefulness faily quickly once
+        # label and exact can be changed ... likely need to gate label and
+        # exact changes until we can come up with a good design
+
+        tests = (
+            makej_simple_add,
+            makej_simple_del,
+            makej_simple_adddel,
+        )
+        for makej in tests:
+            self._do_patch_entity(client, tuser, token, url, makej)
+
+    def _do_patch_entity(self, client, tuser, token, url, makej):
         headers = {'Authorization': f'Bearer {token}'}
         headers_get = {**headers, 'Accept': 'application/ld+json'}
         headers_patch= {**headers, 'Content-Type': 'application/json'}
         headers_patch_alt = {**headers, 'Content-Type': 'application/ld+json'}
+        headers_get_check = {**headers, 'Accept': 'text/turtle'}
         diff = secrets.token_hex(6)
 
-        _g = OntGraph()
+        _g = OntGraph(bind_namespaces='none')
         nm = _g.namespace_manager
-        url = f'{self.prefix}/{tuser}/ilx_0101431'
         resp = client.get(url, headers=headers_get)
         jld = resp.json
-        nm.populate_from(jld['@context'])
+        context = jld['@context']
+        if 'ilxtr' not in context:
+            # bad data due to manging uris, should probably update triples to prevent
+            # /base/uris/readable/ entirely since it is not meaningful
+            context['ilxtr'] = 'http://uri.interlex.org/tgbugs/uris/readable/'
+        if 'ilxr' not in context:
+            context['ilxr'] = 'http://uri.interlex.org/base/readable/'
+
+        nm.populate_from(context)
         ont = [o for o in jld['@graph'] if o['@type'] == 'owl:Ontology'][0]
         pred = 'isAbout' if 'isAbout' in ont else 'http://purl.obolibrary.org/obo/IAO_0000136'
         subject = ont[pred]['@id']
@@ -264,21 +351,28 @@ class TestRoutes(RouteTester, unittest.TestCase):
         # FIXME isAbout also may fail to expand if {group} does not
         # use that curie since we aren't yet merging with base curies
         # XXX this happens if the test user doesn't have curies loaded during config
-        adds = [
-            # XXX NOTE these need to be fully expanded at the moment
-            [subject, nm.expand('ilxr:synonym'), {'type': 'literal', 'value': f'lol wut {diff}',},],
-            [subject, nm.expand('ilxtr:some-predicate'), {'type': 'uri', 'value': nm.expand(f'ilxtr:some-object-{diff}'),},],
-        ]
-        dels = [
-            #[],
-        ]
-        j = {
-            'add': adds,
-            'del': dels,
-        }
+        j = makej(subject, nm, diff, jld)
         resp_patch_1 = client.patch(url, headers=headers_patch, json=j)
         # TODO iterative changes to hit all the states
-        breakpoint()
+        rci = resp_patch_1.data.decode()
+        url_get = url + '/versions/' + rci
+        resp_check_1 = client.get(url_get, headers=headers_get_check)
+        resp_check_2 = client.get(url, headers=headers_get_check)
+        cg1, cg2 = None, None
+        if resp_check_1.status_code == 200:
+            cg1 = OntGraph().parse(data=resp_check_1.data, format='turtle')
+        if resp_check_2.status_code == 200:
+            cg2 = OntGraph().parse(data=resp_check_2.data, format='turtle')
+
+        if cg1 and cg2:
+            _a, _r, _nc = cg1.diffFromGraph(cg2)
+            # cg2 adds a generated metadata section
+            # the record itself should now be identical
+            assert not _r, 'oops'
+
+        with self.app.app_context():
+            #breakpoint()
+            ''
 
         alt_way = False
         if alt_way:

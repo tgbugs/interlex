@@ -1,6 +1,5 @@
-#!/usr/bin/env python3.7
-
 import sys
+import math
 import socket
 from pathlib import Path, PurePath
 from tempfile import gettempdir
@@ -569,3 +568,26 @@ def from_title_subjects_ontspec(spec_uri, title, subjects):
         g.add((s, ilxtr['include-subject'], rdflib.URIRef(o)))
 
     return g
+
+
+def make_record_metagraph(reference_host, group, frag_pref_id, nowish, prev_record_combined_identity, this_record_combined_identity):
+    # XXX NOW all of this is something that we should be able to reconstruct
+    # without having to store it in triples and then nowish can come from the db
+    # instead of coming from flask ...
+    metasubject = rdflib.URIRef(f'http://{reference_host}/{group}/{ontologies}/{frag_pref_id}')
+    iri_group = rdflib.URIRef(f'http://{reference_host}/{group}')
+    nowish_epoch = math.floor(nowish.timestamp())
+    nowish_datetime = isoformat(nowish)
+    versubject = rdflib.URIRef(metasubject + f'/version/{nowish_epoch}/{frag_pref_id}')
+    pairs = (
+        (rdf.type, owl.Ontology),
+        (dc.title, rdflib.Literal(f'interlex record ontology for {frag_pref_id}')),
+        #(rdf.type, ilxtr.SingleRecord),  # TODO ...
+        (ilxtr['group'], iri_group),
+        (ilxtr.epoch, rdflib.Literal(nowish_epoch)),
+        (owl.versionInfo, rdflib.Literal(nowish_datetime)),
+        (owl.versionIRI, versubject),
+
+    )
+    msg = 'the format is still relevant but the data shouldn\'t be in triples'
+    raise NotImplementedError(msg)

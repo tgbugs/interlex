@@ -1,5 +1,6 @@
 import os
 import orthauth as oa
+from orthauth.utils import sxpr_to_python
 from pyontutils.config import auth as pauth
 
 auth = oa.configure_here('auth-config.py', __name__, include=pauth)
@@ -30,6 +31,15 @@ debug = auth.get('debug')
 ilx_pattern = auth.get('ilx-pattern')
 orcid_sandbox = auth.get('orcid-sandbox')
 email_verify = auth.get('email-verify')
+
+# ops for transition
+_existing_user_map_path = auth.get_path('existing-user-map')
+if _existing_user_map_path:
+    with open(_existing_user_map_path, 'rt') as f:
+        _tmp = f.read()
+    existing_user_map = {int(d['guid']): (d['user'], d['email']) for d in sxpr_to_python(_tmp)}
+else:
+    existing_user_map = {}
 
 # ports
 port_api = auth.get('port-api')

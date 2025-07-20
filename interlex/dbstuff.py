@@ -475,7 +475,7 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
         sql = 'select * from current_interlex_labels_and_exacts as cile where o_lit in :loe'
         return list(self.session_execute(sql, args))
 
-    def newEntity(self, rdf_type, label, exacts=None):
+    def newEntity(self, group, rdf_type, label, exacts=None):
         if not config.use_real_frag_pref:
             frag_pref = 'tmp'
         # FIXME TODO need the expanded values for rdf_type
@@ -493,8 +493,8 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
         if exacts is None:
             exacts = []
 
-        args = dict(rdf_type=rdf_type, frag_pref=frag_pref, label=label, exacts=exacts)
-        sql = 'SELECT newEntity(:rdf_type, :frag_pref, :label, :exacts)'
+        args = dict(rdf_type=rdf_type, frag_pref=frag_pref, label=label, exacts=exacts, group=group)
+        sql = 'SELECT newEntity(:rdf_type, :frag_pref, :label, :exacts, :group)'
         return list(self.session_execute(sql, args))
 
     def createOntology(self, reference_host, group, path):
