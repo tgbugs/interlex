@@ -42,7 +42,9 @@ def getpi(u):
     return p, i
 
 
-def fix_laex(self, data, replaced, replacedBys):
+def fix_laex(self, data, eid_duplicate_of, eid_values):
+    # self for debug only
+
     type_to_owl = MysqlExport.types
     # we have to deal with the labels and synonyms before we can generate triples
     # FIXME TODO some of this should surely be fixed upstream, but not right now
@@ -130,20 +132,21 @@ def fix_laex(self, data, replaced, replacedBys):
     # these are for terms merged cases (for example)
     exclude_pis = {}  # [pi] = reason
 
-    pirb = {getpi(s): getpi(o) for s, p, o in replacedBys}
-    pirbnc = {k: v for k, v in pirb.items() if v[0] != 'cde'}
-    #pieid = {(p, i): getpi(e) for p, i, e in self.eid_values if 'uri.interlex.org' in e}  # empty
+    #pido = {getpi(s): getpi(o) for s, p, o in duplicateOfs}
+    pido = {a: b for a, b in eid_duplicate_of}
+    pidonc = {k: v for k, v in pido.items() if v[0] != 'cde'}
+    #pieid = {(p, i): getpi(e) for p, i, e in eid_values if 'uri.interlex.org' in e}  # empty
 
     _pieid = defaultdict(list)
-    for p, i, e in self.eid_values:
+    for p, i, e in eid_values:
         _pieid[(p, i)].append(e)
     pieid = dict(_pieid)
 
-    already_replaced = set(pirb) & set(badpis)
+    already_duplicate = set(pido) & set(badpis)
     arhrm = {}
     adupes = set()
-    for ar in already_replaced:
-        _rep = pirb[ar]
+    for ar in already_duplicate:
+        _rep = pido[ar]
         adupes.add(_rep)
         arhrm[ar] = (ar, anypis[ar]), (_rep, anypis[_rep])
 
@@ -226,8 +229,12 @@ def fix_laex(self, data, replaced, replacedBys):
         'jejunal &amp; ileal plexuses (swannt)': ('ilx', '0740800'),
     }
     xdupes = set()
+    not_xdupes_because_already_deduped = set()
+    not_xdupes_because_not_min = set()
+    not_actually_deprecated = set()
     repl = {}
     maybe_multi = {}
+    rem_duplicate_of = []
     label_duplicate_of = [
         (('ilx', '0747708'), ('ilx', '0741479')),  # white substance (TA98)
     ]
@@ -243,7 +250,18 @@ def fix_laex(self, data, replaced, replacedBys):
             if o != pi:
                 others.append(o)
 
+        # sometimes we have an even older replacement
+        # sometimes the other replacement is newer
+        nothers = []
+        for o in others:
+            if o in pido and pido[o] not in others and pido[o] != pi:
+                nothers.append(pido[o])
+                #log.info((others, o, pido[o]))
+
+        others += nothers
+
         l = pi_lab[pi]
+        maybe_better_rep = False
         if pi in arhrm:
             _, ((tp, ti), tl) = arhrm[pi]
             tilx = tp.upper() + ':' + ti
@@ -253,10 +271,11 @@ def fix_laex(self, data, replaced, replacedBys):
             # as in the identifier is deprecated, the class is not
             # maybe equvalentClass is more appropriate in those cases
             # but it adds noise, these are mostly for record keeping
-            repl[pi] = l + f' (replacedBy {tilx})'
-            continue
-
-        if pi in deprecated:
+            repl[pi] = l + f' (duplicateOf {tilx})'
+            maybe_better_rep = True
+            # do not continue here because we may have a more correct replacement
+            # in which case the less correct replacement should also be replaced as well
+        elif pi in deprecated:
             # this helps with maybe 14  # but 5 are still in conflict
             if pi[0] == 'cde' and l == 'leak':
                 repl[pi] = f'cde leak CDE:{pi[1]} (deprecated)'
@@ -265,10 +284,10 @@ def fix_laex(self, data, replaced, replacedBys):
                 maybe_multi[pi] = repl[pi] = l + ' (deprecated)'  # XXX FIXME HACK TEMP
                 # let this fall through because there might be a label duplication we are expecting below
                 # that was missing
-
-        if pi in deleted:
+        elif pi in deleted:
             # helps with maybe ... 2
             maybe_multi[pi] = repl[pi] = l + ' (deleted)'  # XXX FIXME HACK TEMP
+
 
         if pi in noc and noc[pi][-1] == ilxr.TermSet:
             if '(termset)' not in l_norm:
@@ -300,7 +319,7 @@ def fix_laex(self, data, replaced, replacedBys):
                     repl[pi] = l + ' (NINDS-TBI)'
                     continue
                 elif scopi == ('ilx', '0794909'):
-                    repl[pi] = l + ' (TOP-NT)'
+                    repl[pi] = l + ' (TOPNT)'  # TOPNT is the group they want so better than TOP-NT I guess?
                     continue
                 elif scopi == ('ilx', '0794941'):
                     #repl[pi] = l + ' (PRECISE-TBI CCIM)'
@@ -331,22 +350,68 @@ def fix_laex(self, data, replaced, replacedBys):
             tilx = op.upper() + ':' + oi
             sighlx = p.upper() + ':' + i + ' '
             repl[pi] = l + f' {sighlx}(duplicateOf {tilx})'
+            if maybe_better_rep:
+                log.info('mbr hit')  # never hits
             continue
 
         if '(TA98)' not in l:
             eid = pieid[pi] if pi in pieid else 'no-eid'
-            np_others = [o for o in others if o[0] != 'pde' and pi_type_raw[o] != 'pde']
+            np_others = []
+            for o in others:
+                if o[0] != 'pde' and pi_type_raw[o] not in ('pde', 'TermSet'):
+                    np_others.append(o)
+
             if len(np_others) == 1:
                 opi = op, oi = np_others[0]
-                if p == 'ilx' and p == op and i > oi and opi not in deleted and opi not in deprecated:
+                if p == 'ilx' and p == op and i > oi:
+                    if opi in pido and opi > pido[opi]:
+                        ep, ei = epi = pido[opi]
+                        tilx = ep.upper() + ':' + ei
+                        sighlx = p.upper() + ':' + i + ' '
+                        repl[pi] = l + f' {sighlx} (duplicateOf {tilx})'
+                        label_duplicate_of.append((pi, epi))
+                        not_xdupes_because_already_deduped.add(opi)
+                        continue
+
+                    # and opi not in deleted and opi not in deprecated:
+                    if opi in deleted or opi in deprecated:
+                        # FIXME still not right here because some of these _are_ deprecated
+                        # or can't easily follow our reccomendations e.g. BICCN cases which
+                        # have been published
+                        log.debug(f'not actually deprecated {opi} {pi_lab[opi]}')
+                        not_actually_deprecated.add(opi)
+
                     tilx = op.upper() + ':' + oi
-                    repl[pi] = l + f' (duplicateOf {tilx})'  # FIXME TODO merge down and add to replacedBys i think?
-                    label_duplicate_of.append((pi, (op, oi)))
+                    repl[pi] = l + f' (duplicateOf {tilx})'  # FIXME TODO merge down and add to duplicateOfs i think?
+                    label_duplicate_of.append((pi, opi))
+                    if maybe_better_rep:
+                        #log.info('mbr hit')  # all the hits
+                        epi = pido[pi]
+                        if epi != opi:
+                            if epi < opi:
+                                # epi was the correct mapping
+                                if opi not in pido:  # seems ok ...
+                                    log.warning(f'fixing {epi} < {opi}')
+                                    label_duplicate_of.append((opi, epi))
+                            else:
+                                #log.debug((opi, pi, epi))
+                                label_duplicate_of.append((epi, opi))
+                                rem_duplicate_of.append((pi, epi))
+                                # FIXME TODO need to resequence sqlgen because may of these are already prepped for insertion
+
                 elif p == 'ilx' and p == op and i < oi:  # debug (issue was that the one to rename had synonyms)
                     xdupes.add(pi)
                     #log.info(f'{pi} expected to be non-duplicate for {l}')
                 elif p == 'cde' and op == 'ilx':
                     repl[pi] = l + ' (CDE)'
+                else:
+                    nc_others = []
+                    for o in np_others:
+                        if o[0] != 'cde' and pi_type_raw[o] != 'cde':
+                            nc_others.append(o)
+
+                    if nc_others:
+                        log.error(f'depdel issue {pi} {l} {nc_others}')
 
                 continue
             elif len(np_others) == 2 and p == 'ilx':
@@ -357,8 +422,30 @@ def fix_laex(self, data, replaced, replacedBys):
                     if i != oi and i > oi and opi not in deleted and opi not in deprecated:
                         tilx = op.upper() + ':' + oi
                         sighlx = p.upper() + ':' + i + ' '
-                        repl[pi] = l + f' {sighlx}(duplicateOf {tilx})'  # FIXME TODO merge down and add to replacedBys i think?
-                        label_duplicate_of.append((pi, (op, oi)))
+                        repl[pi] = l + f' {sighlx}(duplicateOf {tilx})'  # FIXME TODO merge down and add to duplicateOfs i think?
+                        label_duplicate_of.append((pi, opi))
+                        if pi in pido:
+                            epi = pido[pi]
+                            if epi != opi:
+                                if epi <= opi:
+                                    assert False, 'should not be happening in current data'
+                                else:
+                                    #log.debug(('sigh', opi, pi, epi))
+                                    # seems like we don't need to add these ??
+                                    #label_duplicate_of.append((epi, opi))
+                                    #if (epi, opi) not in label_duplicate_of:
+                                        # this might be added later but it also might not be added at all
+                                        # so we give it a shot because 1 of 3 hits ... who knows why
+                                        # possibly because the label just doesn't match at all
+                                        # yeah it the one cse is where it is definitely not a label duplicate
+                                        # and should not be deduplicated in that way so not doing this
+                                        # and just removing the bad duplicate of from eid for now
+                                        #log.debug((pi_lab[epi], pi_lab[opi]))
+                                        #label_duplicate_of.append((epi, opi))
+
+                                    rem_duplicate_of.append((pi, epi))
+                                    not_xdupes_because_not_min.add(opi)
+
                         #log.debug(f'bbbbbbbbbbb {l} {pi} {ao}')
                     elif i < oi:
                         xdupes.add(pi)
@@ -369,7 +456,8 @@ def fix_laex(self, data, replaced, replacedBys):
 
             else:
                 if np_others:
-                    log.debug(f'wat {pi} {l} {np_others}')
+                    if p != 'cde':
+                        log.debug(f'wat {pi} {l} {np_others}')
 
         if pi in xdupes:
             log.error(f'in xdupes but somehow we got here? {pi} {l}')
@@ -412,7 +500,7 @@ def fix_laex(self, data, replaced, replacedBys):
         re_derp = sorted([(l, len(pis), sorted(pis)) for l, pis in re_hrm.items() if len(pis) > 1], key=lambda abc: (abc[1], abc[0], abc[2]), reverse=True)
         re_badpis = {pi: l for l, _, pis in re_derp for pi in pis}
 
-    [[pieid[o][0].split('=')[-1] for o in o] for l, _, o in re_derp if 'ta98' in l]
+    #[[pieid[o][0].split('=')[-1] for o in o] for l, _, o in re_derp if 'ta98' in l]
 
     for pi, l_norm in re_badpis.items():
         p, i = pi
@@ -429,6 +517,7 @@ def fix_laex(self, data, replaced, replacedBys):
         if '(TA98)' in pi_lab[pi]:
             # at this point we'll deal with these later
             repl[pi] = f'{l.replace(" (TA98)", "")} ({pieid[pi][0].split("=")[-1]}) (FIXME-TODO) (TA98)'
+            continue
 
         # versions i think
         if p == 'cde' and l_norm.startswith('rotor rod test') and len(others) == 1:
@@ -449,9 +538,9 @@ def fix_laex(self, data, replaced, replacedBys):
 
             log.debug((pi, l_norm, remaining_others))
 
-        if l.startswith('Aortic arch (replacedBy'):
+        if l.startswith('Aortic arch (duplicateOf'):
             sighlx = p.upper() + ':' + i
-            repl[pi] = l.replace('(', f'{sighlx} ', 1)
+            repl[pi] = l.replace('(', f'{sighlx} (', 1)
             continue
 
         if p == 'pde' or pi_type_raw[pi] == 'pde':
@@ -484,10 +573,11 @@ def fix_laex(self, data, replaced, replacedBys):
         assert False, 'oops ldo'
 
     ldoo = [ref for d, ref in label_duplicate_of]
-    x_but_no_dupes = (xdupes - set(ldoo)) - adupes
+    x_but_no_dupes = (((xdupes - set(ldoo)) - adupes - not_xdupes_because_already_deduped) - not_xdupes_because_not_min)
     if x_but_no_dupes:
         _wat = sorted([badpis[x] for x in x_but_no_dupes])  # possibly replacedBy?
-        msg = f'expecting but missing a replaced by ??? {_wat}'
+        _hrm = {badpis[x]: [((repl[pi], pi) if pi in repl else (None, pi)) for pi in hrm[badpis[x]]] for x in x_but_no_dupes}
+        msg = f'expecting but missing a duplicate of ??? {_wat}'
         log.error(msg)
 
     ldor = [d for d, ref in label_duplicate_of]
@@ -504,7 +594,9 @@ def fix_laex(self, data, replaced, replacedBys):
     #multimapped = sorted([r for r in repl.values() if '(deprecated)' in r and '(duplicateOf' in r])
     from pprint import pformat
     log.debug('\n' + pformat(sorted([(l, n, [(f'http://uri.olympiangods.org/base/{p}_{i}.html', (p, i)) for p, i in sorted(pis)]) for l, n, pis in re_derp]), width=240))
-    return repl, label_duplicate_of, maybe_newsyns
+    nlabs = [v for v in repl.values()]
+    assert len(nlabs) == len(set(nlabs))
+    return repl, label_duplicate_of, maybe_newsyns, rem_duplicate_of
 
 
 # get interlex
@@ -1035,18 +1127,6 @@ class InterLexLoad:
 
         values, bads, skips, user_iris, eid_replaced_by, eid_duplicate_of = self.cull_bads(eternal_screaming, start_values, ind)
 
-        replacedBys = [(
-            rdflib.URIRef(f'http://uri.interlex.org/base/{epref}_{eilx}'),
-            replacedBy,
-            rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
-            ) for (epref, eilx), (pref, ilx) in eid_replaced_by]
-
-        duplicateOfs = [(
-            rdflib.URIRef(f'http://uri.interlex.org/base/{epref}_{eilx}'),
-            ilxtr.duplicateOf,  # FIXME predicate
-            rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
-            ) for (epref, eilx), (pref, ilx) in eid_duplicate_of]
-
         if not self.debug:
             # major memory consumer
             # and it does seem that removing it saves quite a bit
@@ -1063,18 +1143,8 @@ class InterLexLoad:
             self.eid_sql.append(sql)
             self.eid_params.append(params)
 
-        sql_base = 'INSERT INTO existing_internal (ex_ilx_prefix, ex_ilx_id, ilx_prefix, ilx_id) VALUES '
-        self.int_eid_sql = []
-        self.int_eid_params = []
-        for chunk in chunk_list([(*a, *b) for a, b in eid_duplicate_of + eid_replaced_by], self.batchsize):
-            values_template, params = makeParamsValues(chunk)
-            params['group'] = 'base'
-            sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # TODO return id? (on conflict ok here)
-            self.int_eid_sql.append(sql)
-            self.int_eid_params.append(params)
-
-        self.replacedBys = replacedBys
-        self.duplicateOfs = duplicateOfs
+        self.eid_replaced_by = eid_replaced_by
+        self.eid_duplicate_of = eid_duplicate_of
 
         if self.debug or True:  # needed for label/syn dedue
             self.eid_raw = eternal_screaming
@@ -1210,12 +1280,45 @@ class InterLexLoad:
 
             return o_strip
 
-        replaced = set(s for s, p, o in self.replacedBys)
-        duplicates = set(s for s, p, o in self.duplicateOfs)
-        repl_label, label_duplicate_of, maybe_newsyns = fix_laex(self, data, replaced, self.replacedBys)  # FIXME pass duplicates of etc.
+
+        repl_label, label_duplicate_of, maybe_newsyns, rem_duplicate_of = fix_laex(self, data, self.eid_duplicate_of, self.eid_values)
+
+        duplicate_ofs = sorted(((set(self.eid_duplicate_of) | set(label_duplicate_of)) - set(rem_duplicate_of)))
+
+        dor = [d for d, ref in duplicate_ofs]
+        sdor = set(dor)
+        if len(dor) != len(sdor):
+            log.error(f'non-unique mappings {len(dor)} != {len(sdor)}')
+            qq = [(a, b) for a, b in Counter(dor).most_common() if b > 1]
+            zz = [a for a, b in qq]
+            ouch = [((d, r),
+                     pi_lab[d], pi_lab[r],
+                     (d, r) in self.eid_duplicate_of, (d, r) in label_duplicate_of)
+                    for d, r in duplicate_ofs if d in zz]
+
+        baddup = [(d, r) for d, r in duplicate_ofs if d[1] < r[1]]
+        if baddup:
+            log.error(f'bad duplicate direction {baddup}')
+
+        replacedBys = [(
+            rdflib.URIRef(f'http://uri.interlex.org/base/{epref}_{eilx}'),
+            replacedBy,
+            rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
+            ) for (epref, eilx), (pref, ilx) in self.eid_replaced_by]
+
+        duplicateOfs = [(
+            rdflib.URIRef(f'http://uri.interlex.org/base/{epref}_{eilx}'),
+            ilxtr.duplicateOf,  # FIXME predicate
+            rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
+            ) for (epref, eilx), (pref, ilx) in duplicate_ofs]
+
+        replaced = set(s for s, p, o in replacedBys)
+        duplicates = set(s for s, p, o in duplicateOfs)
 
         sql_base = 'INSERT INTO existing_internal (ex_ilx_prefix, ex_ilx_id, ilx_prefix, ilx_id) VALUES '
-        for chunk in chunk_list([(*a, *b) for a, b in label_duplicate_of], self.batchsize):
+        self.int_eid_sql = []
+        self.int_eid_params = []
+        for chunk in chunk_list([(*a, *b) for a, b in duplicate_ofs + self.eid_replaced_by], self.batchsize):
             values_template, params = makeParamsValues(chunk)
             params['group'] = 'base'
             sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # TODO return id? (on conflict ok here)
@@ -1230,12 +1333,12 @@ class InterLexLoad:
             rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
             ) for (epref, eilx), (pref, ilx) in label_duplicate_of]
 
-        self.duplicateOfs
-        sdos, ssdos = set(duplicateOfs), set(self.duplicateOfs)
-        double_dupes = sdos & ssdos
-        _dofs = sorted(sdos | ssdos)
-        triples.extend(_dofs)
-        triples.extend(self.replacedBys)  # FIXME uh ... why were these inserted ???
+        #self.duplicateOfs
+        #sdos, ssdos = set(duplicateOfs), set(self.duplicateOfs)
+        #double_dupes = sdos & ssdos
+        #_dofs = sorted(sdos | ssdos)
+        triples.extend(duplicateOfs)
+        triples.extend(replacedBys)  # FIXME uh ... why were these inserted ???
         #replaced_lu = {s: o for s, p, o in self.replacedBys}  # FIXME check injective
         #replaced = set(self.replacedBys)
         #self.replacedBys = None  # a bit of cleanup foor memory hopefully
