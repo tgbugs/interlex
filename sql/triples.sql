@@ -212,16 +212,43 @@ CREATE TABLE existing_iris(
        -- just like any other, i think that is the answer
        -- i also think it means that iri and perspective_id are what must be unique
 
+       -- there is one type of consistency that we need from this which can be
+       -- implemented with a single unique constrant on iri and perspective
+       -- specifically it is that each perspective must be consistent, and that
+       -- means that when we go to merge from multiple perspectives that might
+       -- be in disagreement the target perspective will have to resolve the conflict
+       -- the primary target pers for this is curated, this is simpler than for new
+       -- entity label/exact, but might show a clearer way forward for that
+
        -- note that this table does NOT enumerate any uri.interlex.org identifiers
        -- the default/curated user will be the fail over
        -- do we need exclude rules? latest + original user will always be inserted
        -- but do we really even need latest to be explicit here?
        ilx_prefix text NOT NULL,
        ilx_id text NOT NULL,
-       iri uri UNIQUE NOT NULL CHECK (uri_host(iri) NOT LIKE '%interlex.org'),
-       perspective integer NOT NULL references perspectives (id),  -- FIXME should probably be perspective instead
+       iri uri NOT NULL CHECK (uri_host(iri) NOT LIKE '%interlex.org'), -- global uniqueness of iris is not necessary, only per perspective
+       perspective integer NOT NULL references perspectives (id),
        FOREIGN KEY (ilx_prefix, ilx_id) REFERENCES interlex_ids (prefix, id),
        PRIMARY KEY (iri, perspective)
+);
+
+CREATE TABLE existing_internal(
+       -- these are not extensible because they are involved in term resolution
+       -- and determine which records are editable at all, unfortunately those
+       -- are things that cannot be left to users
+
+       ex_ilx_prefix text NOT NULL,
+       ex_ilx_id text NOT NULL,
+       PRIMARY KEY (ex_ilx_prefix, ex_ilx_id),
+
+       reason text,  -- TODO duplicateOf idMigration
+
+       ilx_prefix text NOT NULL,
+       ilx_id text NOT NULL,
+
+       CHECK ((ilx_prefix, ilx_id) != (ex_ilx_prefix, ex_ilx_id)),
+       FOREIGN KEY (ilx_prefix, ilx_id) REFERENCES interlex_ids (prefix, id),
+       FOREIGN KEY (ex_ilx_prefix, ex_ilx_id) REFERENCES interlex_ids (prefix, id),
 );
 
 -- NOTE 'names' referred to here are 'graph names' or 'triple set names'

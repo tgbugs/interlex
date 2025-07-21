@@ -1,6 +1,6 @@
 import re
 import math
-from collections import defaultdict
+from collections import defaultdict, Counter
 import rdflib
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.sql import text as sql_text
@@ -21,6 +21,25 @@ from interlex.namespaces import ilxr
 from interlex.ingest import process_triple_seq, do_process_into_session
 
 log = _log.getChild('sync')
+
+
+def getpi(u):
+    p_i = u.rsplit('/', 1)[-1]
+    if '_' not in p_i:
+        log.error((u, p_i))
+        return (None, None)
+    if p_i == '_':
+        # FIXME BAD BAD BAD
+        log.critical(u)
+        return (None, None)
+
+    try:
+        p, i = p_i.split('_')
+    except ValueError:
+        log.critical(u)
+        return (None, None)
+
+    return p, i
 
 
 def fix_laex(self, data, replaced, replacedBys):
@@ -110,24 +129,6 @@ def fix_laex(self, data, replaced, replacedBys):
     # cases where a label should be excluded, the original label can be retained
     # these are for terms merged cases (for example)
     exclude_pis = {}  # [pi] = reason
-
-    def getpi(u):
-        p_i = u.rsplit('/', 1)[-1]
-        if '_' not in p_i:
-            log.error((u, p_i))
-            return (None, None)
-        if p_i == '_':
-            # FIXME BAD BAD BAD
-            log.critical(u)
-            return (None, None)
-
-        try:
-            p, i = p_i.split('_')
-        except ValueError:
-            log.critical(u)
-            return (None, None)
-
-        return p, i
 
     pirb = {getpi(s): getpi(o) for s, p, o in replacedBys}
     pirbnc = {k: v for k, v in pirb.items() if v[0] != 'cde'}
@@ -465,7 +466,6 @@ def fix_laex(self, data, replaced, replacedBys):
                     continue
 
     if PYTHON_SUCKS:
-        maybe_newsyns = {}
         dd = defaultdict(list)
         for pi, l in badpis.items():
             if pi in repl:
@@ -481,6 +481,7 @@ def fix_laex(self, data, replaced, replacedBys):
 
     if len(label_duplicate_of) != len(set(label_duplicate_of)):
         log.error(f'sigh {len(label_duplicate_of)} != {len(set(label_duplicate_of))}')
+        assert False, 'oops ldo'
 
     ldoo = [ref for d, ref in label_duplicate_of]
     x_but_no_dupes = (xdupes - set(ldoo)) - adupes
@@ -503,7 +504,7 @@ def fix_laex(self, data, replaced, replacedBys):
     #multimapped = sorted([r for r in repl.values() if '(deprecated)' in r and '(duplicateOf' in r])
     from pprint import pformat
     log.debug('\n' + pformat(sorted([(l, n, [(f'http://uri.olympiangods.org/base/{p}_{i}.html', (p, i)) for p, i in sorted(pis)]) for l, n, pis in re_derp]), width=240))
-    return repl, label_duplicate_of
+    return repl, label_duplicate_of, maybe_newsyns
 
 
 # get interlex
@@ -538,8 +539,10 @@ class InterLexLoad:
 
     def setup(self):
         self._sync_start = utcnowtz()
+        self._get_trip_data()
         self.existing_ids()
         self.user_iris()
+        self._sync_end = utcnowtz()
         self.make_triples()
         self.ids()  # this runs at the end to ensure we always get latest though that is not how ops should work
         self.make_metadata()
@@ -622,6 +625,7 @@ class InterLexLoad:
         lse(self.ilx_sql, self.ilx_params, 'interlex_ids')  # 3 gigs in postgres no batching
         lse(self.label_exact_sql, self.label_exact_params, 'label_exact')
         lse(self.eid_sql, self.eid_params, 'existing_iris')  # 16.4 gigs in postgres with no batching
+        lse(self.int_eid_sql, self.int_eid_params, 'existing_internal')
         lse(self.uid_sql, self.uid_params, 'uris')
 
         # FIXME this probably requires admin permissions
@@ -705,15 +709,15 @@ class InterLexLoad:
             values = [(v[0], v[1], v[2].strip()) for v in values]
             values = [v for v in values if v[2]]
 
-        if False:  # TODO
-            fixed_values = []
-            for p, i, l in values:
-                if (p, i) in self.label_fixes:
-                    fixed_values.append((p, i, self.label_fixes[(p, i)]))
-                else:
-                    fixed_values.append((p, i, l))
+        fixed_values = []
+        for p, i, l in values:
+            # FIXME l may not be normalized and thus may not match what is in triples
+            if (p, i) in self.repl_label:
+                fixed_values.append((p, i, self.repl_label[(p, i)]))
+            else:
+                fixed_values.append((p, i, l))
 
-            values = fixed_values
+        values = fixed_values
 
         self.ilx_sql = []
         self.ilx_params = []
@@ -724,9 +728,9 @@ class InterLexLoad:
             sql = 'INSERT INTO interlex_ids (prefix, id, original_label) VALUES ' + vt + ' ON CONFLICT DO NOTHING'  # FIXME BAD
             self.ilx_sql.append(sql)
             self.ilx_params.append(params)
-            lvt = vt.replace(')', ', :label)')
+            lvt = vt.replace(')', ', :pred)')
             lsql = 'INSERT INTO current_interlex_labels_and_exacts (prefix, id, o_lit, p) VALUES ' + lvt # can't ocdn on this one
-            self.label_exact_sql.append(sql)
+            self.label_exact_sql.append(lsql)
             self.label_exact_params.append({**params, 'pred': 'label'})
 
         prefixes = set(v[0] for v in values)
@@ -759,23 +763,35 @@ class InterLexLoad:
 
         mult_curies = {k: v for k, v in ver_curies.items() if len(v[1]) > 1}
 
+        deprecated = set()
+        deleted = set()
+        for row in self._data['terms']:
+            if row.status == -1:
+                pi = tuple(row.ilx.split('_'))
+                deleted.add(pi)  # review these because some were mistaken
+            elif row.status == -2:  # deprecated ???
+                pi = tuple(row.ilx.split('_'))
+                deprecated.add(pi)
+
         maybe_mult = defaultdict(list)
         versions = defaultdict(list)
         for pref, ilx, iri, ver in sorted(values, key=lambda t: t[-1], reverse=True):
             versions[pref, ilx].append(ver)
-            maybe_mult[iri].append((pref, ilx))
+            pi = pref, ilx
+            v = ('dep', pi) if pi in deprecated else (('del', pi) if pi in deleted else ('aok', pi))
+            maybe_mult[iri].append(v)
 
         multiple_versions = {k:v for k, v in versions.items() if len(set(v)) > 1}
         # if there are multiple iris they would be caught in the other steps
         # these will be the ones that have the same iri in multiple versions
         bad_versions = set((pref, ilx, nmv) for (pref, ilx), vs in multiple_versions.items() for nmv in sorted(vs)[:-1])
 
-        any_mult = {k:v for k, v in maybe_mult.items() if len(v) > 1}
+        any_mult = {k:tuple(sorted(v)) for k, v in maybe_mult.items() if len(v) > 1}
 
-        dupe_report = {k:tuple(f'http://uri.interlex.org/base/{p}_{i}' for p, i in v)
+        dupe_report = {k:tuple((status, f'http://uri.interlex.org/base/{p}_{i}') for status, (p, i) in sorted(v))
                        for k, v in maybe_mult.items()
                        if len(set(v)) > 1}
-        readable_report = {OntId(k):tuple(OntId(e) for e in v)
+        readable_report = {OntId(k):tuple((s, OntId(e)) for s, e in v)
                            for k, v in dupe_report.items()}
         log.debug('obvious duplicate report')
         _ = [print(repr(k), '\t', *(f'{e!r}' for e in v))
@@ -783,16 +799,85 @@ class InterLexLoad:
 
         dupes = tuple(dupe_report) + tuple(mult_curies)
 
+        dupe_depdel = set()
+        eid_duplicate_of = []
+        _eiddo_done = set()
+        already_replaced = (  # FIXME ideally not hardcode this ...
+            # these are actually already replaced
+            ('ilx', '0793234'),  # Interganglionic branch of inferior cervical ganglion to middle cervical ganglion -> ILX:0738290
+            ('ilx', '0793233'),  # Interganglionic branch of inferior cervical ganglion to first thoracic ganglion -> ILX:0738291
+            # these I'm manually forcing here
+            ('ilx', '0741726'),  # frontal notch (TA98)
+            ('ilx', '0741680'),  # median sacral crest (TA98)
+            ('ilx', '0739010'),  # long qt syndrome XXX this one has way more info so def need to make sure to merge it back
+            ('ilx', '0108304'),  # overlay type
+        )
+        self.ignore_depdel = (
+            ('ilx', '0106349'),  # long qt syndrome
+            ('ilx', '0108300'),  # overlay planes
+            ('ilx', '0738373'),  # Internal branch of superior laryngeal nerve XXX incorrect deprecation procedure
+        )
+        merge_label_priority = (  # in the event that newer takes priority over older
+            ('ilx', '0739010'),  # long qt syndrome
+            ('ilx', '0108304'),  # overlay type
+            ('ilx', '0793561'),  # internal branch of superior laryngeal nerve
+        )
+        flip = ((('ilx', '0738373'), ('ilx', '0793561')),)
+        for iri, _stat_pis in any_mult.items():
+            stat_pis = tuple(sorted(set(_stat_pis)))
+            if len(stat_pis) == 1:  # version mult
+                continue
+            ref = None
+            _dupes = []
+            for status, (p, i) in stat_pis:
+                pi = p, i
+                if status in ('dep', 'del') and pi not in self.ignore_depdel:
+                    dupe_depdel.add((p, i, iri))
+                    _dupes.append(pi)
+                elif status == 'aok':
+                    if ref is None:
+                        ref = pi
+                    elif pi in already_replaced:
+                        continue
+                    else:
+                        rp, ri = ref
+                        ru = f'http://uri.olympiangods.org/base/{rp}_{ri}.html'
+                        u = f'http://uri.olympiangods.org/base/{p}_{i}.html'
+                        log.error(f'conflict {iri} {ref} {pi} {ru} {u} {stat_pis}')
+                        ref = None
+
+            if stat_pis in _eiddo_done:
+                continue
+
+            _eiddo_done.add(stat_pis)
+            if ref is not None:
+                for d in _dupes:
+                    eid_duplicate_of.append((d, ref))
+
         # dupes = [u for u, c in Counter(_[1] for _ in values).most_common() if c > 1]  # picked up non-unique ilx which is not what we wanted
+
+        #ok_by_other_skip = set(iri for p, i, iri in dupe_depdel)
+        #grrr = set((p, i) for p, i, iri in dupe_depdel)
 
         skips = []
         bads = []
-        bads += [(p, a, b) for p, a, b, _ in values if b in dupes]
-        bads += [(p, i, r) for p, i, r, v in duplicate_ex_rec]
+        #bads += [(p, a, b) for p, a, b, _ in values if (b in dupes and b not in ok_by_other_skip) or (p, a) in grrr]
+        #bads += [(p, i, r) for p, i, r, v in duplicate_ex_rec]  # wierd that pi is distinct here ???  XXX FIXME there is no way to skip this they are just straight duplicates right now
         # TODO one of these is incorrect can't quite figure out which, so skipping entirely for now
+        fixes = {}
         for pref, id_, iri, version in values:  # FIXME
             if ' ' in iri:  # sigh, skip these for now since pguri doesn't seem to handled them
-                bads.append((pref, id_, iri))
+                if 'TOPNT' in iri:
+                    if '[' in iri:
+                        fixes[iri] = iri.replace(' ', '%20')
+                    else:
+                        fixes[iri] = iri.replace(' ', '_').replace('__', '_')
+                elif 'SNOMEDCT' in iri:
+                    fixes[iri] = iri.replace(' ', '')
+                else:
+                    bads.append((pref, id_, iri))
+            elif (pref, id_, iri) in dupe_depdel:
+                skips.append((pref, id_, iri))
             elif 'neurolex.org/wiki' in iri:
                 skips.append((pref, id_, iri))
 
@@ -800,12 +885,37 @@ class InterLexLoad:
         # XXX reminder: values comes from start_values and already excludes self referential external ids
         sbads, sskips, sbad_versions = set(bads), set(skips), set(bad_versions)
         _ins_values = [
-            (pref, ilx, iri) for pref, ilx, iri, ver in values if
+            (pref, ilx, (fixes[iri] if iri in fixes else iri)) for pref, ilx, iri, ver in values if
             (pref, ilx, iri) not in sbads and
             (pref, ilx, iri) not in sskips and
-            (pref, ilx, ver) not in sbad_versions]
-        ins_values = [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' not in iri]
-        user_iris = [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' in iri and 'org/base/' not in iri]
+            (pref, ilx, ver) not in sbad_versions
+            #(pref, ilx, iri, ver) not in duplicate_ex_rec
+        ]
+
+        sigh = set(a for a, b in Counter(_ins_values).most_common() if b > 1)
+
+        _a = set(_ins_values)
+        _b = set([(p, i, r) for p, i, r, v in duplicate_ex_rec])
+        _a & _b == _b
+        sigh == _b
+        self_ref = _b - sigh
+        assert not [(p, i, r) for p, i, r in self_ref if r != f'http://uri.interlex.org/base/{p}_{i}']
+        _i = set(r for p, i, r in _ins_values)
+        _s = set(r for p, i, r in skips)
+        hrm = _s - _i
+        assert not [h for h in hrm if 'neurolex' not in h], 'removed too much'
+        # we are ok to clean up _ins_values to remove duplicates at this point
+        _ins_values = sorted(set(_ins_values))
+
+        ins_values = []  # [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' not in iri]
+        for pref, ilx, iri in _ins_values :
+            if 'interlex.org' not in iri:
+                ins_values.append((pref, ilx, iri))
+        user_iris = []  # [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' in iri and 'org/base/' not in iri]
+        for pref, ilx, iri in _ins_values:
+            if 'interlex.org' in iri and 'org/base/' not in iri:
+                user_iris.append((pref, ilx, iri))
+
         # base are excluded because existing_iris only refer out HOWEVER
         # how do we deal with deprecated, I don't the we even had a process in place
         # for this when i was working on this before
@@ -818,17 +928,67 @@ class InterLexLoad:
         # sometimes there will be for this iteration as well ... but the question of how to
         # to it needs significantly more though, so for how we are going to stick the info
         # in the triples table and LET THE QUERIER SORT EM OUT
-        base_iris = [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' in iri and 'org/base/' in iri]
-        replacedBys = [(  # this should be injective by construction all the violations should be in bads of one kind or another
-            rdflib.URIRef(eid),
-            replacedBy,
-            rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
-            ) for pref, ilx, eid in base_iris]
+        base_iris = [] #  [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' in iri and 'org/base/' in iri]
+        for pref, ilx, iri in _ins_values:
+            if 'interlex.org' in iri and 'org/base/' in iri:
+                base_iris.append((pref, ilx, iri))
+        # FIXME replacedBys non-unique
+        # FIXME these aren't actually replacedBys they are duplicateOfs because rb implies an old in time relaced by new in time
+        # however some of them actually _are_ replacedBys as in the case of cdes
+        #replacedBys = [(  # this should be injective by construction all the violations should be in bads of one kind or another
+        #    rdflib.URIRef(eid),
+        #    replacedBy,
+        #    rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
+        #    ) for pref, ilx, eid in base_iris]
+
+        more_eid_duplicate_of = [((pref, ilx), getpi(eid)) if (getpi(eid), (pref, ilx)) in flip else (getpi(eid), (pref, ilx))
+                                 for pref, ilx, eid in base_iris if pref != 'cde'
+                                 and getpi(eid) not in already_replaced]
+        sedo = set(eid_duplicate_of)
+        smedo = set(more_eid_duplicate_of)
+        redundant = smedo & sedo
+
+        eid_duplicate_of = eid_duplicate_of + more_eid_duplicate_of
+        sedo = set(eid_duplicate_of)
+        if len(eid_duplicate_of) != len(sedo):
+            qq = [(a, b) for a, b in Counter(eid_duplicate_of).most_common() if b > 1]
+            if set([a for a, b in qq]) != redundant:
+                assert False, 'derp'
+                # this is because these have more than one existing iri in common ?
+                log.error('eid_duplicate_of has non-unique values')
+
+        for (ap, ai), (bp, bi) in eid_duplicate_of:
+            if ai <= bi:
+                # long qt syndrome and overlay planes vs overlay type
+                # lqts should switch direction and planes and type should be merged but type gets label priority
+                log.error(f'wrong replace direction {ap} {ai} <= {bp} {bi}')
+
+        # at this point it is safe to clean up eiddo
+        eid_duplicate_of = sorted(sedo)
+
+        sa = [a for a, b in sedo]
+        if len(set(sa)) != len(sa):
+            qq = [(a, b) for a, b in Counter(sa).most_common() if b > 1]
+            log.error('duplicate duplicate mappings for some terms!')
+
+        # these are the real replacedBy cases
+        eid_replaced_by = [(getpi(eid), (pref, ilx)) for pref, ilx, eid in base_iris if pref == 'cde']
+        serb = set(eid_replaced_by)
+        if len(serb) != len(eid_replaced_by):
+            qq = [(a, b) for a, b in Counter(eid_replaced_by).most_common() if b > 1]
+            log.error('eid_replaced_by has non-unique values')
+
+        sarb = [a for a, b in sedo]
+        if len(set(sarb)) != len(sarb):
+            qq = [(a, b) for a, b in Counter(sarb).most_common() if b > 1]
+            log.error('duplicate replacedBy mappings for some terms!')
+
         assert len(ins_values) + len(user_iris) + len(base_iris) == len(_ins_values)
+
         #ins_values += [(v[0], k) for k, v in mult_curies.items()]  # add curies back now fixed
         if self.debug:
             breakpoint()
-        return ins_values, bads, skips, user_iris, replacedBys
+        return ins_values, bads, skips, user_iris, eid_replaced_by, eid_duplicate_of
 
     def existing_ids(self):
         insp, engine = self.insp, self.engine
@@ -873,7 +1033,20 @@ class InterLexLoad:
                         for row in eternal_screaming
                         if row.ilx not in row.iri]
 
-        values, bads, skips, user_iris, replacedBys = self.cull_bads(eternal_screaming, start_values, ind)
+        values, bads, skips, user_iris, eid_replaced_by, eid_duplicate_of = self.cull_bads(eternal_screaming, start_values, ind)
+
+        replacedBys = [(
+            rdflib.URIRef(f'http://uri.interlex.org/base/{epref}_{eilx}'),
+            replacedBy,
+            rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
+            ) for (epref, eilx), (pref, ilx) in eid_replaced_by]
+
+        duplicateOfs = [(
+            rdflib.URIRef(f'http://uri.interlex.org/base/{epref}_{eilx}'),
+            ilxtr.duplicateOf,  # FIXME predicate
+            rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
+            ) for (epref, eilx), (pref, ilx) in eid_duplicate_of]
+
         if not self.debug:
             # major memory consumer
             # and it does seem that removing it saves quite a bit
@@ -890,7 +1063,18 @@ class InterLexLoad:
             self.eid_sql.append(sql)
             self.eid_params.append(params)
 
+        sql_base = 'INSERT INTO existing_internal (ex_ilx_prefix, ex_ilx_id, ilx_prefix, ilx_id) VALUES '
+        self.int_eid_sql = []
+        self.int_eid_params = []
+        for chunk in chunk_list([(*a, *b) for a, b in eid_duplicate_of + eid_replaced_by], self.batchsize):
+            values_template, params = makeParamsValues(chunk)
+            params['group'] = 'base'
+            sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # TODO return id? (on conflict ok here)
+            self.int_eid_sql.append(sql)
+            self.int_eid_params.append(params)
+
         self.replacedBys = replacedBys
+        self.duplicateOfs = duplicateOfs
 
         if self.debug or True:  # needed for label/syn dedue
             self.eid_raw = eternal_screaming
@@ -965,7 +1149,7 @@ class InterLexLoad:
             self.uid_sql.append(sql)
             self.uid_params.append(params)
 
-    def make_triples(self):
+    def _get_trip_data(self):
         insp, engine = self.insp, self.engine
         #ilxq = ('SELECT * FROM term_existing_ids as teid '
                 #'JOIN terms as t ON t.id = teid.tid '
@@ -989,7 +1173,10 @@ class InterLexLoad:
             data = {name:conn.execute(sql_text(query)).fetchall()  # FIXME yeah this is gonna be big right?
                     for name, query in queries.items()}
 
-        self._sync_end = utcnowtz()
+        self._data = data
+
+    def make_triples(self):
+        data = self._data
         #breakpoint()  # XXX break here
         ilx_index = {}
         id_type = {}
@@ -1024,11 +1211,34 @@ class InterLexLoad:
             return o_strip
 
         replaced = set(s for s, p, o in self.replacedBys)
-        some_result = fix_laex(self, data, replaced, self.replacedBys)
-        triples.extend(self.replacedBys)
+        duplicates = set(s for s, p, o in self.duplicateOfs)
+        repl_label, label_duplicate_of, maybe_newsyns = fix_laex(self, data, replaced, self.replacedBys)  # FIXME pass duplicates of etc.
+
+        sql_base = 'INSERT INTO existing_internal (ex_ilx_prefix, ex_ilx_id, ilx_prefix, ilx_id) VALUES '
+        for chunk in chunk_list([(*a, *b) for a, b in label_duplicate_of], self.batchsize):
+            values_template, params = makeParamsValues(chunk)
+            params['group'] = 'base'
+            sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # TODO return id? (on conflict ok here)
+            self.int_eid_sql.append(sql)
+            self.int_eid_params.append(params)
+
+        self.repl_label = repl_label
+
+        duplicateOfs = [(
+            rdflib.URIRef(f'http://uri.interlex.org/base/{epref}_{eilx}'),
+            ilxtr.duplicateOf,  # FIXME predicate
+            rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),
+            ) for (epref, eilx), (pref, ilx) in label_duplicate_of]
+
+        self.duplicateOfs
+        sdos, ssdos = set(duplicateOfs), set(self.duplicateOfs)
+        double_dupes = sdos & ssdos
+        _dofs = sorted(sdos | ssdos)
+        triples.extend(_dofs)
+        triples.extend(self.replacedBys)  # FIXME uh ... why were these inserted ???
         #replaced_lu = {s: o for s, p, o in self.replacedBys}  # FIXME check injective
         #replaced = set(self.replacedBys)
-        self.replacedBys = None  # a bit of cleanup foor memory hopefully
+        #self.replacedBys = None  # a bit of cleanup foor memory hopefully
 
         obsReason, termsMerged = makeURIs('obsReason', 'termsMerged')
         deprecated = set()
@@ -1052,7 +1262,15 @@ class InterLexLoad:
             # TODO consider interlex internal? ilxi.label or something?
             triples.append((uri, rdf.type, class_))
 
-            if row.label and (normed_label := norm_obj(uri, row.label)):
+            if (frag_pref, ilx) in repl_label:
+                label = repl_label[frag_pref, ilx]
+                # TODO maybe_newsyns
+                syn = maybe_newsyns[frag_pref, ilx]
+                triples.append((uri, ilxtr.origLabel, rdflib.Literal(norm_obj(uri, syn))))
+            else:
+                label = row.label
+
+            if label and (normed_label := norm_obj(uri, label)):
                 triples.append((uri, rdfs.label, rdflib.Literal(normed_label)))
             else:
                 nolabs.append(uri)
@@ -1074,10 +1292,18 @@ class InterLexLoad:
                 # automated process deprecated also basically means
                 # deleted and merged, there are almost no actual
                 # deprecations
-                deprecated.add(uri)
-                triples.append((uri, owl.deprecated, rdflib.Literal(True)))
-                if uri in replaced:
+                if (frag_pref, ilx) not in self.ignore_depdel:
+                    deprecated.add(uri)
+                    triples.append((uri, owl.deprecated, rdflib.Literal(True)))
+
+            if uri in duplicates or uri in replaced:  # invert the logic
+                # FIXME these really aren't deprecations in the owl sense, they
+                # are "don't use this identifier" the concept is still valid it
+                # is just that the name is not
+                if uri in duplicates:
                     triples.append((uri, obsReason, termsMerged))
+                else:
+                    triples.append((uri, obsReason, ilxtr.idMigration))
 
             # this is the wrong way to do these, have to hit the superless at the moment
             #if row.type == 'fde':
