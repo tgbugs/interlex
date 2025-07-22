@@ -1,6 +1,7 @@
 import re
 import math
 from collections import defaultdict, Counter
+from urllib.parse import urlparse, quote as url_quote, unquote as url_unquote
 import rdflib
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.sql import text as sql_text
@@ -22,6 +23,7 @@ from interlex.ingest import process_triple_seq, do_process_into_session
 
 log = _log.getChild('sync')
 
+ocdn = ' ON CONFICT DO NOTHING'
 
 def getpi(u):
     p_i = u.rsplit('/', 1)[-1]
@@ -695,6 +697,33 @@ class InterLexLoad:
         sigh = OntMetaL()
         self._mntf = sigh
 
+    def delete_existing(self, session):
+        # this is reasonably safe because we do retain the relations in triples
+        # as well since that is how we reconstruct the history
+        sql = '''
+delete from existing_iris as ex
+using
+fragment_prefix_sequences as fps where
+ex.ilx_prefix != 'tmp' and fps.prefix = ex.ilx_prefix and ex.ilx_id <= LPAD(cast(fps.suffix_max AS text), fps.current_pad, '0');
+
+delete from existing_internal as ex
+using
+fragment_prefix_sequences as fps where
+ex.ilx_prefix != 'tmp' and fps.prefix = ex.ilx_prefix and ex.ilx_id <= LPAD(cast(fps.suffix_max AS text), fps.current_pad, '0');
+
+delete from uri_mapping as ex
+using
+fragment_prefix_sequences as fps where
+ex.ilx_prefix != 'tmp' and fps.prefix = ex.ilx_prefix and ex.ilx_id <= LPAD(cast(fps.suffix_max AS text), fps.current_pad, '0');
+
+delete from current_interlex_labels_and_exacts as ex
+using
+fragment_prefix_sequences as fps where
+ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_max AS text), fps.current_pad, '0');
+'''
+        session.execute(sql_text(sql))
+        session.execute(sql_text(f'savepoint delete_existing'))
+
     @exc.bigError
     def local_load(self):
         loader = self.loader
@@ -714,6 +743,7 @@ class InterLexLoad:
 
         # start sitting at around 10 gigs in pypy3 (oof)
         # now stays below 8 gigs in pypy3, and below about 1gig in postgres with 40k batch size, much better, 600mb at 20k
+        self.delete_existing(loader.session)
         lse(self.ilx_sql, self.ilx_params, 'interlex_ids')  # 3 gigs in postgres no batching
         lse(self.label_exact_sql, self.label_exact_params, 'label_exact')
         lse(self.eid_sql, self.eid_params, 'existing_iris')  # 16.4 gigs in postgres with no batching
@@ -817,7 +847,8 @@ class InterLexLoad:
         self.label_exact_params = []
         for chunk in chunk_list(values, self.batchsize):
             vt, params = makeParamsValues(chunk)
-            sql = 'INSERT INTO interlex_ids (prefix, id, original_label) VALUES ' + vt + ' ON CONFLICT DO NOTHING'  # FIXME BAD
+            sql = ('INSERT INTO interlex_ids (prefix, id, original_label) VALUES ' + vt +
+                   ' ON CONFICT (prefix, id) DO UPDATE SET original_label = EXCLUDED.original_label')
             self.ilx_sql.append(sql)
             self.ilx_params.append(params)
             lvt = vt.replace(')', ', :pred)')
@@ -914,6 +945,16 @@ class InterLexLoad:
             ('ilx', '0108304'),  # overlay type
             ('ilx', '0793561'),  # internal branch of superior laryngeal nerve
         )
+        manual_no_eid = (  # better not to guess on these where they are already double mapped and deduped
+            # if deprecated/replaced terms retain an existing iri we will port them over later
+            ('ilx', '0739010', 'http://uri.neuinfo.org/nif/nifstd/oen_0001063'),  # long qt syndrome
+            ('ilx', '0108304', 'http://uri.interlex.org/dicom/uris/terms/60xx_0040'),  # overlay type
+            ('ilx', '0108304', 'http://uri.neuinfo.org/nif/nifstd/nlx_150436'),
+            ('ilx', '0793234', 'http://purl.org/sig/ont/fma/fma6942'),  # Interganglionic branch of inferior cervical ganglion to middle cervical ganglion -> ILX:0738290
+            ('ilx', '0793233', 'http://purl.org/sig/ont/fma/fma6944'),  # Interganglionic branch of inferior cervical ganglion to first thoracic ganglion -> ILX:0738291
+            ('ilx', '0741726', 'https://taviewer.openanatomy.org/?id=A02.1.03.010'),  # frontal notch (TA98)
+            ('ilx', '0741680', 'https://taviewer.openanatomy.org/?id=A02.2.05.014'),  # median sacral crest (TA98)
+        )
         flip = ((('ilx', '0738373'), ('ilx', '0793561')),)
         for iri, _stat_pis in any_mult.items():
             stat_pis = tuple(sorted(set(_stat_pis)))
@@ -961,7 +1002,7 @@ class InterLexLoad:
             if ' ' in iri:  # sigh, skip these for now since pguri doesn't seem to handled them
                 if 'TOPNT' in iri:
                     if '[' in iri:
-                        fixes[iri] = iri.replace(' ', '%20')
+                        fixes[iri] = iri.replace(' ', '%20').replace('[', url_quote('[')).replace(']', url_quote(']'))
                     else:
                         fixes[iri] = iri.replace(' ', '_').replace('__', '_')
                 elif 'SNOMEDCT' in iri:
@@ -980,7 +1021,8 @@ class InterLexLoad:
             (pref, ilx, (fixes[iri] if iri in fixes else iri)) for pref, ilx, iri, ver in values if
             (pref, ilx, iri) not in sbads and
             (pref, ilx, iri) not in sskips and
-            (pref, ilx, ver) not in sbad_versions
+            (pref, ilx, ver) not in sbad_versions and
+            (pref, ilx, iri) not in manual_no_eid
             #(pref, ilx, iri, ver) not in duplicate_ex_rec
         ]
 
@@ -995,14 +1037,44 @@ class InterLexLoad:
         _i = set(r for p, i, r in _ins_values)
         _s = set(r for p, i, r in skips)
         hrm = _s - _i
-        assert not [h for h in hrm if 'neurolex' not in h], 'removed too much'
+        rtm = [h for h in hrm if 'neurolex' not in h]
+        assert not rtm, 'removed too much'
         # we are ok to clean up _ins_values to remove duplicates at this point
         _ins_values = sorted(set(_ins_values))
 
+        def morefix(p, i, iri):
+            if iri.endswith(';'):  # yes fix it in the source but
+                out = iri[:-1]
+                log.debug((p, i, iri, out))
+            elif iri.startswith('https://scicrunch.org'):
+                out = 'http' + iri[5:]
+                if 'RRID:' in out:
+                    out = out.replace('RRID:', '')
+
+                log.debug((p, i, iri, out))
+            else:
+                out = iri.replace(
+                    'https://ncimeta.nci.nih.gov/ncimbrowser/ConceptReport.jsp?dictionary=NCI%20Metathesaurus&code=',
+                    'https://evsexplore.semantics.cancer.gov/evsexplore/concept/ncim/',)
+
+            return out
+
+        _ins_values = [(p, i, morefix(p, i, r)) for p, i, r in _ins_values]
+        skips = [(p, i, morefix(p, i, r)) for p, i, r in skips]
+
+        # however we have a non-injective problem still
+        dd = defaultdict(list)
+        for p, i, r in _ins_values:
+            dd[r].append((p, i))
+        ohno_v = {r:pis for r, pis in dd.items() if len(pis) > 1}
+        if ohno_v:
+            assert False, 'non-injective'
+
         ins_values = []  # [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' not in iri]
-        for pref, ilx, iri in _ins_values :
+        for pref, ilx, iri in _ins_values:
             if 'interlex.org' not in iri:
                 ins_values.append((pref, ilx, iri))
+
         user_iris = []  # [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' in iri and 'org/base/' not in iri]
         for pref, ilx, iri in _ins_values:
             if 'interlex.org' in iri and 'org/base/' not in iri:
@@ -1139,7 +1211,7 @@ class InterLexLoad:
         for chunk in chunk_list(values, self.batchsize):
             values_template, params = makeParamsValues(chunk, constants=('persFromGroupname(:group)',))
             params['group'] = 'base'
-            sql = sql_base + values_template + ' ON CONFLICT DO NOTHING'  # TODO return id? (on conflict ok here)
+            sql = sql_base + values_template + ocdn  # TODO return id? (on conflict ok here)
             self.eid_sql.append(sql)
             self.eid_params.append(params)
 
@@ -1198,6 +1270,8 @@ class InterLexLoad:
         if bads:
             raise ValueError('\n'.join(bads))
 
+        self.uri_mapping_values = _values  # need for triples for history
+
         persmap = self.queries.getGroupPers(*sorted(set(u for _, _, u, _ in _values)))
         # XXX if you encounter an error here it is probably because
         # new groups were used by convention in the ontology and
@@ -1212,7 +1286,6 @@ class InterLexLoad:
 
         self.uid_sql = []
         self.uid_params = []
-        ocdn = ' ON CONFLICT DO NOTHING'
         for chunk in chunk_list(values, self.batchsize):
             vt_uri, vt_uri_mapping, params = makeParamsValues(chunk, vsplit=((2, None), (0, None)))
             sql = (sql_uri + vt_uri + ocdn + ';' + sql_uri_mapping + vt_uri_mapping + ocdn)
@@ -1252,6 +1325,35 @@ class InterLexLoad:
         id_type = {}
         triples = [(rdflib.URIRef(f'http://uri.interlex.org/base/{pref}_{ilx}'),  # FIXME hardcoded structure
                     oboInOwl.hasDbXref, rdflib.URIRef(iri)) for pref, ilx, iri in self.eid_skips]  # FIXME broken for new fragment prefixes
+
+        # fill values that have gone in other tables here as well because
+        # we want to reuse the triple table history to track these and the
+        # sql tables to enforce consistency at any given moment
+        # these are mediated by special predicates
+
+        # FIXME special predicates should probably switch over to use uilx.org ids for space reasons for now
+        # ilx ids           ilxtr:origLabel        # only in cases where we had to change rdfs:label
+        # existing iris     ilxtr:hasExternalId    # goes on the main ilx term because it is part of the history of that term
+        # existing internal replacedBy: or ilxtr:duplicateOf  # goes on the replaced term because it tracks history of the replaced
+        # user iris         ilxtr:hasIlxId         # FIXME pred, goes from user uri to ilx term since it is for history tracking of the user uri
+        # labels and exacts ilxtr:hasExactSynonym  # FIXME pred, we only set label right now, will have an exact promotion party later
+
+        # point of interest here is that the uri mapping values here are present for history
+        # but despite sharing a subject with a user uri, do not share a perspective, because
+        # that mapping is controlled by interlex, it can only be changed by the user if they
+        # also update it, and they may not define the mapping in the source file that defines
+        # those user iris
+        triples.extend([
+            (rdflib.URIRef(f'http://uri.interlex.org/{g}/uris/{uri_path}'),
+             ilxtr.hasIlxId,
+             rdflib.URIRef(f'http://uri.interlex.org/base/{p}_{i}'))
+            for p, i, g, uri_path in self.uri_mapping_values])
+        triples.extend([
+            (rdflib.URIRef(f'http://uri.interlex.org/base/{p}_{i}'),
+             ilxtr.hasExternalId,
+             rdflib.URIRef(r))
+            for p, i, r in self.eid_values])
+
         type_to_owl = MysqlExport.types
 
         # FIXME handle alternate fragment prefixes!
@@ -1497,7 +1599,31 @@ class InterLexLoad:
         re_https = re.compile('^https?://')
         def normalize_annotation_property_object(context, o_raw):
             o_strip = norm_obj(context, o_raw)
-            if re.match(re_https, o_strip) and ' ' not in o_strip:
+            if re.match(re_https, o_strip):
+                _oin = o_strip
+                if ' ' in o_strip:
+                    if 'FMAID: ' in o_strip:
+                        o_strip = o_strip.replace(' ', '')
+                    elif 'NCBITaxon: ' in o_strip:
+                        o_strip = o_strip.replace(' ', '')
+                    elif 'PATO 'in o_strip:
+                        o_strip = o_strip.replace(' ', ':')
+                    else:
+                        log.warning(o_strip)
+                        return rdflib.Literal(o_strip)
+
+                if o_strip.startswith('https://scicrunch.org'):  # apparently these aren't in annotation properties somehow ?? must be existing ids
+                    o_strip = 'http' + o_strip[5:]
+                    if 'RRID:' in o_strip:
+                        o_strip = o_strip.replace('RRID:', '')
+
+                elif o_strip.startswith('https://en.wikipedia.org'):
+                    o_strip = 'http' + o_strip[5:]
+
+                o_strip = url_quote(url_unquote(o_strip), safe='/&?=+:.,!*@#$();\'')
+                if o_strip != _oin:
+                    log.info(f'normalized {_oin} -> {o_strip}')
+
                 o = rdflib.URIRef(o_strip)
                 try:
                     o.n3()
@@ -1577,6 +1703,67 @@ class InterLexLoad:
         done_sc = None
         #engine.execute()
         #breakpoint()
+
+        _uris = set(e for t in triples for e in t if isinstance(e, rdflib.URIRef))
+        _paths = defaultdict(list)
+        _schemes = defaultdict(set)
+        _colms = defaultdict(list)
+        ms = 'en.wikipedia.org', 'scicrunch.org'
+        # normalize wiki https -> http to match the vast majority of what we have
+        # normalize scr -> http and without the RRID:
+        for u in _uris:
+            up = urlparse(u)
+            _schemes[up.netloc].add(up.scheme)
+            if up.netloc in ms:
+                _colms[up.netloc].append(u)
+
+            _rest = u.split('/', 3)[-1]
+            _paths[_rest].append(u)
+
+        _http = {h: s for h, s in _schemes.items() if 'http' in s and 'https' not in s}
+        _https = {h: s for h, s in _schemes.items() if 'https' in s and 'http' not in s}
+        _multi_scheme = {h:ss for h, ss in _schemes.items() if len(ss) > 1}
+        _both = _multi_scheme
+        if _both:
+            log.warning(_both)
+
+        _multi_path = {p: us for p, us in _paths.items() if len(us) > 1}
+        if _multi_path:
+            log.warning(_multi_path)
+
+        #_percent_path = {p: us for p, us in _paths.items() if '%' in p}
+        #_unpaths = {url_unquote(p): [url_unquote(u) for u in us] for p, us in _paths.items()}
+        # oooh http vs https ... gonna have to deal with that ... nowish
+        # at least for stuff that is coming from us, might need a record
+        # but we have to normalize somewhere, maybe can can record domains
+        # where we have seen https? that seems tractable?
+        safe = '/&?=+:.,!*@#$();\''  # uriparser ; is safe in
+        unsafe = '<>{}[] ^|'  # + unicode (and technically %) don't want to double escape
+        #wat = [rdflib.URIRef(u) for us in _unpaths.values() for u in us if ' ' not  in u]  # umls is really bad for this
+        #_badpaths = {p: us for p, us in _unpaths.items() if url_quote(p, safe='/&?=+:.,!*@#$();\'') != p}  # FIXME ; in uri at end is 99% a mistake
+        #_sigh = {p: us for p, us in _unpaths.items() if ';' in p}  # oh boy
+        #_wat = {p: us for p, us in _unpaths.items() if 'uri.interlex.org' in us[0] and not p.split('/', 1)[0].isalpha()}
+        # the number of badpaths is small enough now that we've switched out the umls iris that have spaces
+        _final_check = {p: us for p, us in _paths.items() if '%' not in p and url_quote(p, safe='/&?=+:.,!*@#$();\'') != p}
+        if _final_check:
+            log.warning(_final_check)
+
+        # TODO have to find common denominator between uriparser and rdflib ...
+        # also unfortunately we cannot deviate from the stored form for external
+        # ontologies unless we add a normalization pass, but that can break
+        # when there are escaped and unescaped variants of uri in the same file
+        # as in, I'd really rather have a situation where different seriazations
+        # can converge on the same gclc because we enforce normalization to a form
+        # without any replicas because it makes everything vastly simpler, but
+        # it means we can't reproduce the original set of triples and bnode structure
+        # which would be ok if we just store the raw inputs
+
+        # the policy is as follows
+        # interlex does not escape or unescape uris during processing
+        # the only charachters that must be escaped are those that cause
+        # uripraser or rdflib to fail/warn (uriparser is the superset)
+        # the most obvious set for these are unicode chars
+        # and <>{}[] ^| though there may be others as well
 
         self._triples = triples
         self.wat = bads, WTF, WTF2
