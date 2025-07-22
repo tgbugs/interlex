@@ -23,7 +23,7 @@ from interlex.ingest import process_triple_seq, do_process_into_session
 
 log = _log.getChild('sync')
 
-ocdn = ' ON CONFICT DO NOTHING'
+ocdn = ' ON CONFLICT DO NOTHING'
 
 def getpi(u):
     p_i = u.rsplit('/', 1)[-1]
@@ -606,7 +606,7 @@ class InterLexLoad:
 
     stype_lookup = synonym_types
 
-    def __init__(self, db, do_cdes=False, debug=False, batchsize=20000):
+    def __init__(self, db, do_cdes=False, skip_trips=False, debug=False, echo=False, batchsize=20000):
         # batchsize tested at 20k, 40k, and 80k, 20k runs slightly faster than the other two
         # and does it with significantly less memory usage (< 1 gig)
         self._db = db
@@ -616,9 +616,10 @@ class InterLexLoad:
 
         self.queries = Queries(self.loader.session)
         self.do_cdes = do_cdes
+        self.skip_trips = skip_trips
         self.debug = debug
         eurl = db.session.connection().engine.url
-        self.admin_engine = create_engine(dbUri(dbuser='interlex-admin', host=eurl.host, port=eurl.port, database=eurl.database), echo=True)
+        self.admin_engine = create_engine(dbUri(dbuser='interlex-admin', host=eurl.host, port=eurl.port, database=eurl.database), echo=echo)
         kwargs = {k: config.auth.get(f'alt-db-{k}')
                   for k in ('user', 'host', 'port', 'database')}
         if kwargs['database'] is None:
@@ -697,7 +698,7 @@ class InterLexLoad:
         sigh = OntMetaL()
         self._mntf = sigh
 
-    def delete_existing(self, session):
+    def delete_existing(self, conn):
         # this is reasonably safe because we do retain the relations in triples
         # as well since that is how we reconstruct the history
         sql = '''
@@ -721,47 +722,56 @@ using
 fragment_prefix_sequences as fps where
 ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_max AS text), fps.current_pad, '0');
 '''
-        session.execute(sql_text(sql))
-        session.execute(sql_text(f'savepoint delete_existing'))
+        conn.execute(sql_text(sql))
+        conn.execute(sql_text(f'savepoint delete_existing'))
 
     @exc.bigError
-    def local_load(self):
-        loader = self.loader
-        def lse(s, p, load_type='???'):
+    def local_load(self, commit=True):
+        def lse(conn, s, p, load_type='???'):
             # accepts two lists of equal length
             assert len(s) == len(p)
             n = len(p)
             log.debug(f'starting batch load for {load_type}')
             do_gc()  # pre/post is sufficient to stay stable, a bit of creep toward the end of a batch but it goes back down
             for i, (sql, params) in enumerate(zip(s, p)):
-                loader.session.execute(sql_text(sql), params)
-                loader.session.execute(sql_text(f'savepoint {load_type}'))
+                conn.execute(sql_text(sql), params)
+                conn.execute(sql_text(f'savepoint {load_type}'))
                 msg = f'{((i + 1) / n) * 100:3.0f}% done with batched load of {load_type}'
                 log.debug(msg)
 
             do_gc()
 
+        vt_current, params_current = makeParamsValues(list(self.current.items()))
         # start sitting at around 10 gigs in pypy3 (oof)
         # now stays below 8 gigs in pypy3, and below about 1gig in postgres with 40k batch size, much better, 600mb at 20k
-        self.delete_existing(loader.session)
-        lse(self.ilx_sql, self.ilx_params, 'interlex_ids')  # 3 gigs in postgres no batching
-        lse(self.label_exact_sql, self.label_exact_params, 'label_exact')
-        lse(self.eid_sql, self.eid_params, 'existing_iris')  # 16.4 gigs in postgres with no batching
-        lse(self.int_eid_sql, self.int_eid_params, 'existing_internal')
-        lse(self.uid_sql, self.uid_params, 'uris')
+        with self.admin_engine.connect() as conn:
+            # while only delete_existing and update current require the admin connection,
+            # since we are deleting the contents of existing tables we want it all in the
+            # same transaction, which means that sync will effectively parts of the database
+            # for the duration, however since this is only intended for the initial migration
+            # and possibly subsequent maintenance periods it is ok for now because we ensure
+            # that any other operations happen on consistent state
+            self.delete_existing(conn)
+            lse(conn, self.ilx_sql, self.ilx_params, 'interlex_ids')  # 3 gigs in postgres no batching
+            lse(conn, self.label_exact_sql, self.label_exact_params, 'label_exact')
+            lse(conn, self.eid_sql, self.eid_params, 'existing_iris')  # 16.4 gigs in postgres with no batching
+            lse(conn, self.int_eid_sql, self.int_eid_params, 'existing_internal')
+            lse(conn, self.uid_sql, self.uid_params, 'uris')
 
         # FIXME this probably requires admin permissions
-        vt, params = makeParamsValues(list(self.current.items()))
-        #with self.admin_engine.connect() as conn:
             #conn.execute(sql_text(f"SELECT setval('interlex_ids_seq', {self.current}, TRUE)"))  # DANGERZONE
-        with self.admin_engine.connect() as conn:  # calling UPDATE on this without the function requires admin (sensibly)
+            # calling UPDATE on this without the function requires admin (sensibly)
             conn.execute(sql_text(
                 'INSERT INTO fragment_prefix_sequences (prefix, suffix_max) '
-                f'VALUES {vt} ON CONFLICT (prefix) DO UPDATE '
+                f'VALUES {vt_current} ON CONFLICT (prefix) DO UPDATE '
                 'SET suffix_max = EXCLUDED.suffix_max '
                 'WHERE fragment_prefix_sequences.prefix = EXCLUDED.prefix'),
-                         params)
-            conn.commit()
+                         params_current)
+            if commit:
+                conn.commit()
+            else:
+                breakpoint()
+                pass
 
         #lse([('INSERT INTO fragment_prefix_sequences (prefix, suffix_max) '
             #f'VALUES {vt} ON CONFLICT (prefix) DO UPDATE '
@@ -807,16 +817,21 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
         metadata_to_fetch = self._mntf  # FIXME TODO populate from self._meta_triples
         metadata_not_to_fetch = None
         local_conventions = None
-        triples = self._meta_triples + self._triples
-        do_process_into_session(self._db.session, process_triple_seq,
-                                triples,
-                                serialization_identity,
-                                metadata_to_fetch,
-                                metadata_not_to_fetch,
-                                local_conventions,
-                                commit=True, batchsize=self.batchsize, debug=True)
+
+        if self.skip_trips:
+            log.info('skipping triple ingest')
+        else:
+            # sometimes the triples haven't changed and we need to fix something downstream
+            triples = self._meta_triples + self._triples
+            do_process_into_session(self._db.session, process_triple_seq,
+                                    triples,
+                                    serialization_identity,
+                                    metadata_to_fetch,
+                                    metadata_not_to_fetch,
+                                    local_conventions,
+                                    commit=True, batchsize=self.batchsize, debug=True)
+
         self.local_load()
-        self._db.session.commit()
         #self.local_load_part2()
         #self.remote_load()
 
@@ -848,7 +863,7 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
         for chunk in chunk_list(values, self.batchsize):
             vt, params = makeParamsValues(chunk)
             sql = ('INSERT INTO interlex_ids (prefix, id, original_label) VALUES ' + vt +
-                   ' ON CONFICT (prefix, id) DO UPDATE SET original_label = EXCLUDED.original_label')
+                   ' ON CONFLICT (prefix, id) DO UPDATE SET original_label = EXCLUDED.original_label')
             self.ilx_sql.append(sql)
             self.ilx_params.append(params)
             lvt = vt.replace(')', ', :pred)')
@@ -859,7 +874,7 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
         prefixes = set(v[0] for v in values)
         self.current = {p:int([v for v in values if v[0] == p][-1][1]) for p in prefixes}
         #self.current = int(values[-1][1].strip('0'))
-        log.debug(self.current)
+        log.info(self.current)
 
     def cull_bads(self, eternal_screaming, values, ind):
         verwat = defaultdict(list)

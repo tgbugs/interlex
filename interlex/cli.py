@@ -89,6 +89,7 @@ Options:
     --proxy=N               number of proxies you are behind [default: 0]
 
     --do-cdes               when running sync include the cdes
+    --skip-trips            don't sync triples just helper tables
     --force                 force ingest even if ser already parsedTo gclc
     --commit                commit after each batch during ingest
     --echo                  enable echo of sql independent of debug
@@ -146,7 +147,13 @@ class Main(clif.Dispatcher):
         class db:
             session = _session
 
-        il = InterLexLoad(db, do_cdes=self.options.do_cdes, debug=self.options.debug)
+        il = InterLexLoad(
+            db,
+            do_cdes=self.options.do_cdes,
+            skip_trips=self.options.skip_trips,
+            debug=self.options.debug,
+            echo=self.options.echo,
+        )
         il.setup()
         il.load()  # do this one yourself  WARNING high memory usage ~ 17 gigs
         self = il
