@@ -7,6 +7,7 @@ import secrets
 from time import time, sleep
 from datetime import timedelta, timezone
 from functools import wraps
+from collections import defaultdict  # FIXME yeah move the bit that needs this to another file
 from urllib.parse import urlparse, quote as url_quote
 import requests
 import sqlalchemy as sa
@@ -17,7 +18,7 @@ from htmlfn import atag, btag, h2tag, htmldoc
 from htmlfn import table_style, render_table, redlink_style
 from pyontutils.core import OntGraph, makeGraph, populateFromJsonLd
 from pyontutils.utils_fast import TermColors as tc, isoformat
-from pyontutils.namespaces import makePrefixes, definition, rdf, rdfs, owl, dc, ilxtr
+from pyontutils.namespaces import makePrefixes, definition, replacedBy, rdf, rdfs, owl, dc, ilxtr  # FIXME should be in another file
 from sqlalchemy.sql import text as sql_text
 import idlib
 from interlex import auth as iauth
@@ -31,9 +32,10 @@ from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderF
 from interlex.utils import log as _log
 from interlex.config import ilx_pattern  # FIXME pull from database probably
 from interlex.ingest import ingest_ontspec, ingest_record, reingest_gclc
-from interlex.dbstuff import Stuff
 from interlex.vervar import process_vervar, get_latest_group_subject_hack
 from interlex.render import TripleRender  # FIXME need to move the location of this
+from interlex.dbstuff import Stuff
+from interlex.namespaces import ilxr  # FIXME should be in another file
 from interlex.notifications import send_message, get_smtp_spec, msg_email_verify, msg_user_recover, msg_user_recover_alt
 
 log = _log.getChild('endpoints')
@@ -595,6 +597,7 @@ class Endpoints(EndBase):
             # reconvergence we will see that there are two paths and we will be able to select the current group's path
             # or pick the earliest path, what we don't have when we get the perspective head right now is which
             # history branch it came from
+            begend_whitespace = re.compile('^\s+|\s+$')
             def normtrip(t):
                 if len(t) != 3:
                     return t, 'not a triple'
@@ -603,7 +606,7 @@ class Endpoints(EndBase):
                 if not isinstance(o_or_lit, dict) or 'type' not in o_or_lit or 'value' not in o_or_lit:
                     return t, 'object missing type'
 
-                o, _o, o_lit = None, None, None
+                o, _o, o_lit, datatype, language = None, None, None, None, None
                 if o_or_lit['type'] == 'literal':
                     datatype, language = None, None
                     if 'datatype' in o_or_lit:
@@ -617,6 +620,16 @@ class Endpoints(EndBase):
                 else:
                     return t, f'unknown object type {o_lit["type"]}'
 
+                badspace = []
+                for elem, position in zip((_s, _p, _o, o_lit, datatype, language),
+                                          ('s', 'p', 'o', 'o_lit', 'd', 'l')):
+                    if elem is not None:
+                        if re.match(begend_whitespace, elem):
+                            badspace.append((position, elem))
+
+                if badspace:
+                    return t, f'leading or trailing whitespace {badspace}'
+
                 if _o is None:
                     spo = (_s, 's'), (_p, 'p')
                 else:
@@ -624,12 +637,39 @@ class Endpoints(EndBase):
 
                 for e, position in spo:
                     u = urlparse(e)
+                    p_user_uri, o_user_uri = False, False
                     if u.netloc == self.reference_host:  # FIXME concerns about frag_pref_id from other hosts
-                        _, u_group, u_frag_pref_id, *u_rest = u.path.split('/')
+                        try:
+                            _, u_group, u_frag_pref_id, *u_rest = u.path.split('/')
+                        except ValueError as e:
+                            return t, f'uri structure is not valid for {self.reference_host}'
+
                         if u_group not in (group, 'base'):
                             return t, f'group mismatch {u_group} not in ({group}, base)'
                         if position == 's' and u_frag_pref_id != frag_pref_id:
                             return t, f'bad subject {u_frag_pref_id} != {frag_pref_id}'
+                        if position == 'p' and (URIRef(e) not in pred_special and not u_frag_pref_id.startswith('ilx_')):
+                            # this only covers basic syntactic special predicates
+                            # a second pass that goes to the database is required
+                            # to ensure the predicates have proper types
+
+                            # FIXME TODO maybe allow these if the user has
+                            # actually defined such a predicate already
+                            # also the use case of allowing people to create
+                            # new predicates on the fly in their own namespace
+                            # is quite powerful, so maybe as long as the predicate
+                            # is in user uris we're ok as well? that would allow
+                            # the to enter whatever they want effectively as free
+                            # text (no spaces) and just keep working ... let's try that ?
+                            # those triples can't be merged until that user uri is mapped
+                            if u_group == group and u_frag_pref_id == 'uris':
+                                p_user_uri = True
+                                return t, f'mixing user uris and ILX: in predicate position is not implemented yet'
+                            else:
+                                # FIXME TODO possibly allow ilxr: in here as
+                                # well asn an alternative to using the full
+                                # length curie map for predicates
+                                return t, f'bad predicate {e}'
 
                         # FIXME replace probably inefficient also, if group base but somehow netloc
                         # appears a second time prefixed by group then we will have problems
@@ -638,6 +678,15 @@ class Endpoints(EndBase):
                             # a simple find and replace is not valid # which is why we
                             # don't even try to map them back in for now
                             _un = e
+                            if position == 'o':
+                                o_user_uri = True
+                                return t, f'mixing user uris and ILX: in object position is not implemented yet'
+
+                            # FIXME TODO, we're very close to being able to mix raw user uris
+                            # and ILX: ids on this endpoints, but the added complexity is beyond
+                            # the scope of what we need right now, also we have to make pull requests
+                            # aware of unmapped user uris and rewrite records when they do the mapping
+
                         else:
                             _un = e.replace(f'{u.netloc}/{group}/', f'{u.netloc}/base/', 1)
                         #npath = f'/base/{u_frag_pref_id}' + ('/' + '/'.join(u_rest) if u_rest else '')
@@ -647,16 +696,56 @@ class Endpoints(EndBase):
                         #u_norm = URIRef(_un.geturl())
                         u_norm = URIRef(_un)
 
-                        if position == 's':
-                            s = u_norm
-                        if position == 'p':
-                            p = u_norm
-                        if position == 'o':
-                            o = u_norm
+                    else:
+                        u_norm = URIRef(e)
+
+                    if position == 's':
+                        s = u_norm
+                    if position == 'p':
+                        p = u_norm
+                        if p in pred_special:
+                            current_specials.add(p)
+                        else:
+                            if p_user_uri:
+                                current_user_uri.add(p)
+                                current_user_uri_pred.add(p)
+
+                            current_preds.add(p)
+                    if position == 'o':
+                        o = u_norm
+                        if o_user_uri:
+                            current_user_uri.add(o)
 
                 return (s, p, o or o_lit), None
 
             # parse don't validate, but then we have to store the errors until the end
+
+            current_preds = set()
+            current_specials = set()
+            current_user_uri = set()
+            current_user_uri_pred = set()
+            pred_special = (
+                # these are the only non ILX predicates allowed, anything else that
+                # is not a property of some kind will be block for ilx_ records
+                # FIXME TODO efficient check that predicates have the correct type
+
+                # FIXME regularize these and shorten them, likely to ilxr: versions
+                # or even better http://uilx.org/b/r/ versions ...
+                rdf.type, rdfs.label, ilxtr.hasExactSynonym,
+                ilxtr.hasExternalId, ilxtr.duplicateOf, replacedBy,
+                ilxtr.hasIlxId,  # not used on ilx records, but when we abstract this it is needed
+                ilxr.synonym,  # synonyms # FIXME really need to review complexity of synonym types because they should be mutex and thus diff preds
+                definition,  # this is one of the cardinality of 1 that is not enforced by a separate table so we need to enforce via process
+            )
+            pred_card1 = (
+                definition,
+                rdfs.label,  # ok to double check this even though we have the laex
+            )
+            # TODO most critically neet to laex sorted, but to do that we need
+            # to get curated up and running instead of just base we're close
+            # but still quite a bit of work to go
+            pred_no_add = (rdf.type, rdfs.label,                        ilxtr.duplicateOf, replacedBy, ilxtr.hasIlxId,)
+            pred_no_del = (rdf.type, rdfs.label, ilxtr.hasExactSynonym, ilxtr.duplicateOf, replacedBy, ilxtr.hasIlxId,)
 
             neadds = [normtrip(t) for t in adds]
             nedels = [normtrip(t) for t in dels]
@@ -668,14 +757,15 @@ class Endpoints(EndBase):
             if invalid_dels:
                 invalids['del'] = invalid_dels
             if invalids:
+                err = {'error': 'at least one bad triple',
+                       'invalids': invalids}
+                abort(Response(json.dumps(err), status=422, mimetype='application/json'))
                 msg = (f'at least one bad triple, see individual records for details\n{invalids}')
                 abort(422, msg)
 
             nadds = [nt for nt, error in neadds]
             ndels = [nt for nt, error in nedels]
 
-            pred_no_add = (rdf.type, rdfs.label,)
-            pred_no_del = (rdf.type, rdfs.label, ilxtr.hasExactSynonym,)  # FIXME align ilxtr:hasExactSynonym
             user_not_allowed_to_modify_special_predicates = True  # FIXME TODO admin only right now
             if user_not_allowed_to_modify_special_predicates:
                 bads = []
@@ -744,6 +834,171 @@ class Endpoints(EndBase):
                 # FIXME likely need json resp here as well
                 abort(422, msg)
 
+            ex_preds = set(graph_ex.predicates())
+            # only need to check predicates that aren't already known to be in
+            # the predicates position, also there are some assumptions that no
+            # one changes the type of a predicate record otherwise we have a
+            # toctou issue where we say ok to use predicate but then it is not
+            # that could be implemented as a trigger to be sure, but not for now
+            to_check_preds = current_preds - ex_preds
+            if to_check_preds:
+                # reminder this does not include special predicates (which are currently missing types in may cases :x)
+                check_pred_result = {URIRef(p): propertyp for p, propertyp in self.queries.checkPredicates(tuple(to_check_preds))}
+                missing = to_check_preds - set(check_pred_result)
+                mismatched = set(p for p, propertyp in check_pred_result.items() if not propertyp)
+                if mismatched:
+                    # TODO json response
+                    msg = f'uris in predicate position are not valid predicates {mismatched}'
+                    abort(422, msg)
+
+                if missing:
+                    missing_not_user = missing - current_user_uri
+                    if missing_not_user:
+                        msg = f'uri in predicate position has unknown type {missing_not_user}'
+                        abort(422, msg)
+
+            # TODO insert into helper tables before triples in this case since it
+            # is all one transaction and we want to detect conflicts early
+            if current_specials:
+                dbstuff = Stuff(self.session)
+                spec_del = defaultdict(list)
+                spec_add = defaultdict(list)
+                for t in sdels:
+                    if t[1] in current_specials:
+                        spec_del[t[1]].append(t)
+
+                for t in sadds:
+                    if t[1] in current_specials:
+                        spec_add[t[1]].append(t)
+
+                def getpi(s):
+                    return s.rsplit('/', 1)[-1].split('_')
+
+                for _c1p in pred_card1:
+                    if _c1p in current_specials:
+                        if _c1p in ex_preds:
+                            # must be in both otherwise invariant is violated
+                            # can start at zero but should not be deleted
+                            # should be fixed if it is wrong
+                            if _c1p not in spec_del:
+                                msg = f'{_c1p} is cardinality 1 (needs add and del) missing del'
+                                abort(422, msg)
+                            if _c1p not in spec_add:
+                                msg = f'{_c1p} is cardinality 1 (needs add and del) missing add'
+                                abort(422, msg)
+
+                            if len(spec_del[_c1p]) > 1:
+                                # XXX we should never hit this branch because we should always
+                                # detect that one of the multiple was not in the current head
+                                log.critical('WHAT HAVE YOU DONE')
+                                msg = f'{_c1p} is cardinality 1 but attempted to del {len(spec_del[_c1p])} values, but really, we shouldn\'t be here'
+                                abort(501, msg)
+
+                            if len(spec_add[_c1p]) > 1:
+                                # this one we can hit
+                                msg = f'{_c1p} is cardinality 1 but attempted to add {len(spec_del[_c1p])} values'
+                                abort(422, msg)
+
+                        else:
+                            if _c1p not in spec_add:
+                                # should never hit this
+                                log.critical('I CANT BELIEVE YOUVE DONE THIS')
+                                msg = f'we goofed somehow {_c1p} {dict(spec_add)} {dict(spec_del)}'
+                                abort(501, msg)
+
+                            if len(spec_add[_c1p]) > 1:
+                                msg = f'{_c1p} is cardinality 1 but {len(spec_add[_c1p])} values were provided'
+                                abort(422, msg)
+
+                            # ok to be in only adds, if somehow in only dels we have
+                            # missed an invariant check above (which should be impossible)
+
+                if rdfs.label in current_specials or ilxtr.hasExactSynonym in current_specials:
+                    #del_values = []
+                    ins_values = []
+                    if ilxtr.hasExactSynonym in spec_add:
+                        ins_values.extend([('exact', *getpi(s), str(o)) for s, p, o in spec_add[ilxtr.hasExactSynonym]])
+
+                    # none of the other 3 are allowed at the moment
+                    #if del_values:
+                        # the issue with delete is that it must be gone from all variants
+                        # which is tricky to check right now, this requires serious design
+                        # state machine and all probably ...
+                        #dbstuff.deleteLaex()
+                        #pass
+
+                    if ins_values:
+                        dbstuff.insertLaex(ins_values)
+
+                if ilxtr.hasExternalId in current_specials:
+                    if ilxtr.hasExternalId in spec_del:
+                        # we only need iri because they are guranteed unique per perspective
+                        existing_iris = tuple(o for s, p, o in spec_del[ilxtr.hasExternalId])
+                        try:
+                            dbstuff.deleteExistingIrisForGroup(group, existing_iris)
+                        except Exception as e:
+                            log.exception(e)
+                            self.session.rollback()
+                            abort(501, 'still working on exception handling for deleting existing iris')
+                    if ilxtr.hasExternalId in spec_add:
+                        values = [(*getpi(s), o) for s, p, o in spec_add[ilxtr.hasExternalId]]
+                        try:
+                            dbstuff.insertExistingIrisForGroup(group, values)
+                        except Exception as e:
+                            log.exception(e)
+                            self.session.rollback()
+                            abort(501, 'still working on exception handling for inserting existing iris')
+
+                if ilxtr.duplicateOf in current_specials or replacedBy in current_specials:
+                    # TODO we abort before we get here right now
+                    pass
+
+            if current_user_uri:
+                # TODO insert these into user uris if they don't exist
+                pass
+
+            if current_user_uri:
+                # TODO these are also specials but we don't know what they
+                # are yet, they need to be inserted into user uris but not into
+                # the uri map, or if they ARE in the map we should probably swap
+                # them out here
+                maybe_new_user_uri_pred = current_user_uri_pred & to_check_preds
+                if maybe_new_user_uri_pred:
+                    # if a predicate is alread in the graph and has a type it means
+                    # we already completed this process, if we didn't complete it
+                    # or don't complete it this round, it will show up again until
+                    # we figure out a type for it
+
+                    # only for predicates right now
+                    for uup in maybe_new_user_uri_pred:
+                        if uup in check_pred_result:
+                            # would have already failed above so this should always
+                            # be true, but check anyway for insurance
+                            if not check_pred_result[uup]:
+                                log.critical('oof')
+                                abort(501, f'something went very wrong with {uup}')
+                        else:
+                            # no type means figure out what it should have based on
+                            # the objects it participates in not attempting to
+                            # infer data type property, anyone who is advanced
+                            # enough for that knows to create them first
+                            otypes = set(type(o) for s, p, o in sadds if p == uup)
+                            if Literal in otypes:
+                                new_type = owl.AnnotationProperty
+                            elif URIRef in otypes:
+                                # can't actually tell if all we have are URIRefs
+                                # because it could always be an annotation property
+
+                                # also sigh, interlex relations aren't actually
+                                # ObjectProperties they are
+                                # ThingThatLiftsToObjectPropertyOnProperySomeValuesFrom
+                                # we haven't implemented that yet ... but will probably
+                                # want/need to at some point here before we do the sync
+                                #objs = set(o for s, p, o in sadds if p == uup)
+                                pass
+                            else:
+                                log.error(f'sigh {otypes}')
+
             graph = OntGraph(bind_namespaces='none')
             for t in graph_ex:
                 if t not in sdels:
@@ -768,6 +1023,7 @@ class Endpoints(EndBase):
             metasubject = URIRef(f'http://{self.reference_host}/{group}/ontologies/{frag_pref_id}')
             metagraph.add((metasubject, rdf.type, owl.Ontology)) # FIXME consider an alternate type for interlex single record + metadata graphs
             [graph.add(t) for t in metagraph]
+
             dout = ingest_record(graph, self.session, metagraph=metagraph)
             # TODO update history, possibly in irels? or should we do that in ingest record?
             # or do we move this more complex implementation out of endpoints so it is easier

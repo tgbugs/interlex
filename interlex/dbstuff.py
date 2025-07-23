@@ -529,3 +529,33 @@ SELECT con.conname, pg_get_constraintdef(con.oid)
 '''
         return list(self.session_execute(sql, args))
 
+    def deleteExistingIrisForGroup(self, group, iris):
+        args = dict(group=group, iris=iris)
+        sql = 'delete from existing_iris where perspective = persFromGroupname(:group) and iri in :iris'
+        self.session_execute(sql, args)
+
+    def insertExistingIrisForGroup(self, group, values):
+        # FIXME TODO qc the iris that are being added
+        values_template, params = makeParamsValues(
+            values, constants=('persFromGroupname(:group)',))
+        params['group'] = group
+        sql = ('insert into existing_iris (perspective, ilx_prefix, ilx_id, iri) VALUES ' + values_template)
+        self.session_execute(sql, params)
+
+    def insertLaex(self, values):
+        # FIXME the setup for this is incorrect at the moment because everything is enforced globally
+        # since we don't have the curated subset up and running so we use base for everything
+        # also, there is tension here when there are completely new terms ... i suspect they go
+        # into curated immediately for new terms when it is just label/exact and the new id because
+        # we need to index something ... design still needs more thought
+        values_template, params = makeParamsValues(values)
+        sql = ('insert into current_interlex_labels_and_exacts (p, prefix, id, o_lit) VALUES' + values_template)
+        self.session_execute(sql, params)
+
+    def insertUrisForGroup(self, group, uri_paths):
+        values_template, params = makeParamsValues(
+            values, constants=('persFromGroupname(:group)',))
+        params['group'] = group
+        sql = ('insert into uris (perspective, uri_path) VALUES ' + values_template)
+        self.session_execute(sql, params)
+

@@ -14,6 +14,7 @@ CREATE TABLE uris(
        uri_path text NOT NULL,
        PRIMARY KEY (perspective, uri_path), -- groups may only map a uri path to a single ilx_id
        CHECK ((uri_path ~* '^\S+') AND (uri_path ~* '\S+$'))
+       CHECK (('http://interlex.org/uris/' || uri_path)::uri is not null) -- make sure it will parse
        -- uri_full uri not null,  -- yes or no?
        -- branch_private default false  -- TOOD this needs to be managed elsewhere?
        -- terminal -> branch changes? one way to cope is always resolve /branch/ -> branch

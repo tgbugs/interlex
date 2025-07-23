@@ -2,6 +2,7 @@ import unittest
 import pytest
 import requests
 import secrets
+import rdflib
 from pyontutils.ontutils import url_blaster
 from pyontutils.core import OntGraph, populateFromJsonLd
 from interlex import endpoints
@@ -261,11 +262,27 @@ class TestRoutes(RouteTester, unittest.TestCase):
         _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=tuser, token=token)
         url = _resp1.location
 
+        def makej_simple_del_def_no_def(subject, nm, diff, jld):  # should fail
+            g = OntGraph()
+            populateFromJsonLd(g, jld)
+            s = list(g[:nm.expand('rdf:type'):nm.expand('owl:Class')])[0]
+            dels = [[s, nm.expand('definition:'), 'lol does not exist']]
+            j = {
+                'del': dels,
+            }
+            return j
+
         def makej_simple_add(subject, nm, diff, jld):
-            p = nm.expand('ilxtr:some-predicate')
+            #p = nm.expand('ilxtr:some-predicate')  # heh, checks are working ^_^
+            p = nm.expand('ILX:0112796')  # related to for peak insipidness
+            _s, _n = subject.rsplit('_', 1)
+            o = _s + f'{int(_n) - 1:0>{len(_n)}}'
             adds = [
-                [subject, nm.expand('ilxr:synonym'), {'type': 'literal', 'value': f'lol wut {diff}',},],
-                [subject, p, {'type': 'uri', 'value': nm.expand(f'ilxtr:some-object-{diff}'),},],
+                [subject, nm.expand('ilxr:synonym'), {'type': 'literal', 'value': f'synonym {diff}',},],
+                [subject, nm.expand('ilxtr:hasExactSynonym'), {'type': 'literal', 'value': f'exact {diff}',},],
+                [subject, nm.expand('definition:'), {'type': 'literal', 'value': f'definition {diff}',},],
+                #[subject, p, {'type': 'uri', 'value': nm.expand(f'ilxtr:some-object-{diff}'),},],
+                [subject, p, {'type': 'uri', 'value': o,},],
             ]
             j = {
                 'add': adds,
@@ -273,20 +290,26 @@ class TestRoutes(RouteTester, unittest.TestCase):
             return j
 
         def makej_simple_del(subject, nm, diff, jld):
-            p = nm.expand('ilxtr:some-predicate')
+            #p = nm.expand('ilxtr:some-predicate')
+            p = nm.expand('ILX:0112796')  # related to for peak insipidness
             g = OntGraph()
             populateFromJsonLd(g, jld)
-            dels = [[s, p, o] for s, o in g[:p:]]
+            dels = [[s, p, {'type': ('uri' if isinstance(o, rdflib.URIRef) else 'literal'),
+                            'value': str(o)}] for s, o in g[:p:]]
             j = {
                 'del': dels,
             }
             return j
 
         def makej_simple_adddel(subject, nm, diff, jld):
-            p = nm.expand('ilxtr:some-predicate')
+            #p = nm.expand('ilxtr:some-predicate')
+            p = nm.expand('ILX:0112796')  # related to for peak insipidness
+            _s, _n = subject.rsplit('_', 1)
+            o = _s + f'{int(_n) - 1:0>{len(_n)}}'
             adds = [
-                [subject, nm.expand('ilxr:synonym'), {'type': 'literal', 'value': f'lol wut {diff}',},],
-                [subject, p, {'type': 'uri', 'value': nm.expand(f'ilxtr:some-object-{diff}'),},],
+                [subject, nm.expand('ilxr:synonym'), {'type': 'literal', 'value': f'synonym {diff}',},],
+                #[subject, p, {'type': 'uri', 'value': nm.expand(f'ilxtr:some-object-{diff}'),},],
+                [subject, p, {'type': 'uri', 'value': o,},],
             ]
 
             g = OntGraph()
@@ -316,14 +339,23 @@ class TestRoutes(RouteTester, unittest.TestCase):
         # exact changes until we can come up with a good design
 
         tests = (
-            makej_simple_add,
-            makej_simple_del,
-            makej_simple_adddel,
+            (makej_simple_del_def_no_def, 422),
+            (makej_simple_add, 201),
+            (makej_simple_del, 201),
+            (makej_simple_adddel, 201),
         )
-        for makej in tests:
-            self._do_patch_entity(client, tuser, token, url, makej)
+        bads = []
+        for makej, expect_code in tests:
+            result = self._do_patch_entity(client, tuser, token, url, makej, expect_code)
+            if result:
+                bads.append(result)
 
-    def _do_patch_entity(self, client, tuser, token, url, makej):
+        if bads:
+            breakpoint()
+
+        assert not bads, bads
+
+    def _do_patch_entity(self, client, tuser, token, url, makej, expect_code=201):
         headers = {'Authorization': f'Bearer {token}'}
         headers_get = {**headers, 'Accept': 'application/ld+json'}
         headers_patch= {**headers, 'Content-Type': 'application/json'}
@@ -342,6 +374,12 @@ class TestRoutes(RouteTester, unittest.TestCase):
             context['ilxtr'] = 'http://uri.interlex.org/tgbugs/uris/readable/'
         if 'ilxr' not in context:
             context['ilxr'] = 'http://uri.interlex.org/base/readable/'
+        if 'definition' not in context:
+            context['definition'] = 'http://purl.obolibrary.org/obo/IAO_0000115'
+        if 'ILX' not in context:
+            # tmp_ -> TMP means no ILX in curies ...
+            # the frontent should probably maintain user curies to simplify this
+            context['ILX'] = 'http://uri.interlex.org/base/ilx_'
 
         nm.populate_from(context)
         ont = [o for o in jld['@graph'] if o['@type'] == 'owl:Ontology'][0]
@@ -353,6 +391,12 @@ class TestRoutes(RouteTester, unittest.TestCase):
         # XXX this happens if the test user doesn't have curies loaded during config
         j = makej(subject, nm, diff, jld)
         resp_patch_1 = client.patch(url, headers=headers_patch, json=j)
+        if resp_patch_1.status_code != expect_code:
+            return resp_patch_1
+
+        if resp_patch_1.status_code != 200:
+            return
+
         # TODO iterative changes to hit all the states
         rci = resp_patch_1.data.decode()
         url_get = url + '/versions/' + rci

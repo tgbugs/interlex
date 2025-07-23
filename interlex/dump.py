@@ -1726,3 +1726,30 @@ join irstype_up as it on it.s = irs.o
         args = dict(nei=named_embedded_identity)
         sql = 'select namedEmbeddedSubject(:nei)'
         return list(self.session_execute(sql, args))
+
+    def checkPredicates(self, predicates):
+        """ return uris in predicate posiiton that do not have a predicate type """
+        args = dict(predicates=predicates)
+        sql = '''select
+s, bool_and(propertyp) from (
+select
+s, o,
+o in (
+'http://www.w3.org/2002/07/owl#AnnotationProperty',
+'http://www.w3.org/2002/07/owl#ObjectProperty',
+'http://www.w3.org/1999/02/22-rdf-syntax-ns#Property',
+'http://www.w3.org/2002/07/owl#DatatypeProperty',
+'http://www.w3.org/2002/07/owl#OntologyProperty',
+
+'http://www.w3.org/2002/07/owl#AsymmetricProperty',
+'http://www.w3.org/2002/07/owl#FunctionalProperty',
+'http://www.w3.org/2002/07/owl#InverseFunctionalProperty',
+'http://www.w3.org/2002/07/owl#IrreflexiveProperty',
+'http://www.w3.org/2002/07/owl#TransitiveProperty'
+) as propertyp
+from triples where p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
+and s in :predicates
+group by s, o
+) group by s
+'''
+        return list(self.session_execute(sql, args))
