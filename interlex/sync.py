@@ -1220,13 +1220,15 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
             # along with not storing it with the other values
             start_values = None
 
-        sql_base = 'INSERT INTO existing_iris (perspective, ilx_prefix, ilx_id, iri) VALUES '
+        sql_base = '''with pers as (select persFromGroupname(:group) as pid)
+INSERT INTO existing_iris (perspective, ilx_prefix, ilx_id, iri)
+SELECT pers.pid, v.* FROM ( VALUES {values_template} ) AS v (p, i, r) JOIN pers ON TRUE'''
         self.eid_sql = []
         self.eid_params = []
         for chunk in chunk_list(values, self.batchsize):
-            values_template, params = makeParamsValues(chunk, constants=('persFromGroupname(:group)',))
+            values_template, params = makeParamsValues(chunk)
             params['group'] = 'base'
-            sql = sql_base + values_template + ocdn  # TODO return id? (on conflict ok here)
+            sql = sql_base.format(values_template=values_template) + ocdn  # TODO return id? (on conflict ok here)
             self.eid_sql.append(sql)
             self.eid_params.append(params)
 

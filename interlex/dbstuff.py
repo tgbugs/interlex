@@ -25,8 +25,12 @@ class Stuff:
         values_template, params = makeParamsValues(values,
                                                    constants=('persFromGroupname(:group)',))  # FIXME surely this is slow as balls
         params['group'] = group
-        base = 'INSERT INTO curies (perspective, curie_prefix, iri_namespace) VALUES '
-        sql = base + values_template
+
+        sql = f'''with pers as (select persFromGroupname(:group) as pid)
+insert into curies (perspective, curie_prefix, iri_namespace)
+SELECT pers.pid, v.p, v.n FROM ( VALUES {values_template} ) AS v (p, n) JOIN pers ON TRUE'''
+        #base = 'INSERT INTO curies (perspective, curie_prefix, iri_namespace) VALUES '
+        #sql = base + values_template
         return self.session_execute(sql, params)
 
     def org_new(self, orgname, creator):
@@ -113,7 +117,7 @@ INSERT INTO user_passwords (user_id, argon2_string) SELECT user_id, :argon2_stri
     def getUserEmailMeta(self, group, email):
         # need group to prevent cross group requests for email validation
         args = dict(group=group, email=email)
-        sql = 'select * from user_emails where email = :email and user_id = idFromGroupname(:group)'
+        sql = 'select * from user_emails where email = :email and user_id = (select idFromGroupname(:group))'
         return list(self.session_execute(sql, args))
 
     def email_verify_start(self, group, email, token, delay_seconds=None, lifetime_seconds=None):
@@ -216,7 +220,7 @@ VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh,
 
         if user is not None:
             args['group'] = user
-            sql += ';\nUPDATE users SET orcid = :orcid WHERE id = idFromGroupname(:group);\n'
+            sql += ';\nUPDATE users SET orcid = :orcid WHERE id = (select idFromGroupname(:group));\n'
 
         return self.session_execute(sql, args)
 
@@ -229,7 +233,7 @@ VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh,
         # insertOrcidMetadata with user not None
         raise NotImplementedError('do not use this')
         args = dict(group=user, orcid=orcid)
-        sql = 'UPDATE users SET orcid = :orcid WHERE id = idFromGroupname(:group)'
+        sql = 'UPDATE users SET orcid = :orcid WHERE id = (select idFromGroupname(:group))'
         list(self.session_execute(sql, args))
 
     def getOrcidMetadataUserByOrcid(self, orcid):
@@ -276,13 +280,13 @@ VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh,
         # group is only here for a bit of insurace
         args = dict(group=group, key=key)
         sql = ('UPDATE api_keys SET revoked_datetime = CURRENT_TIMESTAMP '
-               'WHERE key = :key AND user_id = idFromGroupname(:group) AND revoked_datetime IS NULL; '
+               'WHERE key = :key AND user_id = (select idFromGroupname(:group)) AND revoked_datetime IS NULL; '
                'SELECT key, revoked_datetime FROM api_keys WHERE key = :key;')
         return list(self.session_execute(sql, args))
 
     def getGroupApiKeys(self, group):
         args = dict(group=group)
-        sql = 'SELECT * FROM api_keys WHERE user_id = idFromGroupname(:group)'
+        sql = 'SELECT * FROM api_keys WHERE user_id = (select idFromGroupname(:group))'
         # FIXME TODO do we return revoked an expried here as long as they have not been culled?
         return list(self.session_execute(sql, args))
 
@@ -292,7 +296,7 @@ VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh,
 select gg.groupname, gg.own_role, up.user_role
 from user_permissions as up
 join groups as gg on gg.id = up.group_id
-where gg.groupname in :groups and up.user_id = idFromGroupname(:user)
+where gg.groupname in :groups and up.user_id = (select idFromGroupname(:user))
 '''
         return list(self.session_execute(sql, args))
 
@@ -327,7 +331,7 @@ where gg.groupname in :groups and up.user_id = idFromGroupname(:user)
 select up.user_role, g.groupname
 from user_permissions as up
 join groups as g on up.group_id = g.id
-where up.user_id = idFromGroupname(:group)
+where up.user_id = (select idFromGroupname(:group))
 '''
         return list(self.session_execute(sql, args))
 
@@ -337,7 +341,7 @@ where up.user_id = idFromGroupname(:group)
 select up.user_role, g.groupname
 from user_permissions as up
 join groups as g on up.user_id = g.id
-where up.group_id = idFromGroupname(:group)
+where up.group_id = (select idFromGroupname(:group))
 '''
         return list(self.session_execute(sql, args))
 
@@ -350,15 +354,15 @@ where up.group_id = idFromGroupname(:group)
 select g.groupname, u.orcid, om.name, g.created_datetime,
 ARRAY(select gp.groupname from groups as gp
         join user_permissions as up on gp.id = up.group_id
-       where up.user_id = idFromGroupname(:group) and up.user_role < 'view') as member_of,
+       where up.user_id = (select idFromGroupname(:group)) and up.user_role < 'view') as member_of,
 ARRAY(select (psup.subject, psup.user_role) from perspective_subject_user_permissions as psup
       -- TODO likely need the perspective as well
-       where psup.user_id = idFromGroupname(:group)
+       where psup.user_id = (select idFromGroupname(:group))
         ) as edrev_of
 from groups as g
 join users as u on g.id = u.id
 join orcid_metadata as om on om.orcid = u.orcid
-where g.id = idFromGroupname(:group)
+where g.id = (select idFromGroupname(:group))
 '''
         return list(self.session_execute(sql, args))
 
@@ -395,7 +399,7 @@ null::integer as lifetime_seconds,
 null::TIMESTAMP as revoked_datetime
 
 FROM groups AS g JOIN users AS u ON u.id = g.id
-WHERE g.id = idFromGroupname(:group)
+WHERE g.id = (select idFromGroupname(:group))
 
 UNION
 
@@ -417,7 +421,7 @@ null::integer,
 null::TIMESTAMP
 
 FROM user_emails AS ue
-WHERE ue.user_id = idFromGroupname(:group)
+WHERE ue.user_id = (select idFromGroupname(:group))
 
 UNION
 
@@ -439,7 +443,7 @@ ak.lifetime_seconds,
 ak.revoked_datetime
 
 FROM api_keys AS ak
-WHERE ak.user_id = idFromGroupname(:group)
+WHERE ak.user_id = (select idFromGroupname(:group))
 '''
         return list(self.session_execute(sql, args))
 
@@ -449,7 +453,7 @@ WHERE ak.user_id = idFromGroupname(:group)
         sql = '''
 select * from ontologies as o
 join identities as ids on o.spec_head_identity = ids.identity
-where o.perspective = persFromGroupname(:group)
+where o.perspective = (select persFromGroupname(:group))
 '''
         return list(self.session_execute(sql, args))
 
@@ -531,15 +535,16 @@ SELECT con.conname, pg_get_constraintdef(con.oid)
 
     def deleteExistingIrisForGroup(self, group, iris):
         args = dict(group=group, iris=iris)
-        sql = 'delete from existing_iris where perspective = persFromGroupname(:group) and iri in :iris'
+        sql = 'delete from existing_iris where perspective = (select persFromGroupname(:group)) and iri in :iris'
         self.session_execute(sql, args)
 
     def insertExistingIrisForGroup(self, group, values):
         # FIXME TODO qc the iris that are being added
-        values_template, params = makeParamsValues(
-            values, constants=('persFromGroupname(:group)',))
+        values_template, params = makeParamsValues(values)
         params['group'] = group
-        sql = ('insert into existing_iris (perspective, ilx_prefix, ilx_id, iri) VALUES ' + values_template)
+        sql = f'''with pers as (select persFromGroupname(:group) as pid)
+insert into existing_iris (perspective, ilx_prefix, ilx_id, iri) SELECT pers.pid, v.* FROM ( VALUES {values_template} ) AS v (p, i, r) JOIN pers ON TRUE
+'''
         self.session_execute(sql, params)
 
     def insertLaex(self, values):
@@ -553,9 +558,9 @@ SELECT con.conname, pg_get_constraintdef(con.oid)
         self.session_execute(sql, params)
 
     def insertUrisForGroup(self, group, uri_paths):
-        values_template, params = makeParamsValues(
-            values, constants=('persFromGroupname(:group)',))
+        values_template, params = makeParamsValues(values)
         params['group'] = group
-        sql = ('insert into uris (perspective, uri_path) VALUES ' + values_template)
+        sql = f'''with pers as (select persFromGroupname(:group) as pid)
+insert into uris (perspective, uri_path) SELECT pers.pid, v.up FROM ( VALUES {values_template} ) AS v (up) JOIN pers ON TRUE'''
         self.session_execute(sql, params)
 

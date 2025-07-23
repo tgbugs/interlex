@@ -1332,7 +1332,7 @@ class Endpoints(EndBase):
             if 'local' in request.args and request.args['local'].lower() == 'true':
                 if id is None:
                     sql = ('SELECT ilx_prefix, ilx_id FROM existing_iris AS e WHERE e.iri = :iri '
-                           'AND (e.perspective = persFromGroupname(:group) OR e.perspective = 0)')  # base vs curated
+                           'AND (e.perspective = (select persFromGroupname(:group)) OR e.perspective = 0)')  # base vs curated
                     args = dict(iri=iri, group=group)
                     try:
                         resp = next(self.session_execute(sql, args))

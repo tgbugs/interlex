@@ -758,10 +758,10 @@ class Queries:
         if epoch_verstr is not None:
             # TODO
             sql = ('SELECT curie_prefix, iri_namespace FROM curies as c '
-                   'WHERE c.perspective = persFromGroupname(:group)')
+                   'WHERE c.perspective = (select persFromGroupname(:group))')
         else:
             sql = ('SELECT curie_prefix, iri_namespace FROM curies as c '
-                   'WHERE c.perspective = persFromGroupname(:group)')
+                   'WHERE c.perspective = (select persFromGroupname(:group))')
         resp = self.session_execute(sql, params)
         PREFIXES = {cp:ip for cp, ip in resp}
         return PREFIXES
@@ -1363,7 +1363,7 @@ order by subgraph_identity, o_blank, p
     _sql_grh = '''
 select head_identity from perspective_heads
 where
-perspective_id = persFromGroupname(:group)
+perspective_id = (select persFromGroupname(:group))
 and subject = :subject
 '''
 
@@ -1516,7 +1516,7 @@ and t.subgraph_identity is not null
             return resp
 
         args = dict(group=group, path=path)
-        sql = ('SELECT uri FROM uris WHERE perspective = persFromGroupname(:group) '
+        sql = ('SELECT uri FROM uris WHERE perspective = (select persFromGroupname(:group)) '
                'AND uri_path = :path')
 
         gen = self.session_execute(sql, args)
@@ -1530,7 +1530,7 @@ and t.subgraph_identity is not null
 
     def getByGroupUriPath(self, group, path, redirect=False):  # TODO bulk versions of these
         args = dict(group=group, path=path)
-        sql = ('SELECT ilx_id FROM uri_mapping WHERE perspective = persFromGroupname(:group) '
+        sql = ('SELECT ilx_id FROM uri_mapping WHERE perspective = (select persFromGroupname(:group)) '
                'AND uri_path = :path')
         # TODO handle the unmapped case (currently literally all of them)
         gen = self.session_execute(sql, args)

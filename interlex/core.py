@@ -304,7 +304,7 @@ def server_api(db=None, dburi=dbUri()):
         # TODO process for staging changes for review and comparison to see
         #  where triples are already present so that they can be removed
         # TODO core_uris, core_lits for lifted interlex representation
-        src_qual = next(session.execute(('SELECT id FROM qualifiers WHERE perspective = persFromGroupname(:group) '
+        src_qual = next(session.execute(('SELECT id FROM qualifiers WHERE perspective = (select persFromGroupname(:group)) '
                                          'AND source_qualifier_id = 0'), dict(group=group))).id
 
         sql, params = make_load_triples(graph, src_qual)
@@ -326,7 +326,7 @@ def server_api(db=None, dburi=dbUri()):
         graph.parse(file.as_posix())
 
         # FIXME getIdFromGroupname ... sigh naming
-        src_qual = next(session.execute(('SELECT id FROM qualifiers WHERE perspective = persFromGroupname(:group) '
+        src_qual = next(session.execute(('SELECT id FROM qualifiers WHERE perspective = (select persFromGroupname(:group)) '
                                          'AND source_qualifier_id = 0'), dict(group=group))).id
         qual_id = 0
         # 206112
