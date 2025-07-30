@@ -251,7 +251,8 @@ def return_page(html=None, data={}, status=200):
     else:
         data['code'] = status
         data['status'] = status
-        response_json = json.dumps(data)
+        ilx_data = {'interlex': data}
+        response_json = json.dumps(ilx_data)
         return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
