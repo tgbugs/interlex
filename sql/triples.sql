@@ -248,7 +248,7 @@ CREATE TABLE existing_internal(
 
        CHECK ((ilx_prefix, ilx_id) != (ex_ilx_prefix, ex_ilx_id)),
        FOREIGN KEY (ilx_prefix, ilx_id) REFERENCES interlex_ids (prefix, id),
-       FOREIGN KEY (ex_ilx_prefix, ex_ilx_id) REFERENCES interlex_ids (prefix, id),
+       FOREIGN KEY (ex_ilx_prefix, ex_ilx_id) REFERENCES interlex_ids (prefix, id)
 );
 
 -- NOTE 'names' referred to here are 'graph names' or 'triple set names'
@@ -1735,6 +1735,6 @@ RETURN NEW;
 END;
 $$ language plpgsql;
 
-drop trigger if exists pers_log_heads;
+drop trigger if exists pers_log_heads on perspective_heads;
 CREATE TRIGGER pers_log_heads AFTER INSERT OR UPDATE ON perspective_heads
        FOR EACH ROW EXECUTE PROCEDURE pers_log_heads();
