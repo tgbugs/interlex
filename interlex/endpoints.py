@@ -1783,12 +1783,16 @@ class Ops(EndBase):
 
     def orcid_landing_login(self):
         orcid_meta = self._orcid_landing()  # aborts unless we get a valid response from orcid
-        orcid, group_resp = self._orcid_check_already(orcid_meta)
+        orcid, group_resp, existing_orcid_meta = self._orcid_check_already(orcid_meta)
         _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
         if not group_resp:
             # TODO options
             # create new account
             # link existing account
+            if not existing_orcid_meta:
+                log.debug('orcid-login without orcid-new')
+                self._insert_orcid_meta(self.session, orcid_meta)
+
             self._orcid_login_user_temp(orcid_meta)
             # TODO get email for autofill if we can
             reiri = url_for('Privu.user_new /u/priv/user-new') + '?from=orcid-login'
@@ -1853,12 +1857,18 @@ class Ops(EndBase):
         kls = idlib.systems.orcid.OrcidSandbox if config.orcid_sandbox else idlib.Orcid
         orcid = kls._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
         dbstuff = Stuff(self.session)
-        return orcid, dbstuff.getUserByOrcid(orcid)
+        group_resp = dbstuff.getUserByOrcid(orcid)
+        if group_resp:
+            existing_orcid_meta = True
+        else:
+            existing_orcid_meta = dbstuff.getOrcidMetadataUserByOrcid(orcid)
+
+        return orcid, group_resp, existing_orcid_meta
 
     def orcid_landing_new(self):
         # read from auth at start and isolate somewhere outside this class
         orcid_meta = self._orcid_landing()
-        orcid, group_resp = self._orcid_check_already(orcid_meta)  # FIXME ideally we wouldn't have to do this ... and just handle the error but ...
+        orcid, group_resp, existing_orcid_meta = self._orcid_check_already(orcid_meta)  # FIXME ideally we wouldn't have to do this ... and just handle the error but ...
 
         if group_resp:
             self._orcid_login(orcid, orcid_meta['id_token'], group_resp)

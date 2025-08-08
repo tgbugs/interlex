@@ -184,6 +184,7 @@ def combinatorics():
         # TODO multi-stage case where someone logs in, tries to log in again, fails, but doesn't matter because they were already in
         dict(auth=auth_type('orcid'), fault=fault_type('code-unknown'),  lresp=resp_code(401)),
         dict(auth=auth_type('orcid'), fault=fault_type('token-expired'), lresp=resp_code(401), resp=resp_code(401)),
+        dict(auth=auth_type('orcid'), fault=fault_type('no-reg'),        lresp=resp_code(200), resp=resp_code(200)),
 
         dict(auth=auth_type('login'), fault=fault_type('pass-empty'),    lresp=resp_code(400), resp=resp_code(401)),
         dict(auth=auth_type('login'), fault=fault_type('pass-trunc'),    lresp=resp_code(401), resp=resp_code(401)),
@@ -269,6 +270,9 @@ def combinatorics():
     #test_orcid = 'https://orcid.org/' + idlib.systems.orcid.genorcid()
     test_email_f = 'test-user-{n}@example.org'
 
+    def no_user(scen):
+        return None
+
     def mtest_org(scen):
         return 'org-test-' + base64.urlsafe_b64encode(secrets.token_bytes(6)).decode()  # FIXME shouldn't we disallow org.* ? and group. for groupnames ?? nah i think those are ok, blocking user and test still relevant though
 
@@ -299,8 +303,9 @@ def combinatorics():
 
     scen_log = [
         # i.e. successful login with orcid by someone, and then someone tries to log in to their account and fails
-        dict(auth_user=mtest_user, register='orcid-first',  auth='orcid', fault='code-unknown', missing={'user', 'email'}),
+        dict(auth_user=mtest_user, register='orcid-first',  auth='orcid', fault='code-unknown',  missing={'user', 'email'}),
         dict(auth_user=mtest_user, register='orcid-first',  auth='orcid', fault='token-expired', missing={'user', 'email'}),
+        dict(auth_user=mtest_user,    register=None,           auth='orcid', fault='no-reg',        missing={'user', 'email'}),  # login with orcid but didn't register that orcid
 
         dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='pass-empty', missing=set()),
         dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='pass-trunc', missing=set()),
@@ -411,7 +416,10 @@ def combinatorics():
                 return database, orcid_meta, this_scen_id
 
             orcid = orcid_kls._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
-            if scen['register'].startswith('orcid-first'):
+            if scen['register'] is None:
+                # needed to test case where someone tries to login with an unregistered orcid
+                pass
+            elif scen['register'].startswith('orcid-first'):
                 # this tests partially completely workflows in the database
                 # we also want to run scen_reg through the app as well
                 endpoints.Ops._insert_orcid_meta(session, orcid_meta)
@@ -478,7 +486,9 @@ def combinatorics():
             else:
                 raise NotImplementedError(scen['own_role'])
 
-            if ('own_role' in scen and scen['own_role'] == 'owner') or ('email' not in missing and 'user' not in missing):
+            if 'register' in scen and scen['register'] is None:
+                pass
+            elif ('own_role' in scen and scen['own_role'] == 'owner') or ('email' not in missing and 'user' not in missing):
                 test_token = base64.urlsafe_b64encode(secrets.token_bytes(24)).decode()
                 if user is None:
                     breakpoint()
@@ -839,8 +849,39 @@ def combinatorics():
                 scen['lresp'] = lresp
                 user = scen['auth_user']
                 url = url_prefix + f'/{user}/priv/settings'
+                if 'register' in scen and scen['register'] is None:
+                    # FIXME this is a special case test that is not in
+                    # the general scenario/invariants because it is a
+                    # login but actually register
+
+                    # orcid only case to orcid-login without orcid-new
+                    # which is thus really a reg case so we don't have
+                    # the machinery here to make it work
+                    email = test_email_f.format(n=sid)
+                    data = {'username': user, 'email': email}
+                    data['password'] = test_password
+                    url2 = lresp.url
+                    resp2 = fixresp(client.post(url2, data=data, headers=headers))
+                    if not resp2.ok:
+                        with app.app_context():
+                            breakpoint()
+                            ''
+
+                    # XXX the client automatically updates to use the new session cookie from resp2
+                    # if we try to use the old session cookie from lresp it should fail
+                    client2 = app.test_client()
+                    # XXX the test client removes the Cookie header if it is provided ...
+                    # so we have to do it this way
+                    [client2.set_cookie(k, v) for k, v in resp2.request.cookies.items()]
+                    resp3 = do_get(client2, url)
+                    if resp3.status_code != 401:
+                        breakpoint()
+
+                    assert resp3.status_code == 401, f'should have 401ed but {resp3.status_code}'
+
                 resp = do_get(client, url)
                 scen['resp'] = resp
+
                 bad = check_invars_log(scen)
                 if bad:
                     breakpoint()
