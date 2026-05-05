@@ -1,6 +1,5 @@
 import unittest
 import pytest
-from joblib import Parallel, delayed
 from pyontutils.ontutils import url_blaster
 from interlex.config import test_host, test_stress_port
 
@@ -19,6 +18,7 @@ class TestStress(unittest.TestCase):
 
     @pytest.mark.skip('only run manually')
     def test_stress(self):
+        from joblib import Parallel, delayed
         n_jobs = 9
         start = 100000
         stop =  110000
