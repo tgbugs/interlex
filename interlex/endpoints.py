@@ -2831,7 +2831,7 @@ class Privu(EndBase):
         try:
             self._insert_orcid_meta(self.session, orcid_meta, user=user)
             pass
-        except sqlalchemy.exc.IntegrityError as e:
+        except sa.exc.IntegrityError as e:
             if e.orig.diag.constraint_name == 'orcid_metadata_pkey':
                 # FIXME could be used to find associated orcids? but that should be public already
                 # so it shouldn't be an issue?
