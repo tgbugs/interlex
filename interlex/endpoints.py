@@ -1219,7 +1219,11 @@ class Endpoints(EndBase):
     @basic
     def contributions_(self, group, db=None):
         # without at type lands at the additions and deletions page
-        return 'TODO identity for group contribs directly to interlex', 501
+        # FIXME TODO many issues with the current approach
+        dbstuff = Stuff(self.session)
+        resp = dbstuff.getUserContributions(group)
+        out = [[r.s, r.o_lit, isoformat(r.first_seen)] for r in resp]
+        return json.dumps(out), 200, ctaj
 
     @basic
     def contributions(self, *args, **kwargs):

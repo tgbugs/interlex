@@ -468,6 +468,24 @@ WHERE ak.user_id = (select idFromGroupname(:group))
 '''
         return list(self.session_execute(sql, args))
 
+    def getUserContributions(self, group):
+        # FIXME TODO this is a first pass that uses the record combined history table
+        # to pull out term contributions, we need something for ontologies as well probably
+        # FIXME this is quite slow at the moment
+        # XXX FIXME NOTE first_seen may not actually have been when this user made the change is someone else modified to that state first
+        args = dict(groupname=group)
+        sql = '''
+select distinct rch.record_combined_identity, g.groupname, irl1.p, t.s, t.o_lit, ids.first_seen from record_combined_history as rch
+join perspectives as p on p.id = rch.perspective_id
+join groups as g on g.id = p.group_id and g.groupname = :groupname
+join identity_relations as irl1 on s = rch.record_combined_identity
+join identity_named_triples_ingest as inti1 on inti1.named_embedded_identity = irl1.o
+join triples as t on t.triple_identity = inti1.triple_identity and t.p = 'http://www.w3.org/2000/01/rdf-schema#label'::uri
+join identities as ids on ids.identity = inti1.named_embedded_identity
+order by ids.first_seen desc
+'''
+        return list(self.session_execute(sql, args))
+
     def getGroupOntologies(self, group):
         args = dict(group=group)
         # TODO big major todo
