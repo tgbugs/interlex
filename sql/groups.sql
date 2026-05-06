@@ -371,6 +371,83 @@ CREATE TABLE users_recovering(
        CHECK (delay_seconds <= lifetime_seconds)
 );
 
+CREATE OR REPLACE FUNCTION user_recover_check(token text) RETURNS text AS $user_recover_check$
+DECLARE
+out_groupname text;
+BEGIN
+
+    SELECT g.groupname INTO out_groupname
+    FROM groups AS g
+    JOIN users AS u ON u.id = g.id
+    JOIN users_recovering AS ev ON ev.user_id = u.id AND ev.token = user_recover_check.token;
+
+    IF EXISTS (
+       SELECT * FROM users_recovering AS ev
+       WHERE ev.token = user_recover_check.token
+       AND CURRENT_TIMESTAMP > ev.created_datetime + make_interval(secs := ev.delay_seconds)
+       AND CURRENT_TIMESTAMP < ev.created_datetime + make_interval(secs := ev.lifetime_seconds)) THEN
+           RETURN out_groupname;
+    ELSIF EXISTS (
+    SELECT * FROM users_recovering AS ev
+    WHERE ev.token = user_recover_check.token
+    AND CURRENT_TIMESTAMP <= ev.created_datetime + make_interval(secs := ev.delay_seconds)) THEN
+        -- <= to ensure that attempts to start and complete in the same transaction fail for an explicable reason
+        -- also because the token is only valid AFTER time, not at the same moment
+        RAISE EXCEPTION 'too early, recovery link not active' USING DETAIL = out_groupname;
+    ELSIF EXISTS (
+    SELECT * FROM users_recovering AS ev
+    WHERE ev.token = user_recover_check.token
+    AND CURRENT_TIMESTAMP > ev.created_datetime + make_interval(secs := ev.lifetime_seconds)) THEN
+        RAISE EXCEPTION 'too late, recovery link has expired' USING DETAIL = out_groupname;
+    ELSIF NOT EXISTS (SELECT * FROM users_recovering AS ev WHERE ev.token = user_recover_check.token) THEN
+        RAISE EXCEPTION 'unknown password reset token';
+    ELSE
+        RAISE EXCEPTION 'how did you get here?';
+    END IF;
+END;
+$user_recover_check$ language plpgsql;
+
+CREATE OR REPLACE FUNCTION user_recover_complete(token text, argon2_string text) RETURNS text AS $user_recover_complete$
+DECLARE
+out_groupname text;
+BEGIN
+
+    SELECT g.groupname INTO out_groupname
+    FROM groups AS g
+    JOIN users AS u ON u.id = g.id
+    JOIN users_recovering AS ev ON ev.user_id = u.id AND ev.token = user_recover_complete.token;
+
+    IF EXISTS (
+       SELECT * FROM users_recovering AS ev
+       WHERE ev.token = user_recover_complete.token
+       AND CURRENT_TIMESTAMP > ev.created_datetime + make_interval(secs := ev.delay_seconds)
+       AND CURRENT_TIMESTAMP < ev.created_datetime + make_interval(secs := ev.lifetime_seconds)) THEN
+
+           WITH evs AS (SELECT * FROM users_recovering AS ev WHERE ev.token = user_recover_complete.token
+           ), uue AS (UPDATE user_passwords AS ue SET argon2_string = user_recover_complete.argon2_string FROM evs WHERE ue.user_id = evs.user_id)
+           DELETE FROM users_recovering AS ev WHERE ev.token IN (SELECT eee.token FROM evs AS eee);
+
+           RETURN out_groupname;
+    ELSIF EXISTS (
+    SELECT * FROM users_recovering AS ev
+    WHERE ev.token = user_recover_complete.token
+    AND CURRENT_TIMESTAMP <= ev.created_datetime + make_interval(secs := ev.delay_seconds)) THEN
+        -- <= to ensure that attempts to start and complete in the same transaction fail for an explicable reason
+        -- also because the token is only valid AFTER time, not at the same moment
+        RAISE EXCEPTION 'too early, recovery link not active' USING DETAIL = out_groupname;
+    ELSIF EXISTS (
+    SELECT * FROM users_recovering AS ev
+    WHERE ev.token = user_recover_complete.token
+    AND CURRENT_TIMESTAMP > ev.created_datetime + make_interval(secs := ev.lifetime_seconds)) THEN
+        RAISE EXCEPTION 'too late, recovery link has expired' USING DETAIL = out_groupname;
+    ELSIF NOT EXISTS (SELECT * FROM users_recovering AS ev WHERE ev.token = user_recover_complete.token) THEN
+        RAISE EXCEPTION 'unknown password reset token';
+    ELSE
+        RAISE EXCEPTION 'how did you get here?';
+    END IF;
+END;
+$user_recover_complete$ language plpgsql;
+
 CREATE TABLE orgs(
        id integer PRIMARY KEY,
        -- orgname varchar(40) NOT NULL,

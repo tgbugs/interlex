@@ -266,6 +266,8 @@ def uriStructure():
                     'user-recover': ['GET', 'POST'],
                     'orcid-new': ['GET'],
                     'orcid-login': ['GET'],
+                    'pwrs': ['GET', 'POST'],
+                    'password-reset': ['GET', 'POST'],
 
                     # priv
                     'logout': ['GET'],  # TODO align with whatever we ultimately decide for the method

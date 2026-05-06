@@ -140,7 +140,6 @@ Thanks!
 def msg_user_recover_alt(user_email):
     to = Address(addr_spec=user_email)
     real_to = to if _email_test_target is None else Address(addr_spec=_email_test_target)
-    inow, istart, iexpires = [isofnm(dt).replace('T', ' ') for dt in (now, start, expires)]
     return make_message(
         Address('InterLex', addr_spec='noreply@interlex.org'),
         real_to,
@@ -150,6 +149,25 @@ def msg_user_recover_alt(user_email):
 Someone (hopefully you) issued a request to recover the InterLex
 account associated with this alternate email address. A separate
 email with a recovery link was sent to the primary email account.
+
+Thanks!
+''',
+    )
+
+
+def msg_user_recover_success(user_email):
+    to = Address(addr_spec=user_email)
+    real_to = to if _email_test_target is None else Address(addr_spec=_email_test_target)
+    return make_message(
+        Address('InterLex', addr_spec='noreply@interlex.org'),
+        real_to,
+        'InterLex account activity',
+        f'''Hi!
+
+Someone (hopefully you) successfully reset the password for the
+the InterLex account associated with this email address ({to.addr_spec}).
+
+If this wasn't you please email support@interlex.org.
 
 Thanks!
 ''',

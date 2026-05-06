@@ -197,6 +197,23 @@ WHERE g.groupname = :groupname AND g.own_role <= 'pending'
 '''
         return list(self.session_execute(sql, dict(groupname=group)))
 
+    def updateUserPassword(self, group, old_argon2_string, new_argon2_string):
+        args = dict(user=group, old=old_argon2_string, new=new_argon2_string)
+        sql = ('UPDATE user_passwords SET argon2_string = :new WHERE user_id = (select idFromGroupname(:user)) AND argon2_string = :old')
+        self.session_execute(sql, args)
+
+    def checkResetToken(self, reset_token):
+        args = dict(token=reset_token)
+        sql = 'SELECT user_recover_check(:token)'
+        return list(self.session_execute(sql, args))
+
+    def resetTokenPassword(self, reset_token, argon2_string):
+        # user is obtained from the token
+        # like updateUserPassword but requires a reset token instead of an old password
+        args = dict(token=reset_token, argon2_string=argon2_string)
+        sql = 'SELECT user_recover_complete(:token, :argon2_string)'
+        return list(self.session_execute(sql, args))  # FIXME this can and will error on token ver failure
+
     def insertOrcidMetadata(self, orcid, name, token_type, token_scope, token_access, token_refresh, lifetime_seconds,
                             openid_token=None, user=None):
         args = dict(

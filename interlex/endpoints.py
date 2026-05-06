@@ -36,7 +36,7 @@ from interlex.vervar import process_vervar, get_latest_group_subject_hack
 from interlex.render import TripleRender  # FIXME need to move the location of this
 from interlex.dbstuff import Stuff
 from interlex.namespaces import ilxr  # FIXME should be in another file
-from interlex.notifications import send_message, get_smtp_spec, msg_email_verify, msg_user_recover, msg_user_recover_alt
+from interlex.notifications import send_message, get_smtp_spec, msg_email_verify, msg_user_recover, msg_user_recover_alt, msg_user_recover_success
 
 log = _log.getChild('endpoints')
 log_ver = _log.getChild('verification')
@@ -2404,10 +2404,132 @@ InterLex Account Recovery <br>
 
     def password_reset(self):
         # this is the back half of the user recover process
-        # TODO
-        # on success send an email confirming the change
-        # do not automatically log the user in
-        abort(501, 'TODO')
+        if request.method in ('GET', 'POST'):
+            # FIXME TODO not sure if this is the correct flow, but if the token is well formed
+            # then we query to get the user so that the user will know what username they have
+            if 't' not in request.args or not request.args['t']:
+                abort(400, 'missing reset token t=')
+            token_str = request.args['t']
+            try:
+                token = base64.urlsafe_b64decode(token_str)
+            except Exception as e:
+                breakpoint()
+                log.exception(e)
+                abort(400, 'bad token')
+
+            if len(token) != 33:  # FIXME hardcoded
+                abort(400, 'bad token length')
+        else:
+            abort(405)
+
+        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
+        dbstuff = Stuff(self.session)
+        if request.method == 'GET':
+            try:
+                rows = dbstuff.checkResetToken(token_str)
+            except sa.exc.InternalError as e:
+                if (e.orig.diag.source_function == 'exec_stmt_raise'
+                    and e.orig.diag.context is not None
+                    and e.orig.diag.context.startswith('PL/pgSQL function user_recover_check(text)')):
+                    msg = e.orig.diag.message_primary
+                    group = e.orig.diag.message_detail if e.orig.diag.message_detail else None
+                    self.session.rollback()
+                    #do_log(group, 'fail', msg)
+                    abort(404, msg)
+                else:
+                    breakpoint()
+                    raise e
+
+            groupname, = rows[0]
+            message = f'Password reset for {groupname}'
+            password_change_form = f'''
+<form action="" method="post" class="password-reset">
+
+  <div class="password-reset">
+    <label for="password">Password: </label>
+    <input type="password" name="password" id="password" size="40" required />
+  </div>
+
+  <div class="password-reset">
+    <input type="submit" value="Reset Password" />
+  </div>
+
+</form>
+'''
+
+            '''
+  <!--
+  <div class="password-reset">
+    <input type="hidden" name="token" id="token" value="{token_str}" required />
+  </div>
+  -->
+'''
+
+            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex Password Reset</title></head>
+<body>
+{password_change_form}
+{message}
+</body>
+</html>'''
+
+        elif request.method == 'POST':
+            errors = {}
+            if 'password' not in request.form or not request.form['password']:
+                password = None
+                errors['password'] = ['required']
+            else:
+                password = request.form['password']
+                pass_fail = iauth.password_check(password)
+                if pass_fail:
+                    errors['password'] = pass_fail
+
+            if errors:
+                if _dopop:
+                    return return_page(data={'errors': errors}, status=422)
+                else:
+                    return json.dumps({'errors': errors}), 422, ctaj
+
+            argon2_string = iauth.hash_password(password)
+            try:
+                rows = dbstuff.resetTokenPassword(token_str, argon2_string)
+            except sa.exc.InternalError as e:
+                if (e.orig.diag.source_function == 'exec_stmt_raise'
+                    and e.orig.diag.context is not None
+                    and e.orig.diag.context.startswith('PL/pgSQL function user_recover_complete(text,text)')):
+                    msg = e.orig.diag.message_primary
+                    group = e.orig.diag.message_detail if e.orig.diag.message_detail else None
+                    self.session.rollback()
+                    #do_log(group, 'fail', msg)
+                    abort(404, msg)
+                else:
+                    breakpoint()
+                    raise e
+
+            groupname, = rows[0]
+            self.session.commit()
+
+            # FIXME make the queries for this info more efficient (ie include in resp above)
+            # FIXME make email sending async
+            emails = dbstuff.getUserVerifiedEmails(groupname)
+            primaries = [r for r in emails if r.email_primary]
+            if primaries:
+                primary_row = primaries[0]
+                email = primary_row.email
+                msg = msg_user_recover_success(email)
+                send_message(msg, get_smtp_spec())
+            else:
+                # this should never happen
+                log.critical(f'no primary verified email, something has gone very wrong {emails}')
+
+            aspopup_option = '&aspopup=true' if _dopop else ''
+            reiri = f'/u/ops/login?username={groupname}{aspopup_option}'
+            if _dopop:
+                return return_page(data={'redirect': reiri, 'username': groupname}, status=303)
+            else:
+                return redirect(reiri, 303)
 
     def email_verify(self):
         """ callback point for email with token not to be confused with priv/email-verify """
