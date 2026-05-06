@@ -2830,12 +2830,14 @@ class Privu(EndBase):
         user = fl.current_user.groupname
         try:
             self._insert_orcid_meta(self.session, orcid_meta, user=user)
-            pass
         except sa.exc.IntegrityError as e:
-            if e.orig.diag.constraint_name == 'orcid_metadata_pkey':
+            if e.orig.diag.constraint_name == 'users_orcid_key':
+                abort(409, 'orcid already associated')
+            elif e.orig.diag.constraint_name == 'orcid_metadata_pkey':
                 # FIXME could be used to find associated orcids? but that should be public already
                 # so it shouldn't be an issue?
-                abort(409, 'orcid already associated')
+                # after switching to upsert this we should not hit this branch
+                abort(409, 'orcid metadata exists')
             else:
                 log.exception(e)
                 breakpoint()

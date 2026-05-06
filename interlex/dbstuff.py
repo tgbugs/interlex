@@ -225,11 +225,15 @@ WHERE g.groupname = :groupname AND g.own_role <= 'pending'
             token_refresh=token_refresh,
             lifetime_seconds=lifetime_seconds)
 
-        idt, idtv = ('', '') if openid_token is None else (', openid_token', ', :openid_token')
+        idt, idtv, idte = ('', '', '') if openid_token is None else (', openid_token', ', :openid_token', ', EXCLUDED.openid_token')
 
+        # FIXME this is broken and causes integrity errors even though the orcid metadata is never associated with a user
+        # we upsert here so that the orcid association flow doesn't get stuck in a bad state where
         sql = f'''
 INSERT INTO orcid_metadata (orcid, name, token_type, token_scope, token_access, token_refresh, lifetime_seconds{idt})
 VALUES (:orcid, :name, :token_type, :token_scope, :token_access, :token_refresh, :lifetime_seconds{idtv})
+ON CONFLICT (orcid) DO UPDATE SET (name, token_type, token_scope, token_access, token_refresh, lifetime_seconds{idt}) =
+(EXCLUDED.name, EXCLUDED.token_type, EXCLUDED.token_scope, EXCLUDED.token_access, EXCLUDED.token_refresh, EXCLUDED.lifetime_seconds{idte}) WHERE orcid_metadata.orcid = EXCLUDED.orcid
 '''
 
         if openid_token is not None:
