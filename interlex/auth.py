@@ -43,6 +43,36 @@ def validate_password(argon2_string, password):
     finally:
         log.log(9, 'end')
 
+
+def password_check(p, lr=10):
+    # this is a bad check but is absolute min that is sane now
+    lp = len(p) >= lr
+    d, u, l = False, False, False
+    for char in p:
+        if char.isdigit():
+            d = True
+        elif char.isupper():
+            u = True
+        elif char.islower():
+            l = True
+
+    errs = []
+    for crit, err in ((lp, f'shorter than {lr}'),
+                        # aside from a min length requirement we
+                        # don't put restrictions, better ux on the
+                        # frontend showing estimated password
+                        # strength probably
+
+                        #(d, 'no digit'),
+                        #(u, 'no upper'),
+                        #(l, 'no lower'),
+                        ):
+        if not crit:
+            errs.append(err)
+    if errs:
+        return errs
+
+
 # https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/
 # https://stackoverflow.com/questions/30092226/calculate-crc32-correctly-with-python
 

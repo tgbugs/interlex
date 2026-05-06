@@ -284,7 +284,7 @@ def uriStructure():
                     'org-new': ['POST'],
 
                     #'settings': ['GET'],  # TODO might allow PUT ?
-                    'password-change': ['POST'],
+                    'password-change': ['GET', 'POST'],
                     'user-deactivate': ['POST'],
 
                     'orcid-assoc': ['GET'],

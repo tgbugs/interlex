@@ -2052,35 +2052,7 @@ receive quite a few during periods of active development.
                 errors['password'] = ['required']
         else:
             password = request.form['password']
-            def password_check(p, lr=10):
-                # this is a bad check but is absolute min that is sane now
-                lp = len(p) >= lr
-                d, u, l = False, False, False
-                for char in p:
-                    if char.isdigit():
-                        d = True
-                    elif char.isupper():
-                        u = True
-                    elif char.islower():
-                        l = True
-
-                errs = []
-                for crit, err in ((lp, f'shorter than {lr}'),
-                                  # aside from a min length requirement we
-                                  # don't put restrictions, better ux on the
-                                  # frontend showing estimated password
-                                  # strength probably
-
-                                  #(d, 'no digit'),
-                                  #(u, 'no upper'),
-                                  #(l, 'no lower'),
-                                  ):
-                    if not crit:
-                        errs.append(err)
-                if errs:
-                    return errs
-
-            pass_fail = password_check(password)
+            pass_fail = iauth.password_check(password)
             if pass_fail:
                 errors['password'] = pass_fail
 
@@ -2734,7 +2706,19 @@ class Privu(EndBase):
     def orcid_landing_assoc(self, db=None):
         orcid_meta = self._orcid_landing()
         user = fl.current_user.groupname
-        self._insert_orcid_meta(self.session, orcid_meta, user=user)
+        try:
+            self._insert_orcid_meta(self.session, orcid_meta, user=user)
+            pass
+        except sqlalchemy.exc.IntegrityError as e:
+            if e.orig.diag.constraint_name == 'orcid_metadata_pkey':
+                # FIXME could be used to find associated orcids? but that should be public already
+                # so it shouldn't be an issue?
+                abort(409, 'orcid already associated')
+            else:
+                log.exception(e)
+                breakpoint()
+                abort(500, 'oops')
+
         _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
         orcid_meta_safe = {}
         if _dopop:
@@ -3137,9 +3121,121 @@ class Priv(EndBase):
             return abort(405)
 
     @basic
-    @fl.fresh_login_required
+    @fl.fresh_login_required  # FIXME this is redundant since we require the old password to be sent here as well
     def password_change(self, group, db=None):
-        return 'TODO', 501
+        # FIXME there are certain issues related to logging complexity when putting /{group}/chage-password in a url
+
+        # TODO check whether user actually has a password and can login or whether they were orcid only
+        # and modify the form to say "set password" vs "update password"
+
+        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
+        if request.method == 'GET':
+            message = 'Changing your password will log you out from all other sessions on other browsers and other computers.'
+            password_change_form = f'''
+<form action="" method="post" class="password-change">
+
+  <div class="password-change">
+    <label for="password-old">Old password: </label>
+    <input type="password" name="password-old" id="password-old" size="40" required />
+  </div>
+
+  <div class="password-change">
+    <label for="password-new">New password: </label>
+    <input type="password" name="password-new" id="password-new" size="40" required />
+  </div>
+
+  <!--
+  <div class="password-change">
+    <label for="password-logout-others">Logout others: </label>
+    <input type="checkbox" name="password-logout-others" id="password-logout-others" size="40" />
+  </div>
+  -->
+
+  <div class="password-change">
+    <input type="submit" value="Change Password" />
+  </div>
+
+</form>
+'''
+            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex Password Change</title></head>
+<body>
+{password_change_form}
+{message}
+</body>
+</html>'''
+
+        elif request.method == 'POST':
+            errors = {}
+            # we need a new password
+            if 'password-new' not in request.form or not request.form['password-new']:
+                new_password = None
+                errors['password-new'] = ['required']
+            else:
+                # NOTE as with user_new we only require a single copy of the password
+                # any double entry validation should be handled locally on the frontend
+                new_password = request.form['password-new']
+                pass_fail = iauth.password_check(new_password)
+                if pass_fail:
+                    errors['password-new'] = pass_fail
+
+            # we need an old password
+            if 'password-old' not in request.form or not request.form['password-old']:
+                old_password = None
+                errors['password-old'] = ['required']
+            else:
+                old_password = request.form['password-old']
+
+            # the new password cannot be the same as the old password
+            if new_password is not None and new_password == old_password:
+                # NOTE we don't check whether the old password is valid first
+                # because we don't need to since we would just fail later and
+                # this way we avoid a database roundtrip
+                err = 'not-changed'
+                if 'password-new' in errors:
+                    errors['password-new'].append(err)
+                else:
+                    errors['password-new'] = [err]
+
+            if errors:
+                if _dopop:
+                    return return_page(data={'errors': errors}, status=422)
+                else:
+                    return json.dumps({'errors': errors}), 422, ctaj
+
+            dbstuff = Stuff(self.session)
+            rows = dbstuff.getUserPassword(group)
+            if not rows:
+                # not a user
+                abort(401)
+
+            group_row = rows[0]
+            old_argon2_string = group_row.argon2_string
+            old_password_matches = iauth.validate_password(old_argon2_string, old_password)
+            if not old_password_matches:
+                abort(401)
+
+            new_argon2_string = iauth.hash_password(new_password)
+            dbstuff.updateUserPassword(group, old_argon2_string, new_argon2_string)
+            self.session.commit()
+            # we automatically expire all old sessions because we use
+            # surrogates and remove the old surrogate as a core part
+            # of the process while we could implement this in some
+            # other way auto expiring all other sessions on password
+            # change seems like the simplest and safest approach see
+            # groups.sql change_password_change_surrogate therefore
+            # for the current session we do need log the user back in
+            # using the new surrogate
+            rows = dbstuff.getUserPassword(group)  # get new surrogate only after commit
+            fl.current_user.id = rows[0].surrogate
+            def get_id(__id=rows[0].surrogate): return __id
+            fl.current_user.get_id = get_id
+            fl.login_user(fl.current_user, remember=True)  # FIXME how to keep track of remember
+            return 'password updated', 200
+        else:
+            return abort(405)
 
     @basic
     @fl.fresh_login_required
