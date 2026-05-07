@@ -20,6 +20,9 @@ from interlex.namespaces import ilxr, ilxrtype
 
 
 class uri(UserDefinedType):
+    cache_ok = True  # https://sqlalche.me/e/20/cprf
+    # FIXME TODO these are literals but they are passed as parameters
+    # so is it ok to set cache_ok? the docs are confusing
     def get_col_spec(self):
         return 'uri'
 
