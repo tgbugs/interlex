@@ -4309,8 +4309,30 @@ class Ontologies(Endpoints):
                 #return tripleRender(request, graph, user, 'FIXMEFIXME', object_to_existing)
             elif dns:
                 name_type = 'bound'
+                uri_string = f'https://{host}/{ont_path}'
                 local_convention_rows = self.queries.getCuriesByName(uri_string, type=name_type)
+                curies = {p: n for p, n in local_convention_rows}
+                # FIXME getGraphByName produces incorrect results for precision.ttl :/
+                # pypy3 -m interlex.ingest tgbugs https://.../precision.ttl --commit --force --debug
                 graph_rows = self.queries.getGraphByName(uri_string, type=name_type)
+
+                graph = OntGraph()
+                tr_kwargs = {'simple': True}
+                graph.namespace_manager.populate_from(curies)
+                te = TripleExporter()
+                for r in graph_rows:
+                    graph.add(te.triple(*r))
+
+                # FIXME TODO extension handling is a problem here because the external url might have its own
+                fname = ont_path.rsplit('/')[-1]
+                title = fname  # FIXME TODO
+                if '.' in fname:
+                    _ext = fname.rsplit('.')[-1]
+                    if _ext:
+                        request.view_args['extension'] = _ext
+
+                return tripleRender(request, graph, group, None, None, tuple(), title, redirect=False, **tr_kwargs)
+
             elif uris or from_ilx:
                 # TODO virtual vs managed vs scratch ...
                 # virtual can't post to, only spec
