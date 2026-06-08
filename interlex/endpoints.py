@@ -2242,7 +2242,8 @@ receive quite a few during periods of active development.
                     msg += f' As a final step a verification email has been sent to {email}'
 
                 if _dopop:
-                    return return_page(data=msg, status=201)
+                    out = {'message': msg}
+                    return return_page(data=out, status=201)
                 else:
                     return msg, 201
 
