@@ -742,7 +742,7 @@ class Endpoints(EndBase):
                 definition,
                 rdfs.label,  # ok to double check this even though we have the laex
             )
-            # TODO most critically neet to laex sorted, but to do that we need
+            # TODO most critically need to laex sorted, but to do that we need
             # to get curated up and running instead of just base we're close
             # but still quite a bit of work to go
             pred_no_add = (rdf.type, rdfs.label,                        ilxtr.duplicateOf, replacedBy, ilxtr.hasIlxId,)
@@ -1955,7 +1955,8 @@ class Ops(EndBase):
                 orcid_not = ''
                 not_orcid_not = 'not you'
 
-            _suwo = '<a href="/u/ops/orcid-new">Sign up with ORCiD</a> <br>' if orcid is None else ''
+            aspopup_option = '?aspopup=true' if _dopop else ''
+            _suwo = f'<a href="/u/ops/orcid-new{aspopup_option}">Sign up with ORCiD</a> <br>' if orcid is None else ''
             message = f'''
 {_suwo}
 Required: username <br>
