@@ -1946,6 +1946,15 @@ class Ops(EndBase):
         _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
 
         if request.method == 'GET':
+            if _dopop and orcid:
+                if already_registered:
+                    msg = f'already logged in as {fl.current_user.groupname}'
+                else:
+                    msg = ('please complete registration by posting '
+                           'username, email, and optionally password')
+                out = {'message': msg,}
+                return return_page(data=out, status=200)
+
             # fine we'll send you a form to fill out
             _areg = f' You are already logged in as {fl.current_user.groupname}. <br>' if already_registered else ''
             if orcid is None:
