@@ -345,9 +345,11 @@ class Auth:
                 if orcid_pending and orcid_row.id is not None:
                     # FIXME do we send the user a header to tell the user agent
                     # to clear cookies or something along with the new cookie?
+                    fl.logout_user()  # we've hit a weird edge case without this
                     msg = ('attempt to connect with orcid only session cookie '
                            'when a orcid + user is present on the system, you '
-                           'probably want to replace the session cookie?')
+                           'probably want to replace the session cookie? '
+                           'as such, you have been logged out')
                     abort(401, msg)
 
                 class tuser:
