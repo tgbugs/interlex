@@ -120,6 +120,25 @@ CREATE TRIGGER groupname_length_check BEFORE INSERT ON groups FOR each row execu
       -- prevent the creation of groups with names len < 5
       -- without administrator
 
+CREATE OR REPLACE FUNCTION delete_group(groupname text) RETURNS VOID AS $delete_group$
+BEGIN
+WITH todel AS (
+SELECT g.id, u.orcid, p.id AS pid FROM groups AS g
+JOIN users AS u ON u.id = g.id
+JOIN orcid_metadata AS om ON u.orcid = om.orcid
+JOIN perspectives AS p ON p.group_id = g.id
+WHERE g.groupname = delete_group.groupname)
+, del_orcid_metadata AS (DELETE FROM orcid_metadata WHERE orcid IN (SELECT orcid FROM todel))
+, del_user_emails AS (DELETE FROM user_emails WHERE user_id IN (SELECT id FROM todel))
+, del_reference_name AS (DELETE FROM reference_names WHERE perspective IN (SELECT pid FROM todel))
+, del_perspectives AS (DELETE FROM perspectives WHERE group_id IN (SELECT id FROM todel))
+, del_users AS (DELETE FROM users WHERE id IN (SELECT id FROM todel))
+, del_orgs AS (DELETE FROM orgs WHERE id IN (SELECT id FROM todel))
+, del_groups AS (DELETE FROM groups WHERE id IN (SELECT id FROM todel))
+SELECT 'done';
+END
+$delete_group$ language plpgsql;
+
 -- TODO yes, the indirection provided by perspectives does have real implementation overhead :/
 -- CREATE FUNCTION group_ensure_perspective() returns trigger AS $group_ensure_perspective$;
 
