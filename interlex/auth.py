@@ -6,7 +6,8 @@ import binascii
 import jwt
 from jwt import exceptions as jwtexc
 import flask_login as fl
-from flask import abort, redirect, url_for, g as flask_context_globals, session as fsession
+from flask import abort, redirect, url_for, g as flask_context_globals
+from flask import session as fsession, request as frequest, current_app as fcurrent_app
 from idlib.utils import makeEnc
 from pyontutils.utils_fast import isoformat
 from interlex import config
@@ -343,9 +344,24 @@ class Auth:
 
                 orcid_row = rows[0]
                 if orcid_pending and orcid_row.id is not None:
+                    # we've hit a weird edge case and need to remove the session
                     # FIXME do we send the user a header to tell the user agent
                     # to clear cookies or something along with the new cookie?
-                    fl.logout_user()  # we've hit a weird edge case without this
+                    if "_user_id" in fsession:
+                        fsession.pop("_user_id")
+
+                    if "_fresh" in fsession:
+                        fsession.pop("_fresh")
+
+                    if "_id" in fsession:
+                        fsession.pop("_id")
+
+                    cookie_name = fcurrent_app.config.get("REMEMBER_COOKIE_NAME", fl.config.COOKIE_NAME)
+                    if cookie_name in frequest.cookies:
+                        session["_remember"] = "clear"
+                        if "_remember_seconds" in fsession:
+                            fsession.pop("_remember_seconds")
+
                     msg = ('attempt to connect with orcid only session cookie '
                            'when a orcid + user is present on the system, you '
                            'probably want to replace the session cookie? '
