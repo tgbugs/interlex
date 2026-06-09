@@ -1855,6 +1855,9 @@ class Ops(EndBase):
                     return __id
 
             fsession['_via_auth'] = tuser.via_auth
+            if tuser.groupname and '_orcid_only' in fsession:
+                fsession.pop('_orcid_only')
+
             fl.login_user(tuser())  # TODO I don't think there is an easy way to remember this stuff
 
     def _orcid_check_already(self, orcid_meta):
