@@ -1498,8 +1498,11 @@ and t.subgraph_identity is not null
         # TODO other config options if relevant
         subjects = [r.o for r in spec_graph_rows if r.p == spred]
         # TODO also pull dc title over and TODO maybe even insert it into the ontology metadata record itself
-        graph_rows = self.getGraphFromSubjects(subjects)
-        return graph_rows
+        if subjects:
+            graph_rows = self.getGraphFromSubjects(subjects)
+            return graph_rows
+        else:
+            return []
         #breakpoint()
         #args = dict(name=spec)
         #return list(self.session_execute(sql, args))
