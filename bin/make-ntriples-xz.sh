@@ -22,9 +22,20 @@ rapper \
 --feature normalizeLanguage=0 \
 --feature noNet=1 \
 --feature noFile=1 \
--i ${rapper_input_type} -o ntriples "${lbnode}" | sort -u > "${stem}".ntriples
+-i ${rapper_input_type} -o ntriples "${lbnode}" | sort -u \
+rapper \
+--feature normalizeLanguage=0 \
+--feature noNet=1 \
+--feature noFile=1 \
+-I 'x' -i ntriples -o turtle - | \
+rapper \
+--feature normalizeLanguage=0 \
+--feature noNet=1 \
+--feature noFile=1 \
+-I 'x' -i turtle -o ntriples - | sort -u > "${stem}".ntriples
 # must use sort -u because rapper will produce dupes which breaks
 # identities because everything after assume all triples are distinct
+# filter through turtle without curies to normalize bnode order
 
 rm "${lbnode}" &
 
