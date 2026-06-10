@@ -4007,7 +4007,11 @@ class Priv(EndBase):
 
             redout = reingest_gclc(gclc, self.session, force=True)  # FIXME remove once plpgsql bit is ok probably?
             self.session.commit()
-            return redirect(reiri, 303)
+            if 'application/json' in dict(request.accept_mimetypes):
+                response = {'code': 303, 'redirect': reiri,}
+                return json.dumps(response), 303, ctaj
+            else:
+                return redirect(reiri, 303)
         else:
             abort(405)
 
