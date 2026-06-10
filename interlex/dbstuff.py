@@ -22,15 +22,12 @@ class Stuff:
         values = tuple((cp, ip) for cp, ip in curies.items())
 
         # FIXME impl in load pls
-        values_template, params = makeParamsValues(values,
-                                                   constants=('persFromGroupname(:group)',))  # FIXME surely this is slow as balls
+        values_template, params = makeParamsValues(values)
         params['group'] = group
 
-        sql = f'''with pers as (select persFromGroupname(:group) as pid)
+        sql = f'''
 insert into curies (perspective, curie_prefix, iri_namespace)
-SELECT pers.pid, v.p, v.n FROM ( VALUES {values_template} ) AS v (p, n) JOIN pers ON TRUE'''
-        #base = 'INSERT INTO curies (perspective, curie_prefix, iri_namespace) VALUES '
-        #sql = base + values_template
+SELECT persFromGroupname(:group), v.p, v.n FROM ( VALUES {values_template} ) AS v (p, n)'''
         return self.session_execute(sql, params)
 
     def org_new(self, orgname, creator):

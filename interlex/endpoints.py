@@ -2981,6 +2981,11 @@ class Priv(EndBase):
     @basic
     @fl.fresh_login_required
     def user_role(self, group, user, db=None):
+        # /<group>/priv/role/<user>
+        # GET to show effective
+        # PUT to create or change
+        # DELETE to remove record
+        # OPTIONS to list possible roles
         dbstuff = Stuff(self.session)
         if request.method == 'GET':
             resp = dbstuff.getUserRoleForGroups(user, (group,))
@@ -3015,14 +3020,6 @@ class Priv(EndBase):
         else:
             abort(405)
 
-        breakpoint()
-        # FIXME /<group>/priv/role/<user>
-        # GET to show effective
-        # PUT to create or change
-        # DELETE to remove record
-        # OPTIONS to list possible roles
-        abort(501, 'TODO')
-
     @basic
     def role_other_group_(self, group, db=None):
         dbstuff = Stuff(self.session)
@@ -3036,15 +3033,22 @@ class Priv(EndBase):
     @basic
     @fl.fresh_login_required
     def role_other_group(self, group, other_role_group, db=None):
+        dbstuff = Stuff(self.session)
         if request.method == 'GET':
-            pass
+            resp = dbstuff.getUserRoleForGroups(group, (other_role_group,))
+            if resp:
+                role = resp[0].user_role
+                if role == 'deleted':
+                    abort(404)
+                return json.dumps({'role': role}), 200, ctaj
+            else:
+                abort(404)
         elif request.method == 'DELETE':
-            pass
+            dbstuff.setUserRoleForGroup(group, other_role_group, 'deleted')
+            self.commit()
+            return json.dumps([]), 200, ctaj
         else:
             abort(405)
-
-        breakpoint()
-        abort(501, 'TODO')
 
     @basic
     def request_ingest(self, group, db=None):
