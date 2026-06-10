@@ -233,7 +233,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         url = f'{self.prefix}/{tuser}/priv/{endpoint}'
         resp = client.get(url, headers=headers)
-        resp1 = client.post(url, json=data, headers=headers)
+        resp1 = client.post(url, json=data, headers={**headers, 'Accept': 'application/json'})
         if resp1.status_code == 303:
             headers = {'Accept': 'text/turtle'}
             resp2 = client.get(resp1.location, headers=headers)
@@ -431,17 +431,28 @@ class TestRoutes(RouteTester, unittest.TestCase):
             resp_patch = client.patch(url, headers=headers_patch, json=jld)
             #breakpoint()
 
-    def test_00_post_ontspec(self):
+    def test_00_post_ontspec(self, target_group=None):
         self.app.debug = True
         client = self.app.test_client()
-        tuser = auth.get('test-api-user')
+        auser = auth.get('test-api-user')
+        tuser = auser if target_group is None else target_group
         token = auth.get('interlex-test-api-key')
+
+        _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=auser, token=token)
+        _thost = test_host + (f':{test_port}' if test_port else '')
+        url1 = _resp1.location.replace(_thost, 'uri.interlex.org').replace(auser, 'base')  # FIXME
+        _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=auser, token=token)
+        url2 = _resp1.location.replace(_thost, 'uri.interlex.org').replace(auser, 'base')  # FIXME
+        TestRoutes._ontspec_todel = url2
+
         headers = {'Authorization': f'Bearer {token}'}
         data = {'title': 'test ontology',
                 'subjects': [
+                    url1,
+                    url2,
                     # FIXME not in test db by default
-                    'http://uri.interlex.org/base/ilx_0101431',
-                    'http://uri.interlex.org/base/ilx_0101432',
+                    #'http://uri.interlex.org/base/ilx_0101431',
+                    #'http://uri.interlex.org/base/ilx_0101432',
                     #'http://uri.interlex.org/base/ilx_0101433',
                     #'http://purl.obolibrary.org/obo/UBERON_0000955',
                     #'http://purl.obolibrary.org/obo/BFO_0000001',
@@ -475,11 +486,17 @@ class TestRoutes(RouteTester, unittest.TestCase):
             assert dout['graph_combined_local_conventions_identity'] == gclc_id
             ''
 
-    def test_01_patch_ontspec(self):
+    def test_01_patch_ontspec(self, target_group=None):
         self.app.debug = True
         client = self.app.test_client()
-        tuser = auth.get('test-api-user')
+        auser = auth.get('test-api-user')
+        tuser = auser if target_group is None else target_group
         token = auth.get('interlex-test-api-key')
+
+        _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=auser, token=token)
+        _thost = test_host + (f':{test_port}' if test_port else '')
+        url3 = _resp1.location.replace(_thost, 'uri.interlex.org').replace(auser, 'base')  # FIXME
+
         headers = {'Authorization': f'Bearer {token}'}
         onts_url = f'{self.prefix}/{tuser}/ontologies'
         resp1 = client.get(onts_url)
@@ -487,15 +504,17 @@ class TestRoutes(RouteTester, unittest.TestCase):
         data = {
             'title': 'test ontology updated',
                 'add': [
+                    url3,
                     #'http://uri.interlex.org/base/ilx_0101431',
                     #'http://uri.interlex.org/base/ilx_0101432',
-                    'http://uri.interlex.org/base/ilx_0101433',
+                    #'http://uri.interlex.org/base/ilx_0101433',
                     #'http://purl.obolibrary.org/obo/UBERON_0000955',
                     #'http://purl.obolibrary.org/obo/BFO_0000002',
                     #'http://purl.obolibrary.org/obo/IAO_0000001',
                 ],
                 'del': [
-                    'http://uri.interlex.org/base/ilx_0101432',
+                    TestRoutes._ontspec_todel,
+                    #'http://uri.interlex.org/base/ilx_0101432',
                     #'http://purl.obolibrary.org/obo/BFO_0000001',
                 ],
         }
@@ -521,6 +540,12 @@ class TestRoutes(RouteTester, unittest.TestCase):
         with self.app.app_context():
             #breakpoint()
             ''
+
+    def test_02_group_post_ontspec(self):
+        self.test_00_post_ontspec('InterLex')
+
+    def test_03_group_patch_ontspec(self):
+        self.test_01_patch_ontspec('InterLex')
 
     def test_post_user_new(self):
         self.app.debug = True
