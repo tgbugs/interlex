@@ -544,6 +544,8 @@ class TestRoutes(RouteTester, unittest.TestCase):
                 breakpoint()
                 ''
 
+        return username, data['password'], client
+
     def test_post_user_recover(self):
         try:
             endpoints._reset_mock = True
@@ -641,6 +643,24 @@ class TestRoutes(RouteTester, unittest.TestCase):
         ver_url = vers_url + '/' + ver
         resp2 = client.get(ver_url, headers=headers_get_ver)
         breakpoint()
+
+    def test_user_role(self):
+        self.app.debug = True
+        client = self.app.test_client()
+        tuser = auth.get('test-api-user')
+        token = auth.get('interlex-test-api-key')
+        headers = {'Authorization': f'Bearer {token}'}
+        user1, pass1, client1 = self.test_post_user_new()
+        user2, pass2, client2 = self.test_post_user_new()
+        base_url = f'{self.prefix}/{user1}/priv/role/{user2}'
+        resp1 = client1.get(base_url)
+        resp2 = client1.put(base_url, json={'role': 'view'})
+        resp3 = client1.get(base_url)
+        resp4 = client1.delete(base_url)
+        resp5 = client1.get(base_url)
+        hrm = [r.data for r in (resp1, resp2, resp3, resp4, resp5)]
+        breakpoint()
+
 
 class TestApiDocs(RouteTester, unittest.TestCase):
     def test_docs(self):

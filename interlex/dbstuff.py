@@ -317,9 +317,37 @@ ON CONFLICT (orcid) DO UPDATE SET (name, token_type, token_scope, token_access, 
 select gg.groupname, gg.own_role, up.user_role
 from user_permissions as up
 join groups as gg on gg.id = up.group_id
-where gg.groupname in :groups and up.user_id = (select idFromGroupname(:user))
+where gg.groupname in :groups and up.user_id = (select idFromUsername(:user))
 '''
         return list(self.session_execute(sql, args))
+
+    def setUserRoleForGroup(self, user, group, role):
+        # TODO this likely needs to be implemented as an sql function
+        # to ensure that role checks pass so that e.g. banned users
+        # can't give a role in a group, or maybe we don't care about that?
+        args = dict(user=user, group=group, role=role)
+        sql = '''
+with okuser as (select g.id from groups as g where g.id = idFromUsername(:user) and g.own_role >= 'view')
+insert into user_permissions (group_id, user_id, user_role)
+values (idFromGroupname(:group), (select id from okuser), :role)
+on conflict (group_id, user_id) do update
+set user_role = :role -- where group_id = idFromGroupname(:group) and user_id = (select id from okuser)
+'''
+        self.session_execute(sql, args)
+        return
+
+    def delUserRoleForGroup(self, user, group):
+        args = dict(user=user, group=group)
+        sql = '''
+delete from user_permissions as up
+where up.group_id = (select idFromGroupname(:group))
+and up.user_id = (select idFromUsername(:user))
+'''
+        try:
+            self.session_execute(sql, args)
+        except Exception as e:
+            breakpoint()
+            raise e
 
     def getUserAndMetaByApiKey(self, api_key):
         # XXX for consideration, this function is intended to be used ONLY

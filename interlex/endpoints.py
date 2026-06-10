@@ -2797,10 +2797,10 @@ Alternately send an HTTP GET request with headers containing <br>
                     return 'login successful, check your cookies (use requests.Session)'
 
             else:
-                return abort(401)  # FIXME hrm what would the return code be here ...
+                abort(401)  # FIXME hrm what would the return code be here ...
 
         else:
-            return abort(405)
+            abort(405)
 
 
 class Privu(EndBase):
@@ -2981,12 +2981,37 @@ class Priv(EndBase):
     @basic
     @fl.fresh_login_required
     def user_role(self, group, user, db=None):
+        dbstuff = Stuff(self.session)
         if request.method == 'GET':
-            pass
+            resp = dbstuff.getUserRoleForGroups(user, (group,))
+            if resp:
+                role = resp[0].user_role
+                if role == 'deleted':
+                    abort(404)
+                return json.dumps({'role': role}), 200, ctaj
+            else:
+                abort(404)
+
         elif request.method == 'PUT':
-            pass
+            try:
+                role = request.json['role']
+            except Exception as e:
+                breakpoint()
+                abort(400)
+
+            try:
+                dbstuff.setUserRoleForGroup(user, group, role)
+            except Exception as e:
+                breakpoint()
+                abort(400)
+
+            self.session.commit()
+            return json.dumps([]), 200, ctaj
         elif request.method == 'DELETE':
-            pass
+            dbstuff.setUserRoleForGroup(user, group, 'deleted')
+            #dbstuff.delUserRoleForGroup(user, group)
+            self.session.commit()
+            return json.dumps([]), 200, ctaj
         else:
             abort(405)
 

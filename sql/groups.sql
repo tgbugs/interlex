@@ -539,7 +539,7 @@ CREATE TABLE user_permissions(
        user_id integer NOT NULL,  -- the fkey prevents groups from having any permissions which is important since can't log in as group
        CHECK (group_id != user_id),  -- that's what own_role is for
        user_role group_role NOT NULL,
-       CHECK ((user_role > 'admin' AND user_role <= 'view' AND group_id != 0)
+       CHECK ((user_role > 'admin' AND (user_role <= 'view' OR user_role = 'deleted') AND group_id != 0)
               OR user_role = 'admin' AND group_id = 0),
        CONSTRAINT pk__user_permissions PRIMARY key (group_id, user_id),  -- users can only have one role at a time
        CONSTRAINT fk__user_permissions__group_id__groups FOREIGN key (group_id) REFERENCES groups (id) match simple,
@@ -602,12 +602,12 @@ CREATE TABLE perspective_subject_user_permissions(
        user_role term_user_roles not null
 );
 
-CREATE FUNCTION check_valid_user_user_role() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION check_valid_user_user_role() RETURNS trigger AS $$
        -- need to limit user to user roles to view
        BEGIN
            IF EXISTS (SELECT * FROM users as u WHERE u.id = NEW.group_id) THEN
-              IF NEW.user_role != 'view' THEN
-                 RAISE exception 'The only valid user -> user permissions is view. % is not valid.', NEW.user_role;
+              IF NEW.user_role != 'view' AND NEW.user_role != 'deleted' THEN
+                 RAISE exception 'The only valid user -> user permissions are view or deleted. % is not valid.', NEW.user_role;
               END IF;
            END IF;
            RETURN NEW;
