@@ -187,7 +187,7 @@ INSERT INTO perspective_heads (perspective_id, subject, head_identity) VALUES
 (perspective_id, subject, record_combined_identity);
 
 --RETURN subject; -- FIXME probably also need to return record combined identity
-RETURN (subject::text || '/versions-gclc/' || graph_combined_local_conventions_identity)::uri; -- FIXME probably also need to return record combined identity
+RETURN (subject::text || '/versions-gclc/' || encode(graph_combined_local_conventions_identity, 'hex'))::uri; -- FIXME probably also need to return record combined identity
 END;
 $$ language plpgsql;
 
