@@ -4009,7 +4009,7 @@ class Priv(EndBase):
             self.session.commit()
             if 'application/json' in dict(request.accept_mimetypes):
                 response = {'code': 303, 'redirect': reiri,}
-                return json.dumps(response), 303, ctaj
+                return json.dumps(response), 303, {**ctaj, 'Location': reiri,}
             else:
                 return redirect(reiri, 303)
         else:
