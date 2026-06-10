@@ -4424,7 +4424,7 @@ class Ontologies(Endpoints):
                 for r in graph_rows:
                     graph.add(te.triple(*r))
 
-                return tripleRender(request, graph, group, None, None, tuple(), title, redirect=False, **tr_kwargs)
+                return tripleRender(request, graph, group, None, None, tuple(), title, ontid=ont_uri, redirect=False, **tr_kwargs)
 
             else:
                 pass

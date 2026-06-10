@@ -313,8 +313,9 @@ class TripleRender:
             return graph
         elif for_alt:
             preferred_iri, rgraph = self.renderPreferencesAlt(group, graph, frag_pref, id, ranking, ilx_stubs)
+        elif frag_pref is None or id is None:
+            preferred_iri, rgraph = None, graph
         else:
-            # FIXME TODO
             preferred_iri, rgraph = rdflib.URIRef(f'http://uri.interlex.org/{group}/{frag_pref}_{id}'), graph
 
         # FIXME nowish should come from the last change or the last transitive change
@@ -322,9 +323,16 @@ class TripleRender:
         epoch = int(nowish.timestamp())  # truncate to second to match iso
         iso = isoformat(nowish)
         if ontid is None:
-            ontid = rdflib.URIRef(f'http://uri.interlex.org/{group}'
-                                  f'/ontologies/{frag_pref}_{id}')
-            ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/{frag_pref}_{id}')
+            if frag_pref is None or id is None:
+                msg = f'missing ontid and frag_pref or id for {request.url}'
+                log.error(msg)
+                ontid = rdflib.URIRef(f'http://uri.interlex.org/{group}'
+                                      f'/ontologies/ERROR')
+                ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/ERROR')
+            else:
+                ontid = rdflib.URIRef(f'http://uri.interlex.org/{group}'
+                                      f'/ontologies/{frag_pref}_{id}')
+                ver_ontid = rdflib.URIRef(ontid + f'/version/{epoch}/{frag_pref}_{id}')
         else:
             po = PurePosixPath(ontid)
             base, rest = ontid.rsplit('/', 1)
