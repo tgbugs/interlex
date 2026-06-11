@@ -1,14 +1,16 @@
 import json
 import rdflib
+import augpathlib as aug
 from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk
 from flask_sqlalchemy import SQLAlchemy
 from flask import Flask
 from interlex.uri import dbUri
 from interlex.dump import TripleExporter
-from pyontutils.core import makeGraph, OntId, qname, PREFIXES as uPREFIXES  # FIXME get base prefixes...
-from pyontutils.core import NIFRID, rdf, rdfs, skos, definition, ilxtr, oboInOwl
-from dump import Queries
+from pyontutils.core import makeGraph, OntId, qname
+from pyontutils.namespaces import NIFRID, rdf, rdfs, skos, definition, ilxtr, oboInOwl
+from pyontutils.namespaces import PREFIXES as uPREFIXES  # FIXME get base prefixes...
+from .dump import Queries
 
 if False:
     from desc.prof import profile_me
@@ -26,10 +28,13 @@ def profile_json(recs):
     t2 = b(recs)  # pypy3 21 python 2
     t3 = c(recs)  # pypy3 24 python >10
 
-connSpec = [{'host':'localhost', 'port':9200}]
+connSpec = [{'host':'localhost', 'port':9201, 'scheme': 'http'}]
 es = Elasticsearch(connSpec)
 
-es.index(index='test_index', doc_type='rdf:type record', id=1, body={
+es.indices.open(index='test_index')
+es.index(index='test_index',
+         #doc_type='rdf:type record',
+         id=1, body={
     'iri':'http://uri.interlex.org/tgbugs/readable/test',
     'curie':'ilxtr:test',
     'label':'test',
@@ -37,29 +42,103 @@ es.index(index='test_index', doc_type='rdf:type record', id=1, body={
     'definition':'this term is used for testing things',
 })
 
-with open('es-settings.json', 'rt') as f:
+rp = aug.RepoPath(__file__).parent
+with open(rp / 'es-settings.json', 'rt') as f:
     # other options
     # "catenate_words": true
     # TODO consider using not_analyzed for curies
     index_settings = json.load(f)
 
+#with open(rp / 'es-mappings.json', 'rt') as f:
+#    # other options
+#    # "catenate_words": true
+#    # TODO consider using not_analyzed for curies
+#    index_mappings = json.load(f)
+
+
 #breakpoint()
-es.indices.close('test_index')
-es.indices.put_settings(index_settings, 'test_index')
-es.indices.open('test_index')
+es.indices.close(index='test_index')
+#es.indices.create(index='test_index', settings=index_settings, mappings=index_mappings)
+es.indices.put_settings(settings=index_settings, index='test_index')
+#es.indices.put_mapping(body=index_mappings, index='test_index')  # FIXME this is utterly broken ???
+es.indices.open(index='test_index')
 
 def get(id):
-    return es.get(index='test_index', doc_type='rdf:type record', id=id)
+    return es.get(index='test_index',
+                  #doc_type='rdf:type record',
+                  id=id)
 
 def esAdd(**record):
     id = record['user_iri']
-    return es.index(index='test_index', doc_type='rdf:type record', id=id, body=record)
+    return es.index(index='test_index',
+                    #doc_type='rdf:type record',
+                    id=id, body=record)
 
 def trynext(gen):
     try:
         return next(gen)
     except StopIteration:
         pass
+
+
+# TODO the best way to batch this is to use perspective_heads ... except not really
+# because the default ingest and terms from other ontology ingests don't update perspective heads
+# mostly because they ingest multiple terms, so instead what we should do is iterate over all
+# the names that we are aware of and get the identity for that graph and then get the list of
+# all record identities that are in the latest version of those ontologies ... OR we could
+# just take literally all the record identities regardless of whether they are new or not
+# and just construct them and include the metadata to know what their date was and include
+# that in the record ... and let elastic sort out the issue there? probably not though
+def makeRecordOld():
+    # the current implementation is in SciCrunch-UI/classes/term.class.php termForElasticSearch
+    # Term ilx label type definition comment status
+    # TermRelationship term1_ilx term1_label term2_ilx term2_label relationship_term_ilx relationship_term_label
+    # TermAnnotation term_ilx term_label annotation_term_ilx annotation_term_label value
+    # TermSynonym literal type
+    # TermExistingId curie iri preferred
+    # TermSuperclass ilx label
+    # TermOntology url
+
+    x = 'TODO'
+    term = {
+        'ilx': x,
+        'label': x,
+        'type': x,
+        'definition': x,
+        'comment': x,
+        'status': x,
+    }
+    syns = [{'literal': x, 'type': x,} for ]
+    exids = [{'curie': x, 'iri': x, 'preferred': x,} for]
+    ancs = [{'ilx': x, 'label': x,} for ]
+    sups = [{'ilx': x, 'label': x,} for ]
+    rels = [{
+        'term1_ilx': x,
+        'relationship_term_ilx': x,
+        'term2_ilx': x,
+
+        'term1_label': x,
+        'relationship_term_label': x,
+        'term2_label': x,
+    } for ]
+    anns = [{
+        'term_ilx': x, 'term_label': x, # redundant ...
+        'annotation_term_ilx': x,
+        'annotation_term_label': x,
+        'value': x,
+    } for ]
+    onts = []
+    record = {
+        'synonyms': syns,
+        'existing_ids': exids,
+        'superclasses': sups,
+        'ancestors': ancs,
+        'relationships': rels,
+        'annotations': anns,
+        'ontologies': onts,
+     }
+    return record
+
 
 def makeRecord(graph, user, id=None):
     iris = sorted(set(s for s in graph.subjects() if
@@ -128,12 +207,14 @@ def getDb(dburi):
     app.config['SQLALCHEMY_DATABASE_URI'] = dburi
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     db = SQLAlchemy(app)
-    return db
+    return app, db
 
-def convert_for_bulk(records, index_name, doc_type_name):
+def convert_for_bulk(records, index_name
+                     #, doc_type_name
+                     ):
     for record in records:
         yield {'_index': index_name,
-               '_type': doc_type_name,
+               #'_type': doc_type_name,
                '_id': record['user_iri'],
                '_source': record}
 
@@ -148,8 +229,8 @@ class DbToEs:
         # TODO qualifier etc
         prefixes = self.queries.getGroupCuries(user)
         uri_base = 'http://uri.interlex.org/base/{}_{}'
-        resp = [[uri_base.format(id) if 'http' not in id else id] + rest
-                for id, *rest in self.queries.getAll(unmapped=unmapped)]
+        resp = [[uri_base.format(frag_pref, id) if 'http' not in id else id] + rest
+                for frag_pref, id, *rest in self.queries.getAll(unmapped=unmapped)]
         # FIXME getAll needs to use qualifiers, the current implementation has nasty issues with
         # conflating subjects in ways that are inappropriate and often extremely confusing
         existing = [(uri_base.format(frag_pref, id), iri, perspective)
@@ -271,7 +352,9 @@ class DbToEs:
             self._records()
         print('records done')
         #es.indices.delete('test_index')
-        success, maybefail = bulk(self.es, convert_for_bulk(self.records, index, 'rdf:type record'))
+        success, maybefail = bulk(self.es, convert_for_bulk(self.records, index,
+                                                            #'rdf:type record'
+                                                            ))
         print(success)
 
     def tests(self):
@@ -317,21 +400,22 @@ def _main():
     #print(derp[:3])
 
 def main():
-    db = getDb(dbUri())
+    app, db = getDb(dbUri())
     q = Queries(db.session)
     stats = es.indices.stats()
 
     user = 'tgbugs'
-    PREFIXES = q.getGroupCuries(user)
+    with app.app_context():
+        PREFIXES = q.getGroupCuries(user)
 
-    thing = DbToEs(q, es)
-    listp = profile_me(list)
-    g = thing.allGraph()
-    recs = thing._records()
-    thing.reindex()
-    thing2 = DbToEs(q, es)
-    ga = thing2.allGraph(unmapped=True)  # -> about 15 seconds in pypy3 after fetch for 1mil trips when profiling
-    recsa = thing2._records()  # -> aboug 30 seconds in pypy3 for 1mil trips when profiling
+        thing = DbToEs(q, es)
+        listp = profile_me(list)
+        g = thing.allGraph()
+        recs = thing._records()
+        thing.reindex()
+        thing2 = DbToEs(q, es)
+        ga = thing2.allGraph(unmapped=True)  # -> about 15 seconds in pypy3 after fetch for 1mil trips when profiling
+        recsa = thing2._records()  # -> aboug 30 seconds in pypy3 for 1mil trips when profiling
 
     # delete index
     #es.indices.delete('test_index')
