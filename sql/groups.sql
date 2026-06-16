@@ -818,6 +818,14 @@ scope: immediate transitive
 'changes to ontologies i curate',
 'changes to ontologies i review',
 'changes to ontologies i follow',
+'new ontologies in groups i create',
+'new ontologies in groups i curate',
+--'new ontologies in groups i review', -- not applicable
+'new ontologies in groups i follow',
+'new terms in groups i create',
+'new terms in groups i curate',
+--'new terms in groups i review', -- not applicable
+'new terms in groups i follow',
 'derp'
 );
 
