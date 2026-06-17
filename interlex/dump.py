@@ -1,7 +1,7 @@
 import rdflib
 import ontquery as oq
 from itertools import chain
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from sqlalchemy.sql import text as sql_text
 from sqlalchemy.sql.expression import bindparam
 from sqlalchemy.types import UserDefinedType
@@ -11,7 +11,7 @@ from pyontutils.core import OntId
 from pyontutils.utils import TermColors as tc
 from pyontutils.utils_extra import check_value
 from pyontutils.namespaces import NIFRID, ilxtr, definition
-from pyontutils.namespaces import rdf, rdfs, owl, skos
+from pyontutils.namespaces import rdf, rdfs, owl, skos, dc
 from pyontutils.namespaces import ilx_includesTerm, ilx_includesTermSet
 from pyontutils.combinators import annotation
 from interlex import exceptions as exc
@@ -1290,7 +1290,6 @@ join triples as t on t.triple_identity = inti.triple_identity
 '''
 
         def f(g):
-            from collections import namedtuple
             sigh = []
             for r in g:
                 args = tuple(c.tobytes().hex() if isinstance(c, memoryview) else c for c in r)
@@ -1497,12 +1496,17 @@ and t.subgraph_identity is not null
         spred = str(pred)
         # TODO other config options if relevant
         subjects = [r.o for r in spec_graph_rows if r.p == spred]
-        # TODO also pull dc title over and TODO maybe even insert it into the ontology metadata record itself
+
+        # FIXME title should be attached to the actual owl:Ontology record not the OntologySpec record probably?
+        nt = namedtuple('rowthing', spec_graph_rows[0]._fields)
+        sdct = str(dc.title)
+        meta_rows = [nt(r._data[0].rsplit('/', 1)[0], *r._data[1:]) for r in spec_graph_rows if r.s == spec and r.p == sdct]
+
         if subjects:
             graph_rows = self.getGraphFromSubjects(subjects)
-            return graph_rows
+            return meta_rows + graph_rows
         else:
-            return []
+            return meta_rows
         #breakpoint()
         #args = dict(name=spec)
         #return list(self.session_execute(sql, args))
