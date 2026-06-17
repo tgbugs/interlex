@@ -1298,6 +1298,10 @@ class Endpoints(EndBase):
     def curies(self, group, prefix_iri_curie, extension=None, db=None):
         # FIXME confusion between group (aka group) and logged in group :/
         #log.debug(prefix_iri_curie)
+        if extension is not None and ':' in extension:
+            prefix_iri_curie = prefix_iri_curie + '.' + extension
+            extension = None
+
         PREFIXES, graph = self.getGroupCuries(group)
         frag_pref = None
         if prefix_iri_curie.startswith('http') or prefix_iri_curie.startswith('file'):  # TODO decide about urlencoding
