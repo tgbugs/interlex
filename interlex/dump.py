@@ -771,7 +771,7 @@ class Queries:
 
     def getAll(self, qualifier=None, unmapped=False):  # TODO qualit
         # NOTE no blanknodes, but this is for indexing, so it is ok
-        sql = ('SELECT e.ilx_id, '
+        sql = ('SELECT e.ilx_prefix, e.ilx_id, '
                't.s_blank, t.p, t.o, t.o_lit, t.datatype, t.language, t.o_blank, t.subgraph_identity '
                'FROM existing_iris as e '
                'JOIN triples as t '
