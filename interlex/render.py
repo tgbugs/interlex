@@ -83,7 +83,9 @@ class TripleRender:
                      None)
 
         mimetypes = [mimetype for mimetype, number in request.accept_mimetypes]
-        if extension:
+        if mimetype and extension and '*/*' not in mimetypes:  # TODO should this test include len(mimetypes) == 1?
+            pass  # use the explicit mimetype
+        elif extension:
             try:
                 mimetype = self.extensions[extension]
             except KeyError as e:
