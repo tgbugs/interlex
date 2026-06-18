@@ -101,14 +101,17 @@ class TripleRender:
             # TODO actual browser detection
             return extension, acc_mimetype, self.mimetypes[None]
 
-        if '+' in acc_mimetype and '/' in acc_mimetype:
-            _acmpj, _acms = acc_mimetype.split('+',1 )
-            _acmp, _junk = _acmpj.split('/', 1)
-            sim_acc_mimetype = f'{_acmp}/{_acms}'
-            if sim_acc_mimetype == ext_mimetype:
-                mimetype = acc_mimetype
+        if len(mimetypes) == 1 and '*/*' not in mimetypes:
+            if ext_mimetype and '+' in ext_mimetype and '/' in ext_mimetype:
+                _ecmpj, _ecms = ext_mimetype.split('+', 1)
+                _ecmp, _junk = _ecmpj.split('/', 1)
+                sim_ext_mimetype = f'{_ecmp}/{_ecms}'
+                if sim_ext_mimetype == acc_mimetype:
+                    mimetype = ext_mimetype
+                else:
+                    mimetype = acc_mimetype
             else:
-                mimetype = ext_mimetype
+                mimetype = acc_mimetype
         elif ext_mimetype:
             mimetype = ext_mimetype
         else:
