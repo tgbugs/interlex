@@ -74,20 +74,20 @@ class TripleRender:
 
     def check(self, request):
         best = request.accept_mimetypes.best
-        mimetype = (best if best and  # sometimes best can be None
-                    best != '*/*' and
-                    'application/signed-exchange' not in best
-                    else 'text/html')
+        acc_mimetype = (
+            best if best and  # sometimes best can be None
+            best != '*/*' and
+            'application/signed-exchange' not in best
+            else 'text/html')
+        ext_mimetype = None
         extension = (request.view_args['extension'] if
                      'extension' in request.view_args else
                      None)
 
         mimetypes = [mimetype for mimetype, number in request.accept_mimetypes]
-        if mimetype and extension and '*/*' not in mimetypes:  # TODO should this test include len(mimetypes) == 1?
-            pass  # use the explicit mimetype
-        elif extension:
+        if extension:
             try:
-                mimetype = self.extensions[extension]
+                ext_mimetype = self.extensions[extension]
             except KeyError as e:
                 raise exc.UnsupportedType(f"don't know what to do with {extension}", 415) from e
         elif (extension is None and
@@ -99,7 +99,20 @@ class TripleRender:
             # then return the usual crappy page as if it were
             # a redirect or the page itself
             # TODO actual browser detection
-            return extension, mimetype, self.mimetypes[None]
+            return extension, acc_mimetype, self.mimetypes[None]
+
+        if '+' in acc_mimetype and '/' in acc_mimetype:
+            _acmpj, _acms = acc_mimetype.split('+',1 )
+            _acmp, _junk = _acmpj.split('/', 1)
+            sim_acc_mimetype = f'{_acmp}/{_acms}'
+            if sim_acc_mimetype == ext_mimetype:
+                mimetype = acc_mimetype
+            else:
+                mimetype = ext_mimetype
+        elif ext_mimetype:
+            mimetype = ext_mimetype
+        else:
+            mimetype = acc_mimetype
 
         try:
             func = self.mimetypes[mimetype]
