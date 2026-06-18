@@ -22,7 +22,7 @@ rapper \
 --feature normalizeLanguage=0 \
 --feature noNet=1 \
 --feature noFile=1 \
--i ${rapper_input_type} -o ntriples "${lbnode}" | sort -u \
+-i ${rapper_input_type} -o ntriples "${lbnode}" | sort -u | \
 rapper \
 --feature normalizeLanguage=0 \
 --feature noNet=1 \
