@@ -1784,6 +1784,10 @@ def str_None(thing):
 
 
 def prepare_batch(sql, values, suffix='', constant_dict=None):
+    if not values:
+        msg = 'something has gone very wrong because there are no values'
+        raise Exception(msg)
+
     if constant_dict:
         constants = tuple(f':{n}' for n in constant_dict)
     else:
