@@ -2283,7 +2283,7 @@ def ingest_path(path, user, **kwargs):
 
 
 #@profile_me(sort='cumtime')
-def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, debug=False, force=False, session=None):
+def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, debug=False, force=False, session=None, norapper=False):
     # FIXME TODO something with user yeah?
     if batchsize is None:
         batchsize = _batchsize
@@ -2406,9 +2406,13 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
 
     # FIXME name to fetch is not reliable if the serialization is different
     name_to_fetch = localfs.as_uri() if localfs else metadata_to_fetch.identifier_actionable
-    rapper_input_type = metadata_to_fetch.rapper_input_type()
+    if norapper:
+        rapper_input_type = None
+    else:
+        rapper_input_type = metadata_to_fetch.rapper_input_type()
+
     if rapper_input_type is None:
-        orif = OntResPath(path_input) if localfs else OntResIri(metadata_to_fetch.iri)
+        orif = OntResPath(localfs) if localfs else OntResIri(metadata_to_fetch.iri)
         orif.graph_next(compute_identity=True)
         serialization_identity = orif._identity
         sha256hex = serialization_identity.hex()
@@ -2632,12 +2636,17 @@ def main():
     force = '--force' in sys.argv
     debug = '--debug' in sys.argv
     check = '--check' in sys.argv
+    dopath = '--path' in sys.argv
+    norapper = '--no-rapper' in sys.argv
     if check:
         log.debug(f'check {uri}')
         recons_uri(uri, debug=True)
     else:
         log.debug(f'start {uri}')
-        ingest_uri(uri, user, commit=commit, force=force, debug=debug)
+        if dopath:
+            ingest_path(pathlib.Path(uri), user, commit=commit, force=force, debug=debug, norapper=norapper)
+        else:
+            ingest_uri(uri, user, commit=commit, force=force, debug=debug, norapper=norapper)
 
 
 if __name__ == '__main__':
