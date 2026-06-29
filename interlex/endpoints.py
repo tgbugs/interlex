@@ -1451,9 +1451,31 @@ class Endpoints(EndBase):
         te = TripleExporter()
         graph = OntGraph()
         graph.namespace_manager = nm
+        t = None
         for r in tt:
             t = te.triple(r.s, None, r.p, r.o, r.o_lit, r.datatype, r.language)
             graph.add(t)
+
+        if t is None:
+            resp = self.queries.checkSimpleSubjectPredicate(s, p)
+            oks = [r.ok for r in resp]
+            if 'predicate' not in oks and 'subject' not in oks:
+                msg = f'subject {s} and predicate {p} not known to exist'
+                code = 404
+            elif 'predicate' not in oks:
+                msg = f'predicate {p} not known to exist'
+                code = 404
+            elif 'subject' not in oks:
+                msg = f'subject {s} not known to exist'
+                code = 404
+            else:
+                msg = f'subject {s} has no triples with predicate {p}'
+                code = 404  # FIXME TODO this should probably be a 200
+                # however we need to establish what it means to return
+                # an empty graph as opposed to a 404, the msgs should
+                # help a bit now though?
+
+            abort(code, msg)
 
         object_to_existing = None
         so_or_os = 'subject to object'

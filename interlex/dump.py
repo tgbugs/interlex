@@ -1737,9 +1737,21 @@ join irstype_up as it on it.s = irs.o
         sql = 'select namedEmbeddedSubject(:nei)'
         return list(self.session_execute(sql, args))
 
+    def checkSimpleSubjectPredicate(self, subject, predicate):
+        # we keep this as simple as possible to reduce roundtrips but
+        # it also means we can't check multiple pairs at the same time
+        # with the current version of the query
+        args = dict(subject=subject, predicate=predicate)
+        sql = '''
+(select 'subject' as ok from triples as t where t.s = :subject limit 1)
+union
+(select 'predicate' as ok from triples as t where t.p = :predicate limit 1)
+'''
+        return list(self.session_execute(sql, args))
+
     def checkPredicates(self, predicates):
         """ return uris in predicate posiiton that do not have a predicate type """
-        args = dict(predicates=predicates)
+        args = dict(predicates=tuple(predicates))
         sql = '''select
 s, bool_and(propertyp) from (
 select
