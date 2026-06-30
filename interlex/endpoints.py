@@ -405,7 +405,16 @@ class Endpoints(EndBase):
         # then we need to remove it as well ... we don't
         # have a way to track that right now
         _PREFIXES = self.queries.getGroupCuries(group)
-        PREFIXES = {**basePREFIXES, **_PREFIXES}  # group takes priority over base if defined
+        PREFIXES = {
+            **basePREFIXES,  # group takes priority over base if defined
+            **_PREFIXES,
+            # always include {ilx,ILX}.{group} curies to ensure serialization works as expected
+            # they go last so that (hopefully) user settings for these can take priority
+            **{k.replace('.', f'.{group}.', 1): v.replace(f'/{_refgroup}/', f'/{group}/')  # XXX watch out for unintended consequences
+               for k, v in basePREFIXES.items() if k.startswith('ilx.')},
+            f'ilx.{group}': f'http://{self.reference_host}/{group}/',
+            f'ILX.{group}': f'http://{self.reference_host}/{group}/ilx_',
+        }
         if config.debug:
             _refname = self.reference_host
             currentHost = request.headers['Host']
