@@ -1738,3 +1738,13 @@ $$ language plpgsql;
 drop trigger if exists pers_log_heads on perspective_heads;
 CREATE TRIGGER pers_log_heads AFTER INSERT OR UPDATE ON perspective_heads
        FOR EACH ROW EXECUTE PROCEDURE pers_log_heads();
+
+CREATE OR REPLACE FUNCTION pers_log_heads_delete() RETURNS trigger as $$
+BEGIN
+INSERT INTO perspective_reflog (perspective_id, subject, head_identity) VALUES (OLD.perspective_id, OLD.subject, ''::bytea);
+END;
+$$ language plpgsql;
+
+drop trigger if exists pers_log_heads_delete on perspective_heads;
+CREATE TRIGGER pers_log_heads_delete AFTER DELETE ON perspective_heads
+       FOR EACH ROW EXECUTE PROCEDURE pers_log_heads_delete();
