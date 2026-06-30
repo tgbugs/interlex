@@ -1082,7 +1082,8 @@ class Endpoints(EndBase):
             else:
                 internal_links = False
             return tripleRender(request, graph, group, frag_pref, id,
-                                object_to_existing, title, labels=labels, internal_links=internal_links)
+                                object_to_existing, title, labels=labels, internal_links=internal_links,
+                                rewrite_group=True,)
 
     @basic
     def ilx_get(self, group, frag_pref_id, extension, db=None):

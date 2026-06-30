@@ -129,7 +129,8 @@ class TripleRender:
 
     def __call__(self, request, graph, group, frag_pref, id, object_to_existing,
                  title=None, labels=None, ontid=None, ranking=default_prefix_ranking,
-                 ilx_stubs=False, redirect=True, for_alt=False, simple=False, internal_links=False):
+                 ilx_stubs=False, redirect=True, for_alt=False, simple=False, internal_links=False,
+                 rewrite_group=False, match_group_skip_predicates=tuple(),):
         extension, mimetype, func = self.check(request)
 
         if not graph:
@@ -140,6 +141,43 @@ class TripleRender:
 
         if labels is None:
             labels = {}
+
+        if rewrite_group and group != 'base':  # FIXME hardcoded base
+            # FIXME TODO this almost certainly needs to be moved up the stack
+            # so that we do the rewrite on the way out of the database and into
+            # the graph the first time i.e. via TripleExporter instead of TripleRender
+            ingraph = graph
+            graph = graph.__class__(bind_namespaces='none')
+            graph.namespace_manager.populate_from(ingraph)
+            # TODO implement match_group_skip_predicates I suspect
+            # that the right way to do this is actually to only allow
+            # alternate group urls in the graph metadata or if they
+            # were explicit in the substitution, there is also the
+            # issue of making sure the roundtrip works, that is you
+            # are only allowed to insert your own group predicates,
+            # but we check those and then insert base so it can be a
+            # pita to get back what you put in to ensure that we don't
+            # mangle metadata urls we thus need to ensure that we do
+            # this replacement before we add the metadata, ALSO this
+            # makes it difficult to have graphs where e.g. there might
+            # be predicates from multiple users that we can show all
+            # at the same time attached to the same subject, it is
+            # possible to do that but not at render time, we have to
+            # know the original graph source which means it needs to
+            # be at TripleExporter time when we know e.g. the variant
+            # source, but this seems a very advanced feature
+            # i.e. "show me all triples attached to a term and include
+            # triples with predicates from other users"
+            def sub_group(e, gs=f'/{group}/'):
+                if 'uri.interlex.org/base/' in e:  # FIXME reference_host
+                    return rdflib.URIRef(e.replace('/base/', gs, 1))
+                else:
+                    return e
+
+            for ot in ingraph:
+                #_os, _op, _oo = ot
+                nt = tuple(sub_group(e) for e in ot)
+                graph.add(nt)
 
         out = func(request, graph, group, frag_pref, id, object_to_existing,
                    title, mimetype, labels, ontid, ranking, ilx_stubs, for_alt, simple, internal_links)
