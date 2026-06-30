@@ -395,6 +395,24 @@ class Endpoints(EndBase):
         }
         return super().get_func(nodes, mapping)
 
+    def getGroupCuries2(self, group):
+        _refgroup = 'base'  # FIXME base hardcoded
+        basePREFIXES = self.queries.getGroupCuries(_refgroup)  # TODO cache these maybe?
+        if group == _refgroup:
+            return basePREFIXES
+        # FIXME TODO group options for curies go here
+        # that is if a group has unset some base prefix
+        # then we need to remove it as well ... we don't
+        # have a way to track that right now
+        _PREFIXES = self.queries.getGroupCuries(group)
+        PREFIXES = {**basePREFIXES, **_PREFIXES}  # group takes priority over base if defined
+        if config.debug:
+            _refname = self.reference_host
+            currentHost = request.headers['Host']
+            PREFIXES = {cp:ip.replace(_refname, currentHost) for cp, ip in PREFIXES.items()}
+
+        return PREFIXES
+
     def getGroupCuries(self, group, epoch_verstr=None,
                        default=default_prefixes):
         PREFIXES = self.queries.getGroupCuries(group, epoch_verstr)
@@ -487,7 +505,7 @@ class Endpoints(EndBase):
             abort(404)
 
         # TODO stick erci in graph metadata
-        PREFIXES = self.queries.getGroupCuries(group)
+        PREFIXES = self.getGroupCuries2(group)
         graph.namespace_manager.populate_from(PREFIXES)
         object_to_existing = self.queries.getSimpleExisting(frag_pref, id)
 
@@ -548,7 +566,7 @@ class Endpoints(EndBase):
             # 0. make sure that what has changed is part of the ilx record they can modify
             # 0. ingest the new version, update perspective head
             # 0. return the full new record with the newly computed identity to track further changes
-            graph = OntGraph()
+            graph = OntGraph(bind_namespaces='none')
             graph.namespace_manager.populate_from(jld['@context'])  # FIXME complex contexts
             populateFromJsonLd(graph, jld)
             abort(501)
@@ -1144,7 +1162,7 @@ class Endpoints(EndBase):
 
         # FIXME do we want ot use original source curies in this case?
         #curies = {p: n for p, n in self.queries.getCuriesByName(spec_uri)}
-        curies = self.queries.getGroupCuries(group)
+        curies = self.getGroupCuries2(group)
         graph = OntGraph(bind_namespaces='none')
         graph.namespace_manager.populate_from(curies)
         te = TripleExporter()
@@ -1237,7 +1255,6 @@ class Endpoints(EndBase):
         # /<group>/ontologies/obo/uberon.owl << this way
         # /<group>/uris/obo/uberon.owl << no mapping to ontologies here
         title = f'uris.{group}:{uri_path}'
-        PREFIXES, graph = self.getGroupCuries(group)
         if read_private:
             resp = self.queries.getUnmappedByGroupUriPath(group, uri_path, read_private, redirect=False)
         else:
@@ -1253,6 +1270,9 @@ class Endpoints(EndBase):
         else:
             object_to_existing = self.queries.getResponseExisting(resp, type='o')
 
+            PREFIXES = self.getGroupCuries2(group)
+            graph = OntGraph(bind_namespaces='none')
+            graph.namespace_manager.populate_from(PREFIXES)
             te = TripleExporter()
             _ = [graph.add(te.triple(*r)) for r in resp]  # FIXME ah type casting
 
@@ -1425,7 +1445,7 @@ class Endpoints(EndBase):
     @basic
     def query_transitive(self, group, start, predicate):
         nm = OntGraph(bind_namespaces='none').namespace_manager
-        nm.populate_from(self.queries.getGroupCuries(group))  # FIXME
+        nm.populate_from(self.getGroupCuries2(group))  # FIXME
         errors = []
         try:
             s = nm.expand_curie(start)
@@ -3833,7 +3853,7 @@ class Priv(EndBase):
             abort(501, 'TODO')  # TODO html form ...
 
         nm = OntGraph(bind_namespaces='none').namespace_manager
-        nm.populate_from(self.queries.getGroupCuries('base'))  # FIXME
+        nm.populate_from(self.getGroupCuries2(group))
         thing, errors = self._entproc(request)
         if errors:
             od = {'errors': errors}
@@ -4438,7 +4458,7 @@ class Ontologies(Endpoints):
                     # and the raw triples (for now)
                     # TODO obviously we need to be deriving from the heads of various perspectives, but we aren't there yet
                     # for now we pull everything from the triples table
-                    curies = self.queries.getGroupCuries(group)  # TODO derive from spec if spec has rules for it
+                    curies = self.getGroupCuries2(group)  # TODO derive from spec if spec has rules for it
                     graph_rows = self.queries.generateOntologyFromSpec(spec_uri)
                     if not graph_rows:
                         abort(404)
