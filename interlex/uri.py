@@ -75,6 +75,7 @@ def uriStructure():
         '*<path:dns_path>.<extension>': '<path:dns_path>.<extension>',
         '*dns_versions': 'versions',
         '*<record_combined_identity>': '<record_combined_identity>',
+        '*<record_combined_identity>.<extension>': '<record_combined_identity>.<extension>',
         '*dns_ont_version': 'version',
         '*uris_ont': 'uris',
         '*uris_version': 'version',
@@ -178,7 +179,7 @@ def uriStructure():
         '<review>':            [None, 'vote'],
         '*ops-pull':           ['merge', 'close', 'reopen', 'lock'],
         '*ilx_pattern':        [None, 'other', '*versions'],  # FIXME this is now doing a stupid redirect to ilx_pattern/ >_<
-        '*versions':           [None, '<record_combined_identity>'],  # FIXME rci naming FIXME also this can be top level too /u/record-combined/{id}
+        '*versions':           [None, '<record_combined_identity>', '<record_combined_identity>.<extension>'],  # FIXME rci naming FIXME also this can be top level too /u/record-combined/{id}
         '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
         '<other_group_diff>':  basic + ['lexical'] + branches,
         'lexical':             ['<label>'],
@@ -200,7 +201,7 @@ def uriStructure():
         'dns':                 ['<dns_host>'],
         '<dns_host>':          ['*<path:dns_path>', '*<path:dns_path>.<extension>'],
         '*<path:dns_path>':    [None, '*dns_versions'],
-        '*dns_versions':       [None, '*<record_combined_identity>'],
+        '*dns_versions':       [None, '*<record_combined_identity>', '*<record_combined_identity>.<extension>'],
 
         '*dns_ont':            ['<dns_ont_host>'],
         '<dns_ont_host>':      ['*<path:dns_ontpath>'],

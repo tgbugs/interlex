@@ -348,6 +348,7 @@ class Endpoints(EndBase):
             '*versions': self.versions,
             #'*versions_': self.versions,
             '<record_combined_identity>': self.get_version,
+            '<record_combined_identity>.<extension>': self.get_version,
 
             #ilx_get: self.ilx_get,
             '*ilx_get': self.ilx,
@@ -355,6 +356,7 @@ class Endpoints(EndBase):
             'dns': self.dns,
             '*dns_versions': self.dns_versions,
             '*<record_combined_identity>': self.dns_get_version,
+            '*<record_combined_identity>.<extension>': self.get_version,
 
             'lexical': self.lexical,
             'readable': self.readable,
@@ -432,7 +434,8 @@ class Endpoints(EndBase):
         if not PREFIXES:  # we get the base elsewhere
             PREFIXES = default
         #log.debug(PREFIXES)
-        graph = makeGraph(group + '_curies_helper', prefixes=PREFIXES if PREFIXES else default_prefixes).g
+        graph = OntGraph(bind_namespaces='none')
+        graph.namespace_manager.populate_from(PREFIXES if PREFIXES else default_prefixes)
         return PREFIXES, graph
 
     def build_reference_name(self, group, path):
@@ -1104,7 +1107,7 @@ class Endpoints(EndBase):
         vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(uri, snr, ttsr, tsr, trr)
         return json.dumps(resp), 200, ctaj
 
-    def _get_ver(self, group, uri, record_combined_identity):
+    def _get_ver(self, group, uri, record_combined_identity, extension=None):
         try:
             rci = bytes.fromhex(record_combined_identity)
         except ValueError:
@@ -1144,16 +1147,16 @@ class Endpoints(EndBase):
         return self._vers(group, uri)
 
     @basic
-    def dns_get_version(self, group, dns_host, dns_path, record_combined_identity):
+    def dns_get_version(self, group, dns_host, dns_path, record_combined_identity, extension=None):
         uri = f'http://{dns_host}/{dns_path}'
-        return self._get_ver(group, uri, record_combined_identity)
+        return self._get_ver(group, uri, record_combined_identity, extension)
 
     @basic
-    def get_version(self, group, frag_pref_id, record_combined_identity):
+    def get_version(self, group, frag_pref_id, record_combined_identity, extension=None):
         # FIXME TODO variant with no deps on frag pref just return whatever is at the id
         # FIXME TODO group ...
         uri = f'http://uri.interlex.org/base/{frag_pref_id}'
-        return self._get_ver(group, uri, record_combined_identity)
+        return self._get_ver(group, uri, record_combined_identity, extension)
 
     @basic
     def dns(self, group, dns_host, dns_path, extension=None):
@@ -1319,7 +1322,7 @@ class Endpoints(EndBase):
                 return f'Curie exists\n{e.orig.pgerror}', 409  # conflict
                 return f'Curie exists\n{e.args[0]}', 409  # conflict
         else:
-            PREFIXES, g = self.getGroupCuries(group)
+            PREFIXES, g = self.getGroupCuries(group, default={})
 
         return json.dumps(PREFIXES), 200, ctaj
 
