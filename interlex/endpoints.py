@@ -2979,6 +2979,8 @@ class Priv(EndBase):
 
     _start_email_verify = Ops._start_email_verify
 
+    getGroupCuries2 = Endpoints.getGroupCuries2
+
     def get_func(self, nodes):
         mapping = {
             'logout': self.logout,
