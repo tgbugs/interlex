@@ -4335,6 +4335,16 @@ class Ontologies(Endpoints):
             if sn == se:
                 abort(422, 'operation would accomplish nothing')
 
+            if request.host != self.reference_host:
+                bads = []
+                for _s in _sa:
+                    if request.host in _s:
+                        bads.append(_s)
+                if bads:
+                    nl = '\n'
+                    msg = f'{request.host} does not match {self.reference_host} for {nl.join(bads)}'
+                    abort(422, msg)
+
             subjects = sorted(sn)
             title = j['title'] if 'title' in j else existing_title
             if title is None:
