@@ -4298,9 +4298,17 @@ class Ontologies(Endpoints):
 
             # FIXME beware uri host mismatch
             spec_uri = request.url  # FIXME TODO getGraphByIdentity
+            # FIXME also beware uri scheme mismatch
+            if spec_uri.startswith('https://'):
+                spec_uri = 'http' + spec_uri[5:]
+
             trows = list(self.queries.getGraphByName(spec_uri))
+            if not trows:
+                abort(404)
+
             te = TripleExporter()
             existing_graph = OntGraph().populate_from_triples((te.triple(*r) for r in trows))
+            existing_title = None
             for s, o in existing_graph[:dc.title:]:
                 existing_title = str(o)
             existing_subjects = [str(s) for i, s in existing_graph[:ilxtr['include-subject']:]]
@@ -4327,6 +4335,11 @@ class Ontologies(Endpoints):
 
             subjects = sorted(sn)
             title = j['title'] if 'title' in j else existing_title
+            if title is None:
+                msg = f'{spec_uri} missing title and no title provided'
+                log.critical(msg)
+                abort(422, msg)
+
             graph = from_title_subjects_ontspec(spec_uri, title, subjects)
             dout = ingest_ontspec(graph, session=self.session)
             head_identity = dout['graph_combined_local_conventions_identity']
