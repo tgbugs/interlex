@@ -217,7 +217,7 @@ class TripleRender:
             s, p, o = triple
             return gsortkey(s), psortkey(p), gsortkey(o)
 
-        trips = (tuple(atag(e, e.n3(graph.namespace_manager))
+        trips = (tuple(atag(e, e.n3(graph.namespace_manager).strip('<>'))
                        if isinstance(e, rdflib.URIRef) and e.startswith('http')
                        else str(e)
                        for e in t)
