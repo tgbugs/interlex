@@ -4299,10 +4299,10 @@ class Ontologies(Endpoints):
                 abort(422, 'request missing both "add" and "del" properties')
 
             # FIXME beware uri host mismatch
-            spec_uri = request.url  # FIXME TODO getGraphByIdentity
             # FIXME also beware uri scheme mismatch
-            if spec_uri.startswith('https://'):
-                spec_uri = 'http' + spec_uri[5:]
+            # FIXME TODO getGraphByIdentity
+            opfn = '/' + os.path.join(ont_path, filename)
+            spec_uri = f'http://{self.reference_host}/{group}/ontologies/uris{opfn}/spec'
 
             trows = list(self.queries.getGraphByName(spec_uri))
             if not trows:
