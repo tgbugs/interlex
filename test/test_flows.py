@@ -629,6 +629,7 @@ def combinatorics():
 
             headers = {}
             if scen_type == 'reg' and scen['register'] is not None:
+                # FIXME TODO test with aspopup=true
                 # FIXME this isn't quite set up correctly for testing these
                 if scen['register'].startswith('orcid-first'):
                     # 1

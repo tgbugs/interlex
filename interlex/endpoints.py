@@ -1870,13 +1870,16 @@ class Ops(EndBase):
                 for _k in _omsafe:
                     orcid_meta_safe[_k] = orcid_meta[_k]
 
+                _no_acct_code = 412
                 response = {
-                    'code': 302,
+                    'code': _no_acct_code,
                     'orcid_meta': orcid_meta_safe,
                     'redirect': reiri,
                 }
-                return return_page(data=response, status=302)
+                return return_page(data=response, status=_no_acct_code)
             else:
+                # this remains 302 instead of 412 because it naturally
+                # redirects to the next step for account creation
                 return redirect(reiri, code=302)
 
         else:
@@ -1935,12 +1938,13 @@ class Ops(EndBase):
         # read from auth at start and isolate somewhere outside this class
         orcid_meta = self._orcid_landing()
         orcid, group_resp, existing_orcid_meta = self._orcid_check_already(orcid_meta)  # FIXME ideally we wouldn't have to do this ... and just handle the error but ...
+        _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
 
         if group_resp:
             self._orcid_login(orcid, orcid_meta['id_token'], group_resp)
             group_row = group_resp[0]
             groupname = group_row.groupname
-            if _param_popup in request.args and request.args[_param_popup].lower() == 'true':
+            if _dopop:
                 _omsafe = 'orcid', 'name'
                 orcid_meta_safe = {}
                 for _k in _omsafe:
@@ -1970,7 +1974,23 @@ class Ops(EndBase):
             if freiri:
                 reiri += ('&freiri=' + freiri)
 
-        return redirect(reiri, code=302)  # 302 more compat when responding to a get
+        if _dopop:
+            _omsafe = 'orcid', 'name'
+            orcid_meta_safe = {}
+            for _k in _omsafe:
+                orcid_meta_safe[_k] = orcid_meta[_k]
+
+            _no_acct_code = 412
+            response = {
+                'code': _no_acct_code,
+                'orcid_meta': orcid_meta_safe,
+                'redirect': reiri,
+            }
+            return return_page(data=response, status=_no_acct_code)
+        else:
+            # this remains 302 instead of 412 because it naturally
+            # redirects to the next step for account creation
+            return redirect(reiri, code=302)  # 302 more compat when responding to a get
 
     def user_new(self):
         ''' updated flow theory
