@@ -4530,6 +4530,35 @@ class Ontologies(Endpoints):
 
                 return tripleRender(request, graph, group, None, None, tuple(), title, ontid=ont_uri, redirect=False, **tr_kwargs)
 
+            elif not (uris or dns or spec or from_ilx):
+                if filename:
+                    opfn = os.path.join(ont_path, filename)
+                else:
+                    opfn = ont_path
+
+                opfn = 'ontologies/' + opfn
+
+                scheme = 'http'  # FIXME TODO ... still need to determine
+                if filename == 'spec' and not spec:
+                    abort(500, 'a spec that is not a spec?')
+
+                ont_uri = f'{scheme}://{self.reference_host}/{group}/{opfn}'
+                # TODO consider an early check to see if we even have the name?
+                curies = {p: n for p, n in self.queries.getCuriesByName(ont_uri)}
+                graph_rows = self.queries.getGraphByName(ont_uri)
+                graph = OntGraph()
+                graph.namespace_manager.populate_from(curies)
+                te = TripleExporter()
+                for r in graph_rows:
+                    graph.add(te.triple(*r))
+
+                tr_kwargs = {}
+                tr_kwargs['simple'] = True
+                title = 'TODO derive from dc:title or the ontologies table'
+                # FIXME TODO this is not done yet ... it is also where
+                # we dispatch for interlex builtin ontologies
+                return tripleRender(request, graph, group, None, None, tuple(), title, ontid=ont_uri, redirect=False, **tr_kwargs)
+
             else:
                 pass
 
