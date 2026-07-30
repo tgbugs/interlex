@@ -592,7 +592,6 @@ class TestRoutes(RouteTester, unittest.TestCase):
         finally:
             endpoints._reset_mock = False
 
-
     def test_query_transitive(self):
         sps = (
             #(False, 'UBERON:0000955', 'BFO:0000050'),
@@ -686,6 +685,48 @@ class TestRoutes(RouteTester, unittest.TestCase):
         hrm = [r.data for r in (resp1, resp2, resp3, resp4, resp5)]
         breakpoint()
 
+    def test_discussion_flow_00_post(self):
+        self.app.debug = True
+        upcs = (
+            self.test_post_user_new(),
+            self.test_post_user_new(),)
+
+        groups = 'base', 'tgbugs', *[u for u, _, _ in upcs]
+        urls = (
+            f'{self.prefix}/{group}/ilx_0101431/discussion',
+            f'{self.prefix}/{group}/dns/some/path/to/thing.ttl/discussion',  # FIXME TODO what if something ends with discussion/discussion ....
+        )
+        bads = []
+        for user, pw, client in upcs:
+            for group in groups:
+                for url in urls:
+                    data = {'text': f'this is a comment on :url {url} for :group {group} by :user {user}'}
+                    resp = client.post(url, json=data)
+                    if resp.status_code >= 400:
+                        bads.append(resp)
+
+        assert not bads, bads
+
+    def test_discussion_flow_01_get(self):
+        self.app.debug = True
+        client = self.app.test_client()
+        groups = ('base',)
+        urls = (
+            f'{self.prefix}/{group}/ilx_0101431/discussion',
+            f'{self.prefix}/{group}/dns/some/path/to/thing.ttl/discussion',
+        )
+        bads = []
+        for group in groups:
+            for url in urls:
+                resp = self.client.get(url)
+                if resp.status_code >= 400:
+                    bads.append(resp)
+
+        # cross group behavior
+        # all groups
+        # current group
+        # response structure
+        assert not bads, bads
 
 class TestApiDocs(RouteTester, unittest.TestCase):
     def test_docs(self):
