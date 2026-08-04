@@ -860,6 +860,8 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
     def test_pull_04_merge(self):
         bads = []
+        group_clients = {g: c for g, _, c in self._pull_upcs}
+        headers = {'Content-Type': 'application/json'}
         for group, _, client in self._pull_upcs:
             pull_url = f'{self.prefix}/{group}/pulls'
             resp = client.get(pull_url)
@@ -867,8 +869,17 @@ class TestRoutes(RouteTester, unittest.TestCase):
                 for pr in resp.json['records']:
                     data = {'expected-from-identity': pr['from-identity'],
                             'expected-to-identity': pr['to-identity'],}
+
+                    fail_client = group_clients[pr['from-groupname']]
+                    assert pr['from-groupname'] != group
+                    resp0 = fail_client.post(pr['url'].replace(group, pr['from-groupname']) + '/ops/merge',
+                                             headers=headers, json=data)
+                    if resp0.status_code != 401:
+                        bads.append((resp, resp0))
+
                     assert pr['to-groupname'] == group
-                    resp1 = client.post(pr['url'] + '/ops/merge', headers={'Content-Type': 'application/json'}, json=data)
+                    resp1 = client.post(pr['url'] + '/ops/merge',
+                                        headers=headers, json=data)
                     if resp1.status_code >= 400:
                         bads.append((resp, resp1))
 

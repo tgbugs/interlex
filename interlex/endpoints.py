@@ -4334,7 +4334,17 @@ class Pulls(EndBase):
         expected_from_identity = bytes.fromhex(data[fik])
         expected_to_identity = bytes.fromhex(data[tik])
         dbstuff = Stuff(self.session)
-        dbstuff.mergePull(acting_user, pull, expected_from_identity, expected_to_identity)
+        try:
+            dbstuff.mergePull(acting_user, pull, expected_from_identity, expected_to_identity)
+        except sa.exc.InternalError as e:
+            if (e.orig.diag.source_function == 'exec_stmt_raise' and
+                e.orig.diag.context.startswith('PL/pgSQL function mergepull(') and
+                e.orig.diag.message_primary.startswith('pull request was not merged due to bad user permissions')):
+                abort(401, e.orig.diag.message_primary)
+            else:
+                log.exception(e)
+                abort(500, 'something went wrong')
+
         self.session.commit()
         # TODO redirect to the newly merged term page?
         return 'ok', 200
