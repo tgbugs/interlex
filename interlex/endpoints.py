@@ -3891,6 +3891,11 @@ class Priv(EndBase):
     def pull_new(self, group, db=None):
         # XXX major priority
 
+        # make sure groups exist
+        # make sure perspectives exist
+        # make sure there is an explicit variant for the source perspective
+        # make sure the variants are different between source and target
+
         # expected data
         sk = 'subject'
         gfk = 'group-from'
@@ -3929,7 +3934,6 @@ class Priv(EndBase):
             # FIXME TODO json response
             abort(422, msg)
 
-
         if pnfk in data:
             pnf = data[pnfk]
         else:
@@ -3944,6 +3948,16 @@ class Priv(EndBase):
         try:
             nid = dbstuff.newPull(s, gf, gt, pnf, pnt)
             self.session.commit()
+        except sa.exc.IntegrityError as e:
+            if (e.orig.diag.source_function == 'ExecConstraints' and
+                e.orig.diag.message_primary == 'null value in column "original_to_identity" of relation "pull_requests" violates not-null constraint'):
+                # FIXME TODO probably need better/clearer handling in this case
+                # FIXME TODO of course this becomes annoying because it makes it
+                # harder to test since the other user must already have a different variant
+                abort(409, 'no need to submit a pull request in this case')
+            else:
+                log.exception(e)
+                abort(500, 'something went wrong')
         except sa.exc.InternalError as e:
             if (e.orig.diag.source_function == 'exec_stmt_raise' and
                 e.orig.diag.context.startswith('PL/pgSQL function newpull(uri,text,text,text,text)') and
@@ -3953,11 +3967,13 @@ class Priv(EndBase):
                 log.exception(e)
                 abort(500, 'something went wrong')
 
-        # make sure groups exist
-        # make sure perspectives exist
-        # make sure there is an explicit variant for the source perspective
-        # make sure the variants are different between source and target
-        return 'TODO', 501
+        pull_id, = nid[0]
+        reiri = f'{request.scheme}://{request.host}/{group}/pulls/{pull_id}'
+        if 'application/json' in dict(request.accept_mimetypes):
+            response = {'code': 303, 'redirect': reiri,}
+            return json.dumps(response), 303, {**ctaj, 'Location': reiri,}
+        else:
+            return redirect(reiri, code=303)
 
     _type_curies = [  # FIXME hardcoded
         'owl:Class',

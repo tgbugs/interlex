@@ -792,15 +792,19 @@ class TestRoutes(RouteTester, unittest.TestCase):
             # FIXME should we allow this case where a readable might not be defined at all? I think we need to ban it ???
             # well look at that somehow i already handled this case too ... maybe by accident?
             #add_t = s, f'http://uri.interlex.org/base/readable/predicate', {'value': f'test for {group1}', 'type': 'literal',}
-            add_t = s, f'http://uri.interlex.org/base/readable/synonym', {'value': f'test for {group1}', 'type': 'literal',}
-            resp1 = client.patch(url, headers={'Content-Type': 'application/json'}, json={'add': [add_t,],})
-            if resp1.status_code >= 400:
-                bads.append(resp1)
-                continue
-            for group2 in groups:
-                url = f'{self.prefix}/{group1}/priv/pull-new'
-                pd = make_pull_data(s, group1, group2)
-                resp = client.post(url, json=pd)
+
+            for group2, _, client2 in upcs:
+                s2 = s.replace(group1, group2)
+                url2 = url.replace(group1, group2)
+                add_t = s2, f'http://uri.interlex.org/base/readable/synonym', {'value': f'test for {group2}', 'type': 'literal',}
+                resp1 = client2.patch(url2, headers={'Content-Type': 'application/json'}, json={'add': [add_t,],})
+                if resp1.status_code >= 400:
+                    bads.append(resp1)
+                    continue
+
+                pull_url = f'{self.prefix}/{group2}/priv/pull-new'
+                pd = make_pull_data(s2, group2, group1)
+                resp = client2.post(pull_url, json=pd)
                 if group1 == group2:
                     # we expect the 409 here
                     if resp.status_code != 409:
