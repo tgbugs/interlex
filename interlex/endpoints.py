@@ -4258,13 +4258,15 @@ class Pulls(EndBase):
             'from-groupname': r.from_groupname,
             'from-pers-name': r.from_pers_name,
             'from-original-identity': r.original_from_identity.hex(),
+            'from-identity': r.from_identity.hex(),
             'to-groupname': r.to_groupname,
             'to-pers-name': r.to_pers_name,
             'to-original-identity': r.original_to_identity.hex(),
+            'to-identity': r.to_identity.hex(),
         }
         vurib = rec['subject'].replace(reference_host, request.host) + '/versions/'
-        rec['from-variant-uri'] = vurib + rec['from-original-identity']
-        rec['to-variant-uri'] = vurib + rec['to-original-identity']
+        rec['from-variant-uri'] = vurib + rec['from-identity']
+        rec['to-variant-uri'] = vurib + rec['to-identity']
         return rec
 
     @basic
@@ -4312,12 +4314,30 @@ class Pulls(EndBase):
 
     @basic
     def merge(self, group, pull):
-        dbstuff = Stuff(self.session)
         # FIXME TODO curator permissions need to work here
         # and we need a record of who accepted the pull on behalf of a group
         acting_user = fl.current_user.groupname
-        dbstuff.mergePull(acting_user, group, pull)
-        return 'TODO', 501
+        data = request.json
+        fik = 'expected-from-identity'
+        tik = 'expected-to-identity'
+        errors = []
+        if fik not in data:
+            errors.append(f'missing {fik!r}')
+
+        if tik not in data:
+            errors.append(f'missing {tik!r}')
+
+        if errors:
+            msg = '\n'.join(errors)
+            abort(422, msg)
+
+        expected_from_identity = bytes.fromhex(data[fik])
+        expected_to_identity = bytes.fromhex(data[tik])
+        dbstuff = Stuff(self.session)
+        dbstuff.mergePull(acting_user, pull, expected_from_identity, expected_to_identity)
+        self.session.commit()
+        # TODO redirect to the newly merged term page?
+        return 'ok', 200
 
     @basic
     def close(self, group, pull):

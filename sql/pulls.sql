@@ -154,6 +154,51 @@ RETURN newid;
 END;
 $$ language plpgsql;
 
+CREATE OR REPLACE FUNCTION mergePull(acting_groupname text, pull_id integer, expected_from_id bytea, expected_to_id bytea) RETURNS VOID AS $$
+DECLARE
+uid_acting integer;
+pr_subject uri;
+to_pers_id integer;
+ok_role group_role;
+to_group integer;
+BEGIN
+
+uid_acting := idFromUsername(acting_groupname);
+
+-- FIXME TODO this will work but if there is a failure it will be hard to know exactly what went wrong
+-- so we will want to update the process so that there are more granular error messages
+SELECT pt.id, prs.subject, up.user_role, pt.group_id INTO to_pers_id, pr_subject, ok_role, to_group -- we use pt.id because pht might join empty if no perspective head is set
+FROM pull_requests AS prs
+-- JOIN perspectives AS pf ON pf.id = prs.from_perspective -- TODO we might want this to prevent merging from banned users?
+JOIN perspectives AS pt ON pt.id = prs.to_perspective -- TODO ... perspective level permissions instead of just group level?
+-- FIXME only matters when acting_group != to_group
+LEFT OUTER JOIN user_permissions AS up ON up.group_id = pt.group_id AND up.user_id = uid_acting AND up.user_role < 'view'
+JOIN perspective_heads AS phf ON prs.subject = phf.subject AND prs.from_perspective = phf.perspective_id AND phf.head_identity = expected_from_id
+LEFT OUTER JOIN perspective_heads AS pht ON prs.subject = pht.subject AND prs.to_perspective = pht.perspective_id AND pht.head_identity = expected_to_id
+-- FIXME TODO see if this is too strict, we don't want to merge things still in review or that are drafts
+WHERE prs.id = pull_id AND prs.status = 'pending';
+
+IF to_group != uid_acting AND ok_role IS NULL THEN
+  RAISE EXCEPTION 'pull request was not merged due to bad user permissions pull id is %', pull_id;
+ELSIF pr_subject IS NOT NULL THEN
+
+UPDATE perspective_heads
+SET head_identity = expected_from_id
+WHERE perspective_id = to_pers_id
+AND   subject = pr_subject;
+
+UPDATE pull_requests
+SET acting_user = uid_acting,
+    status = 'merged'
+WHERE id = pull_id;
+
+ELSE
+  RAISE EXCEPTION 'pull request was not merged for some reason pull id is %', pull_id;
+END IF;
+
+END;
+$$ language plpgsql;
+
 /*
 for group perspectives and user perspectives the default
 without being in this table is the owner(s)

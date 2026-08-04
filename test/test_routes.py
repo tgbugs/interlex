@@ -829,7 +829,20 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         assert not bads, bads
 
-    def test_pull_02_pull(self):
+    def test_pull_02_mypulls(self):
+        bads = []
+        for group, _, client in self._pull_upcs:
+            pull_url = f'{self.prefix}/{group}/pulls/submitted'  # FIXME rename to acting or active or something?
+            resp = client.get(pull_url)
+            if resp.status_code >= 400:
+                bads.append(resp)
+
+        if bads:
+            breakpoint()
+
+        assert not bads, bads
+
+    def test_pull_03_pull(self):
         bads = []
         for group, _, client in self._pull_upcs:
             pull_url = f'{self.prefix}/{group}/pulls'
@@ -838,20 +851,26 @@ class TestRoutes(RouteTester, unittest.TestCase):
                 for pr in resp.json['records']:
                     resp1 = client.get(pr['url'])
                     if resp1.status_code >= 400:
-                        bads.append(resp)
+                        bads.append((resp, resp1))
 
         if bads:
             breakpoint()
 
         assert not bads, bads
 
-    def test_pull_03_mypulls(self):
+    def test_pull_04_merge(self):
         bads = []
         for group, _, client in self._pull_upcs:
-            pull_url = f'{self.prefix}/{group}/pulls/submitted'
+            pull_url = f'{self.prefix}/{group}/pulls'
             resp = client.get(pull_url)
-            if resp.status_code >= 400:
-                bads.append(resp)
+            if resp.status_code < 400:
+                for pr in resp.json['records']:
+                    data = {'expected-from-identity': pr['from-identity'],
+                            'expected-to-identity': pr['to-identity'],}
+                    assert pr['to-groupname'] == group
+                    resp1 = client.post(pr['url'] + '/ops/merge', headers={'Content-Type': 'application/json'}, json=data)
+                    if resp1.status_code >= 400:
+                        bads.append((resp, resp1))
 
         if bads:
             breakpoint()

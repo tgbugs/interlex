@@ -579,13 +579,16 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
     _sql_pulls = '''
 select
 prs.id, prs.subject, prs.created_datetime, prs.status,
-gf.groupname as from_groupname, pf.name as from_pers_name, prs.original_from_identity,
-gt.groupname as to_groupname, pt.name as to_pers_name, prs.original_to_identity
+gf.groupname as from_groupname, pf.name as from_pers_name, prs.original_from_identity, phf.head_identity as from_identity,
+gt.groupname as to_groupname, pt.name as to_pers_name, prs.original_to_identity, pht.head_identity as to_identity
 from pull_requests as prs
 join perspectives as pf on prs.from_perspective = pf.id
 join perspectives as pt on prs.to_perspective = pt.id
 join groups as gf on gf.id = pf.group_id
-join groups as gt on gt.id = pt.group_id'''
+join groups as gt on gt.id = pt.group_id
+join perspective_heads as phf on phf.subject = prs.subject and phf.perspective_id = pf.id
+left outer join perspective_heads as pht on pht.subject = prs.subject and pht.perspective_id = pt.id
+'''
 
     def getPull(self, pull):
         args = dict(pull=pull)
@@ -601,9 +604,19 @@ join groups as g on g.id = acting_user
 where pl.pull_id = :pull order by datetime desc'''
         return list(self.session_execute(sql, args))
 
+    def mergePull(self, acting_user, pull, expected_from_identity, expected_to_identity):
+        args = dict(acting_user=acting_user, pull=pull, efi=expected_from_identity, eti=expected_to_identity)
+        sql = 'SELECT mergePull(:acting_user, :pull, :efi, :eti)'
+        self.session_execute(sql, args)
+
     def getPulls(self, group):
         args = dict(group=group)
-        sql = f'{self._sql_pulls} where gt.groupname = :group'
+        sql = (f'{self._sql_pulls} where gt.groupname = :group'
+               ' or gt.groupname in '
+               '(select g.groupname from groups as g '
+               'join user_permissions as up on up.group_id = g.id and '
+               "up.user_role <= 'curator' and "
+               'up.user_id = (select idFromGroupname(:group)))')
         return list(self.session_execute(sql, args))
 
     def getMyPulls(self, group):
@@ -612,7 +625,7 @@ where pl.pull_id = :pull order by datetime desc'''
         sql = f'''{self._sql_pulls}
 join pull_logs as pl on pl.pull_id = prs.id
 join groups as plu on plu.id = pl.acting_user
-where plu.groupname = :group '''
+where plu.groupname = :group'''
         return list(self.session_execute(sql, args))
 
     def createOntology(self, reference_host, group, path):
