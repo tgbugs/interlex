@@ -1134,8 +1134,8 @@ class Endpoints(EndBase):
 
         out = {'type': 'variant-record',
                'subject': uri,
-               'variant_count': len(variants),
-               'variants': variants,}
+               'record_count': len(variants),
+               'records': variants,}
         breakpoint()
         return json.dumps(out), 200, ctaj
 
@@ -4246,12 +4246,41 @@ class Pulls(EndBase):
         }
         return super().get_func(nodes, mapping=mapping)
 
+    @staticmethod
+    def _rtoj(r, group, request, reference_host):
+        rec = {
+            'type': 'pull-request-record',
+            'url': f'{request.scheme}://{request.host}/{group}/pulls/{r.id}',
+            'subject': r.subject,
+            'submitting-user': r.submitting_groupname,
+            'created-datetime': isoformat(r.created_datetime),
+            'status': r.status,
+            'from-groupname': r.from_groupname,
+            'from-pers-name': r.from_pers_name,
+            'from-original-identity': r.original_from_identity.hex(),
+            'to-groupname': r.to_groupname,
+            'to-pers-name': r.to_pers_name,
+            'to-original-identity': r.original_to_identity.hex(),
+        }
+        vurib = rec['subject'].replace(reference_host, request.host) + '/versions/'
+        rec['from-variant-uri'] = vurib + rec['from-original-identity']
+        rec['to-variant-uri'] = vurib + rec['to-original-identity']
+        return rec
+
     @basic
     def submitted(self, group):
         dbstuff = Stuff(self.session)
         rows = dbstuff.getMyPulls(group)
-        breakpoint()
-        return 'TODO', 501
+        prs = []
+        for row in rows:
+            prs.append(self._rtoj(row, group, request, self.reference_host))
+
+        out = {
+            'type': 'pull-requests-record',
+            'record_count': len(prs),
+            'records': prs,
+        }
+        return json.dumps(out), 200, ctaj
 
     @basic
     def pulls(self, group):
@@ -4259,15 +4288,25 @@ class Pulls(EndBase):
         # is at least curator
         dbstuff = Stuff(self.session)
         rows = dbstuff.getPulls(group)
-        breakpoint()
-        return 'TODO', 501
+        prs = []
+        for row in rows:
+            prs.append(self._rtoj(row, group, request, self.reference_host))
+
+        out = {
+            'type': 'pull-requests-record',
+            'record_count': len(prs),
+            'records': prs,
+        }
+        return json.dumps(out), 200, ctaj
 
     @basic
     def pull(self, group, pull):
         dbstuff = Stuff(self.session)
         rows = dbstuff.getPull(pull)
-        breakpoint()
-        return 'TODO', 501
+        row = rows[0]
+        rec = self._rtoj(row, group, request, self.reference_host)
+        # TODO we need additional things like conversation etc.
+        return json.dumps(rec), 200, ctaj
 
     @basic
     def merge(self, group, pull):
