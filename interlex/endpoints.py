@@ -4242,15 +4242,31 @@ class Pulls(EndBase):
             'close': self.close,
             'reopen': self.reopen,
             'lock': self.lock,
+            'submitted': self.submitted,
         }
         return super().get_func(nodes, mapping=mapping)
 
     @basic
+    def submitted(self, group):
+        dbstuff = Stuff(self.session)
+        rows = dbstuff.getMyPulls(group)
+        breakpoint()
+        return 'TODO', 501
+
+    @basic
     def pulls(self, group):
+        # join with pulls against perspectives where the user role
+        # is at least curator
+        dbstuff = Stuff(self.session)
+        rows = dbstuff.getPulls(group)
+        breakpoint()
         return 'TODO', 501
 
     @basic
     def pull(self, group, pull):
+        dbstuff = Stuff(self.session)
+        rows = dbstuff.getPull(pull)
+        breakpoint()
         return 'TODO', 501
 
     @basic

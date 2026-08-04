@@ -173,7 +173,7 @@ def uriStructure():
                                 ],
         'role':                [None, '<user>'],
         'role-other':          [None, '<other_role_group>'],  # if the user wants to leave an existing role this is the only way they can do it
-        'pulls':               [None, '<pull>'],
+        'pulls':               [None, '<pull>', 'submitted'],
         '<pull>':              [None, '*ops-pull', 'review'],
         'reviews':             ['<review>'],
         '<review>':            [None, 'vote'],
@@ -250,6 +250,7 @@ def uriStructure():
                     # pulls
                     'pull-new': ['GET', 'POST'],
                     'pulls': ['GET'],
+                    'submitted': ['GET'],
                     '<pull>': ['GET'],  # I don't think we need to post to that?
                     # pull ops all post only for now
                     'merge': ['POST'],  # FIXME TODO how to implement the various review approval workflows e.g. multi voting

@@ -576,6 +576,34 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
         sql = 'SELECT * FROM newPull(:subject, :from_group, :to_group, :from_pers_name, :to_pers_name)'
         return list(self.session_execute(sql, args))
 
+    _sql_pulls = '''
+select
+prs.id, prs.subject, su.groupname, prs.created_datetime, prs.status,
+gf.groupname, pf.name, prs.original_from_identity,
+gt.groupname, pt.name, prs.original_to_identity
+from pull_requests as prs
+join perspectives as pf on prs.from_perspective = pf.id
+join perspectives as pt on prs.to_perspective = pt.id
+join groups as gf on gf.id = pf.group_id
+join groups as gt on gt.id = pt.group_id
+join groups as su on su.id = prs.submitting_user
+'''
+
+    def getPull(self, pull):
+        args = dict(pull=pull)
+        sql = f'{self._sql_pulls} where prs.id = :pull'
+        return list(self.session_execute(sql, args))
+
+    def getPulls(self, group):
+        args = dict(group=group)
+        sql = f'{self._sql_pulls} where gt.groupname = :group'
+        return list(self.session_execute(sql, args))
+
+    def getMyPulls(self, group):
+        args = dict(group=group)
+        sql = f'{self._sql_pulls} where su.groupname = :group'
+        return list(self.session_execute(sql, args))
+
     def createOntology(self, reference_host, group, path):
         spec = f'http://{reference_host}/{group}/ontologies/uris{path}/spec'
         args = dict(group=group, path=path, spec=spec)
