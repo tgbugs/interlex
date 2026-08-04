@@ -3945,8 +3945,9 @@ class Priv(EndBase):
 
         dbstuff = Stuff(self.session)
         s = subject.replace(f'/{group}/', '/base/')
+        acting_user = fl.current_user.groupname
         try:
-            nid = dbstuff.newPull(s, gf, gt, pnf, pnt)
+            nid = dbstuff.newPull(acting_user, s, gf, gt, pnf, pnt)
             self.session.commit()
         except sa.exc.IntegrityError as e:
             if (e.orig.diag.source_function == 'ExecConstraints' and
@@ -3960,7 +3961,7 @@ class Priv(EndBase):
                 abort(500, 'something went wrong')
         except sa.exc.InternalError as e:
             if (e.orig.diag.source_function == 'exec_stmt_raise' and
-                e.orig.diag.context.startswith('PL/pgSQL function newpull(uri,text,text,text,text)') and
+                e.orig.diag.context.startswith('PL/pgSQL function newpull(') and
                 e.orig.diag.message_primary.startswith('perspective head identities already point to same variant')):
                 abort(409, e.orig.diag.message_primary)
             else:
@@ -4252,7 +4253,6 @@ class Pulls(EndBase):
             'type': 'pull-request-record',
             'url': f'{request.scheme}://{request.host}/{group}/pulls/{r.id}',
             'subject': r.subject,
-            'submitting-user': r.submitting_groupname,
             'created-datetime': isoformat(r.created_datetime),
             'status': r.status,
             'from-groupname': r.from_groupname,
@@ -4305,11 +4305,18 @@ class Pulls(EndBase):
         rows = dbstuff.getPull(pull)
         row = rows[0]
         rec = self._rtoj(row, group, request, self.reference_host)
+        log_rows = dbstuff.getPullLogs(pull)
+        rec['logs'] = [{'acting-user': r.groupname, 'status': r.status, 'datetime': isoformat(r.datetime)} for r in log_rows]
         # TODO we need additional things like conversation etc.
         return json.dumps(rec), 200, ctaj
 
     @basic
     def merge(self, group, pull):
+        dbstuff = Stuff(self.session)
+        # FIXME TODO curator permissions need to work here
+        # and we need a record of who accepted the pull on behalf of a group
+        acting_user = fl.current_user.groupname
+        dbstuff.mergePull(acting_user, group, pull)
         return 'TODO', 501
 
     @basic

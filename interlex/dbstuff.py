@@ -565,33 +565,40 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
         sql = 'SELECT newEntity(:rdf_type, :frag_pref, :label, :exacts, :group)'
         return list(self.session_execute(sql, args))
 
-    def newPull(self, subject, from_group, to_group, from_pers_name=None, to_pers_name=None):
+    def newPull(self, acting_user, subject, from_group, to_group, from_pers_name=None, to_pers_name=None):
         if from_pers_name is None:
             from_pers_name = from_group
 
         if to_pers_name is None:
             to_pers_name = to_group
 
-        args = dict(subject=subject, from_group=from_group, to_group=to_group, from_pers_name=from_pers_name, to_pers_name=to_pers_name)
-        sql = 'SELECT * FROM newPull(:subject, :from_group, :to_group, :from_pers_name, :to_pers_name)'
+        args = dict(acting_user=acting_user, subject=subject, from_group=from_group, to_group=to_group, from_pers_name=from_pers_name, to_pers_name=to_pers_name)
+        sql = 'SELECT * FROM newPull(:acting_user, :subject, :from_group, :to_group, :from_pers_name, :to_pers_name)'
         return list(self.session_execute(sql, args))
 
     _sql_pulls = '''
 select
-prs.id, prs.subject, su.groupname, prs.created_datetime, prs.status,
-gf.groupname, pf.name, prs.original_from_identity,
-gt.groupname, pt.name, prs.original_to_identity
+prs.id, prs.subject, prs.created_datetime, prs.status,
+gf.groupname as from_groupname, pf.name as from_pers_name, prs.original_from_identity,
+gt.groupname as to_groupname, pt.name as to_pers_name, prs.original_to_identity
 from pull_requests as prs
 join perspectives as pf on prs.from_perspective = pf.id
 join perspectives as pt on prs.to_perspective = pt.id
 join groups as gf on gf.id = pf.group_id
-join groups as gt on gt.id = pt.group_id
-join groups as su on su.id = prs.submitting_user
-'''
+join groups as gt on gt.id = pt.group_id'''
 
     def getPull(self, pull):
         args = dict(pull=pull)
         sql = f'{self._sql_pulls} where prs.id = :pull'
+        return list(self.session_execute(sql, args))
+
+    def getPullLogs(self, pull):
+        args = dict(pull=pull)
+        sql = '''
+select g.groupname, status, datetime
+from pull_logs as pl
+join groups as g on g.id = acting_user
+where pl.pull_id = :pull order by datetime desc'''
         return list(self.session_execute(sql, args))
 
     def getPulls(self, group):
@@ -600,8 +607,12 @@ join groups as su on su.id = prs.submitting_user
         return list(self.session_execute(sql, args))
 
     def getMyPulls(self, group):
+        # pulls where user took some action
         args = dict(group=group)
-        sql = f'{self._sql_pulls} where su.groupname = :group'
+        sql = f'''{self._sql_pulls}
+join pull_logs as pl on pl.pull_id = prs.id
+join groups as plu on plu.id = pl.acting_user
+where plu.groupname = :group '''
         return list(self.session_execute(sql, args))
 
     def createOntology(self, reference_host, group, path):

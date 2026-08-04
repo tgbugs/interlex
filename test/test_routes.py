@@ -758,6 +758,8 @@ class TestRoutes(RouteTester, unittest.TestCase):
             self.test_post_user_new(auto_verify=True),
             self.test_post_user_new(auto_verify=True),)
         groups = [u for u, _, _ in upcs]
+        self.__class__._pull_groups = groups
+        self.__class__._pull_upcs = upcs
 
         # we need to test auto pull generation
         # we need to test explicit pull generation
@@ -778,10 +780,6 @@ class TestRoutes(RouteTester, unittest.TestCase):
                 pull_data['perspective-name-to']= pnt
             return pull_data
 
-        #client0 = self.app.test_client()
-        #token = None
-        #suffix = 'ilx_0101431'
-        #s = f'http://uri.interlex.org/base/{suffix}'  # FIXME not guranteed to exist ...
         bads = []
         for group1, _, client in upcs:
             _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=group1)
@@ -818,12 +816,48 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         assert not bads, bads
 
-    def test_pull_01_hrm(self):
-        pass
-    def test_pull_02_hrm(self):
-        pass
-    def test_pull_03_hrm(self):
-        pass
+    def test_pull_01_pulls(self):
+        bads = []
+        for group, _, client in self._pull_upcs:
+            pull_url = f'{self.prefix}/{group}/pulls'
+            resp = client.get(pull_url)
+            if resp.status_code >= 400:
+                bads.append(resp)
+
+        if bads:
+            breakpoint()
+
+        assert not bads, bads
+
+    def test_pull_02_pull(self):
+        bads = []
+        for group, _, client in self._pull_upcs:
+            pull_url = f'{self.prefix}/{group}/pulls'
+            resp = client.get(pull_url)
+            if resp.status_code < 400:
+                for pr in resp.json['records']:
+                    resp1 = client.get(pr['url'])
+                    if resp1.status_code >= 400:
+                        bads.append(resp)
+
+        if bads:
+            breakpoint()
+
+        assert not bads, bads
+
+    def test_pull_03_mypulls(self):
+        bads = []
+        for group, _, client in self._pull_upcs:
+            pull_url = f'{self.prefix}/{group}/pulls/submitted'
+            resp = client.get(pull_url)
+            if resp.status_code >= 400:
+                bads.append(resp)
+
+        if bads:
+            breakpoint()
+
+        assert not bads, bads
+
 
 class TestApiDocs(RouteTester, unittest.TestCase):
     def test_docs(self):
