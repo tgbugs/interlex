@@ -1382,6 +1382,17 @@ and subject = :subject
         sql = self._sql_rec_comb.format(where_start=where_start)
         return list(self.session_execute(sql, args))
 
+    def getPerspectiveHeadsForSubject(self, subject):
+        args = dict(subject=subject)
+        sql = '''
+select * from perspective_heads as ph
+join perspectives as p on ph.perspective_id = p.id
+join groups as g on g.id = p.group_id
+join identities as ids on ph.head_identity = ids.identity
+where ph.subject = :subject
+'''
+        return list(self.session_execute(sql, args))
+
     def getById(self, frag_pref, id, user):
         """ return all triples associated with an interlex id (curie suffix) """
         uri = f'http://uri.interlex.org/base/{frag_pref}_{id}'  # FIXME reference_host from db ...

@@ -1098,7 +1098,50 @@ class Endpoints(EndBase):
 
     @basic
     def other(self, group, frag_pref_id, epoch_verstr_id=None, db=None):
-        abort(501, 'TODO')
+        # TODO select * from perspective triples or something for that term
+        # other groups that have explicit variants ... so the rdf:type triple
+        # for that
+        # we don't have the tables we need for perspectives right now so that
+        # is a prerequsite to be able to make the links need to start recording
+        # perspectives on create and edit because it isn't there now
+        uri = f'http://uri.interlex.org/base/{frag_pref_id}'
+        resp = self.queries.getPerspectiveHeadsForSubject(uri)
+        base_variant = {  # TODO
+            'group': 'base',
+            'name': 'base',
+            'identity-record': 'TODO',  # this is obtained by getting the latest variant from base
+            'triple_count': 'TODO',
+            'uri': uri,
+        }
+        variants = [base_variant]
+        for r in resp:
+            rec = {}
+            rec['group'] = r.groupname
+            rec['name'] = r.name
+            if r.default_group_perspective:
+                rec['uri'] = uri.replace('/base/', f'/{r.groupname}/', 1)
+            else:
+                rec['uri'] = uri.replace('/base/', f'/p/{r.groupname}/{r.name}/', 1)
+                #rec['iri'] = uri.replace('/base/', f'/{r.groupname}/p/{r.name}/', 1)
+
+            #rec['identity-graph']
+            id_rec = r.identity.hex()
+            rec['identity-record'] = id_rec
+            rec['uri-variant'] = rec['uri'] + f'/versions/{id_rec}'
+            rec['triple_count'] = r.record_count
+            rec['first_seen'] = isoformat(r.first_seen.astimezone(timezone.utc))
+            variants.append(rec)
+
+        out = {'type': 'variant-record',
+               'subject': uri,
+               'variant_count': len(variants),
+               'variants': variants,}
+        breakpoint()
+        return json.dumps(out), 200, ctaj
+
+        #self.queries.getVariants(uri)
+        # TODO verver are just all identities, but we specifically want to know the perspectives and might not need the full complement of data for vervar
+        #abort(501, 'TODO')
 
     def _vers(self, group, uri):
         snr, ttsr, tsr, trr = self.queries.getVerVarBySubject(uri)
