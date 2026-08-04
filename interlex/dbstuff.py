@@ -565,6 +565,17 @@ and (ids.type = 'serialization' and irs.p = 'parsedTo' or ids.type != 'serializa
         sql = 'SELECT newEntity(:rdf_type, :frag_pref, :label, :exacts, :group)'
         return list(self.session_execute(sql, args))
 
+    def newPull(self, subject, from_group, to_group, from_pers_name=None, to_pers_name=None):
+        if from_pers_name is None:
+            from_pers_name = from_group
+
+        if to_pers_name is None:
+            to_pers_name = to_group
+
+        args = dict(subject=subject, from_group=from_group, to_group=to_group, from_pers_name=from_pers_name, to_pers_name=to_pers_name)
+        sql = 'SELECT * FROM newPull(:subject, :from_group, :to_group, :from_pers_name, :to_pers_name)'
+        return list(self.session_execute(sql, args))
+
     def createOntology(self, reference_host, group, path):
         spec = f'http://{reference_host}/{group}/ontologies/uris{path}/spec'
         args = dict(group=group, path=path, spec=spec)

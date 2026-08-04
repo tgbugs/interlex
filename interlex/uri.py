@@ -248,6 +248,7 @@ def uriStructure():
                     'mapped':['GET', 'POST'],
 
                     # pulls
+                    'pull-new': ['GET', 'POST'],
                     'pulls': ['GET'],
                     '<pull>': ['GET'],  # I don't think we need to post to that?
                     # pull ops all post only for now

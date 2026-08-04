@@ -70,6 +70,67 @@ CREATE TABLE pull_requests(
        status pull_status_type NOT NULL DEFAULT 'pending' -- set to review if review is required
 );
 
+CREATE OR REPLACE FUNCTION newPull(subject uri, from_group text, to_group text, from_pers_name text, to_pers_name text) RETURNS integer AS $$
+DECLARE
+gid_from integer;
+gid_to integer;
+pers_from integer;
+pers_to integer;
+ofi bytea;
+oti bytea;
+newid integer;
+BEGIN
+gid_from := idFromGroupname(from_group);
+gid_to := idFromGroupname(to_group);
+
+IF (from_pers_name IS NULL) THEN
+pers_from = persFromGroupname(from_group);
+ELSE
+SELECT p.id INTO STRICT pers_from FROM perspectives AS p WHERE p.name = from_pers_name AND p.group_id = gid_from;
+END IF;
+
+IF (to_pers_name IS NULL) THEN
+pers_to = persFromGroupname(to_group);
+ELSE
+SELECT p.id INTO STRICT pers_to FROM perspectives AS p WHERE p.name = to_pers_name AND p.group_id = gid_to;
+END IF;
+
+SELECT ph.head_identity INTO ofi FROM perspective_heads AS ph WHERE ph.perspective_id = pers_from AND ph.subject = newPull.subject;
+SELECT ph.head_identity INTO oti FROM perspective_heads AS ph WHERE ph.perspective_id = pers_to AND ph.subject = newPull.subject;
+
+IF ofi IS NULL AND oti IS NULL THEN
+  RAISE EXCEPTION 'both from and to perspective heads were null % %', from_group, to_group;
+ELSIF ofi IS NULL THEN
+  RAISE EXCEPTION 'from perspective head identity was null there is no variant for %.', from_group;
+ELSIF oti IS NULL THEN
+
+select ids.identity into oti
+from triples as t
+join identity_named_triples_ingest as inti on t.triple_identity = inti.triple_identity
+join identity_relations as irs on irs.o = inti.named_embedded_identity
+join identity_relations as irs1 on irs1.o = irs.o and irs1.s != irs.s
+join identities as ids on ids.identity = irs1.s
+where t.s = newPull.subject and t.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'::uri
+and ids.type = 'record_combined'
+and not ids.identity in (select pref.head_identity from perspective_reflog as pref where pref.subject = newPull.subject)
+order by ids.first_seen desc
+limit 1;
+
+END IF;
+
+IF ofi = oti THEN
+  RAISE EXCEPTION 'perspective head identities already point to same variant %.', ofi;
+END IF;
+
+-- FIXME TODO we may need to accept submitting_user as a separate argument at some point
+INSERT INTO pull_requests (subject, from_perspective, to_perspective, original_from_identity, original_to_identity, submitting_user)
+VALUES (newPull.subject, pers_from, pers_to, ofi, oti, gid_from) RETURNING id INTO newid;
+
+RETURN newid;
+
+END;
+$$ language plpgsql;
+
 /*
 for group perspectives and user perspectives the default
 without being in this table is the owner(s)

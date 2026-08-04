@@ -3846,6 +3846,74 @@ class Priv(EndBase):
 
     @basic
     def pull_new(self, group, db=None):
+        # XXX major priority
+
+        # expected data
+        sk = 'subject'
+        gfk = 'group-from'
+        gtk = 'group-to'
+        pnfk = 'perspective-name-from'
+        pntk = 'perspective-name-to'
+
+        if request.json is None:
+            abort(422, 'application/json required')
+
+        data = request.json
+
+        errors = []
+        if sk not in data:
+            errors.append(f'{sk!r} is a required field')
+        else:
+            subject = data[sk]
+            if subject is None:
+                errors.append(f'{sk!r} cannot be null')
+
+        if gfk not in data:
+            errors.append(f'{gfk!r} is a required field')
+        else:
+            gf = data[gfk]
+            # make sure group-from is group
+            if gf != group:
+                errors.append(f'{gfk!r} != {group!r}')
+
+        if gtk not in data:
+            errors.append(f'{gtk!r} is a required field')
+        else:
+            gt = data[gtk]
+
+        if errors:
+            msg = '\n'.join(errors)
+            # FIXME TODO json response
+            abort(422, msg)
+
+
+        if pnfk in data:
+            pnf = data[pnfk]
+        else:
+            pnf = None  # gf
+        if pntk in data:
+            pnt = data[pntk]
+        else:
+            pnt = None  # gt
+
+        dbstuff = Stuff(self.session)
+        s = subject.replace(f'/{group}/', '/base/')
+        try:
+            nid = dbstuff.newPull(s, gf, gt, pnf, pnt)
+            self.session.commit()
+        except sa.exc.InternalError as e:
+            if (e.orig.diag.source_function == 'exec_stmt_raise' and
+                e.orig.diag.context.startswith('PL/pgSQL function newpull(uri,text,text,text,text)') and
+                e.orig.diag.message_primary.startswith('perspective head identities already point to same variant')):
+                abort(409, e.orig.diag.message_primary)
+            else:
+                log.exception(e)
+                abort(500, 'something went wrong')
+
+        # make sure groups exist
+        # make sure perspectives exist
+        # make sure there is an explicit variant for the source perspective
+        # make sure the variants are different between source and target
         return 'TODO', 501
 
     _type_curies = [  # FIXME hardcoded

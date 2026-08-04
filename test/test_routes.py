@@ -1,3 +1,4 @@
+import base64
 import unittest
 import pytest
 import requests
@@ -5,13 +6,14 @@ import secrets
 import rdflib
 from pyontutils.ontutils import url_blaster
 from pyontutils.core import OntGraph, populateFromJsonLd
-from interlex import endpoints
+from interlex import endpoints, auth as iauth
 from interlex.uri import uriStructure, run_uri
 from interlex.core import make_paths, remove_terminals
 from interlex.dump import Queries
 from interlex.config import ilx_pattern, auth
 from interlex.config import test_host, test_port
 from interlex.ingest import reingest_gclc
+from interlex.dbstuff import Stuff
 from interlex.utils import log
 
 
@@ -233,6 +235,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         url = f'{self.prefix}/{tuser}/priv/{endpoint}'
         resp = client.get(url, headers=headers)
+        assert resp.status_code < 400, 'did you forget to run `python -m interlex.cli ops api-key`?'
         resp1 = client.post(url, json=data, headers={**headers, 'Accept': 'application/json'})
         if resp1.status_code == 303:
             headers = {'Accept': 'text/turtle'}
@@ -547,7 +550,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
     def test_03_group_patch_ontspec(self):
         self.test_01_patch_ontspec('InterLex')
 
-    def test_post_user_new(self):
+    def test_post_user_new(self, auto_verify=False):
         self.app.debug = True
         client = self.app.test_client()
         url = f'{self.prefix}/u/ops/user-new'
@@ -568,6 +571,28 @@ class TestRoutes(RouteTester, unittest.TestCase):
             with self.app.app_context():
                 breakpoint()
                 ''
+
+        if auto_verify:
+            if iauth._orcid_mock_public_key is None:
+                import rsa
+                _pub, _priv = rsa.newkeys(2048)  # keep it short for testing
+                iauth._orcid_mock_public_key = _pub.save_pkcs1()
+                iauth._orcid_mock_private_key = _priv.save_pkcs1()
+
+            user = username
+            test_email = data['email']
+            test_token = base64.urlsafe_b64encode(secrets.token_bytes(24)).decode()
+            with self.app.app_context():
+                session = self.app.extensions['sqlalchemy'].session
+                dbstuff = Stuff(session)
+                dbstuff.email_verify_start(user, test_email, test_token, delay_seconds=0)
+                session.commit()  # must commit so that verify time is > start time, otherwise equal timestamps will prevent completion
+                dbstuff.email_verify_complete(test_token)
+                session.commit()
+
+                orcid_meta = endpoints.Ops._make_orcid_meta(expires_in_seconds=None)
+                endpoints.Ops._insert_orcid_meta(session, orcid_meta, user=user)
+                session.commit()
 
         return username, data['password'], client
 
@@ -692,13 +717,13 @@ class TestRoutes(RouteTester, unittest.TestCase):
             self.test_post_user_new(),)
 
         groups = 'base', 'tgbugs', *[u for u, _, _ in upcs]
-        urls = (
-            f'{self.prefix}/{group}/ilx_0101431/discussion',
-            f'{self.prefix}/{group}/dns/some/path/to/thing.ttl/discussion',  # FIXME TODO what if something ends with discussion/discussion ....
-        )
         bads = []
         for user, pw, client in upcs:
             for group in groups:
+                urls = (
+                    f'{self.prefix}/{group}/ilx_0101431/discussion',
+                    f'{self.prefix}/{group}/dns/some/path/to/thing.ttl/discussion',  # FIXME TODO what if something ends with discussion/discussion ....
+                )
                 for url in urls:
                     data = {'text': f'this is a comment on :url {url} for :group {group} by :user {user}'}
                     resp = client.post(url, json=data)
@@ -711,12 +736,12 @@ class TestRoutes(RouteTester, unittest.TestCase):
         self.app.debug = True
         client = self.app.test_client()
         groups = ('base',)
-        urls = (
-            f'{self.prefix}/{group}/ilx_0101431/discussion',
-            f'{self.prefix}/{group}/dns/some/path/to/thing.ttl/discussion',
-        )
         bads = []
         for group in groups:
+            urls = (
+                f'{self.prefix}/{group}/ilx_0101431/discussion',
+                f'{self.prefix}/{group}/dns/some/path/to/thing.ttl/discussion',
+            )
             for url in urls:
                 resp = self.client.get(url)
                 if resp.status_code >= 400:
@@ -727,6 +752,74 @@ class TestRoutes(RouteTester, unittest.TestCase):
         # current group
         # response structure
         assert not bads, bads
+
+    def test_pull_00_new(self):
+        upcs = (
+            self.test_post_user_new(auto_verify=True),
+            self.test_post_user_new(auto_verify=True),)
+        groups = [u for u, _, _ in upcs]
+
+        # we need to test auto pull generation
+        # we need to test explicit pull generation
+
+        # pulls against terms modify term
+        # pulls against ontology specs modify ontologies
+        # to edit a term in an ontology modify the perspective that ontology tracks
+        self.app.debug = True
+        def make_pull_data(s, gf, gt, pnf=None, pnt=None):
+            pull_data = {
+                'subject': s,
+                'group-from': gf,
+                'group-to': gt,
+            }
+            if pnf:
+                pull_data['perspective-name-from']= pnf
+            if pnt:
+                pull_data['perspective-name-to']= pnt
+            return pull_data
+
+        #client0 = self.app.test_client()
+        #token = None
+        #suffix = 'ilx_0101431'
+        #s = f'http://uri.interlex.org/base/{suffix}'  # FIXME not guranteed to exist ...
+        bads = []
+        for group1, _, client in upcs:
+            _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=group1)
+            url = _resp1.location
+            s = url.replace(self.prefix, 'http://uri.interlex.org')
+            # FIXME TODO how to handle using other user's uris ... lol i even have a not implemented error message for it
+            #add_t = s, 'http://uri.interlex.org/tgbugs/uris/readable/predicate', {'value': f'test for {group1}', 'type': 'literal',}
+            # FIXME should we allow this case where a readable might not be defined at all? I think we need to ban it ???
+            # well look at that somehow i already handled this case too ... maybe by accident?
+            #add_t = s, f'http://uri.interlex.org/base/readable/predicate', {'value': f'test for {group1}', 'type': 'literal',}
+            add_t = s, f'http://uri.interlex.org/base/readable/synonym', {'value': f'test for {group1}', 'type': 'literal',}
+            resp1 = client.patch(url, headers={'Content-Type': 'application/json'}, json={'add': [add_t,],})
+            if resp1.status_code >= 400:
+                bads.append(resp1)
+                continue
+            for group2 in groups:
+                url = f'{self.prefix}/{group1}/priv/pull-new'
+                pd = make_pull_data(s, group1, group2)
+                resp = client.post(url, json=pd)
+                if group1 == group2:
+                    # we expect the 409 here
+                    if resp.status_code != 409:
+                        bads.append(resp)
+                else:
+                    if resp.status_code >= 400:
+                        bads.append(resp)
+
+        if bads:
+            breakpoint()
+
+        assert not bads, bads
+
+    def test_pull_01_hrm(self):
+        pass
+    def test_pull_02_hrm(self):
+        pass
+    def test_pull_03_hrm(self):
+        pass
 
 class TestApiDocs(RouteTester, unittest.TestCase):
     def test_docs(self):
