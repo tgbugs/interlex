@@ -17,6 +17,13 @@ from interlex.dbstuff import Stuff
 from interlex.utils import log
 
 
+if iauth._orcid_mock_public_key is None:
+    import rsa
+    _pub, _priv = rsa.newkeys(2048)  # keep it short for testing
+    iauth._orcid_mock_public_key = _pub.save_pkcs1()
+    iauth._orcid_mock_private_key = _priv.save_pkcs1()
+
+
 def makeTestRoutes(limit=1):
     parent_child, node_methods, path_to_route, path_names = uriStructure()
     groups = 'base', 'tgbugs'  # , 'origin'  # base redirects to default/curated ...
@@ -81,7 +88,7 @@ def makeTestRoutes(limit=1):
 
         '<dns_host>': dns_hosts,
         '*<path:dns_path>': dns_paths,
-        '*<path:dns_path>.<extension>': dns_path_exts,
+        '*<path:dns_path>.<dns_extension>': dns_path_exts,
 
         '<pull>': pulls,
 
@@ -573,12 +580,6 @@ class TestRoutes(RouteTester, unittest.TestCase):
                 ''
 
         if auto_verify:
-            if iauth._orcid_mock_public_key is None:
-                import rsa
-                _pub, _priv = rsa.newkeys(2048)  # keep it short for testing
-                iauth._orcid_mock_public_key = _pub.save_pkcs1()
-                iauth._orcid_mock_private_key = _priv.save_pkcs1()
-
             user = username
             test_email = data['email']
             test_token = base64.urlsafe_b64encode(secrets.token_bytes(24)).decode()
@@ -713,22 +714,30 @@ class TestRoutes(RouteTester, unittest.TestCase):
     def test_discussion_flow_00_post(self):
         self.app.debug = True
         upcs = (
-            self.test_post_user_new(),
-            self.test_post_user_new(),)
+            self.test_post_user_new(auto_verify=True),
+            self.test_post_user_new(auto_verify=True),)
 
         groups = 'base', 'tgbugs', *[u for u, _, _ in upcs]
         bads = []
         for user, pw, client in upcs:
             for group in groups:
-                urls = (
+                urls = (  # FIXME TODO what if something ends with discussion/discussion ....
                     f'{self.prefix}/{group}/ilx_0101431/discussion',
-                    f'{self.prefix}/{group}/dns/some/path/to/thing.ttl/discussion',  # FIXME TODO what if something ends with discussion/discussion ....
+                    f'{self.prefix}/{group}/ontologies/dns/some/path/to/thing-1.ttl/discussion',
+                    f'{self.prefix}/{group}/ontologies/uris/some/path/to/thing-2/discussion',
+                    f'{self.prefix}/{group}/dns/some/path/to/thing-1/discussion',
+                    f'{self.prefix}/{group}/uris/path/to/some/thing-2/discussion',
                 )
                 for url in urls:
                     data = {'text': f'this is a comment on :url {url} for :group {group} by :user {user}'}
                     resp = client.post(url, json=data)
                     if resp.status_code >= 400:
                         bads.append(resp)
+                    elif not resp.json or 'text' not in resp.json:
+                        bads.append(resp)
+
+        if bads:
+            breakpoint()
 
         assert not bads, bads
 
@@ -740,17 +749,25 @@ class TestRoutes(RouteTester, unittest.TestCase):
         for group in groups:
             urls = (
                 f'{self.prefix}/{group}/ilx_0101431/discussion',
-                f'{self.prefix}/{group}/dns/some/path/to/thing.ttl/discussion',
+                f'{self.prefix}/{group}/ontologies/dns/some/path/to/thing-1.ttl/discussion',
+                f'{self.prefix}/{group}/ontologies/uris/some/path/to/thing-2/discussion',
+                f'{self.prefix}/{group}/dns/some/path/to/thing-1/discussion',
+                f'{self.prefix}/{group}/uris/path/to/some/thing-2/discussion',
             )
             for url in urls:
-                resp = self.client.get(url)
+                resp = client.get(url)
                 if resp.status_code >= 400:
+                    bads.append(resp)
+                elif not resp.json or 'records' not in resp.json or 'text' not in resp.json['records'][0]:
                     bads.append(resp)
 
         # cross group behavior
         # all groups
         # current group
         # response structure
+        if bads:
+            breakpoint()
+
         assert not bads, bads
 
     def test_pull_00_new(self):

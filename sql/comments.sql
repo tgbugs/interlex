@@ -28,6 +28,12 @@ CREATE TABLE comment_targets(
        CHECK (iri IS NULL OR ((triple_identity IS NULL) AND (subgraph_identity IS NULL AND subgraph_blank IS NULL))), -- using iri as context for ontology doesn't work because triples might not be in ontologies
        CHECK (triple_identity IS NULL OR (subgraph_identity IS NULL AND subgraph_blank IS NULL)),
        CHECK (context_identity IS NULL OR perspective IS NULL), -- both may be null but both cannot be not null
+       /*
+       FIXME i think a bunch of these constraints are overly restrictive because we want to record
+       the exact variant the comment was made on, the perspective they viewed it through, and the subject
+       even if they are only commenting on the subject in general we want to record the other things as prov
+       target unfortunately has implicit intentionality which is separate from the provenance
+       */
        CHECK ((context_identity IS NULL AND perspective IS NULL) OR
                -- TODO are there cases where an ontology is ingested and has no bound name and no associated iri?
                -- if so then we might want to allow comments on context alone, but mostly i think we want comments
@@ -46,9 +52,9 @@ CREATE TABLE comment_targets(
 );
 
 -- ontology, triple, and subgraph are the ones where it makes sense for them to be scoped to context_identity or perspective
-CREATE UNIQUE INDEX comment_targets_cpi_index ON comment_targets (context_identity, perspective, iri) NULLS NOT DISTINCT;
-CREATE UNIQUE INDEX comment_targets_cpt_index ON comment_targets (context_identity, perspective, triple_identity) NULLS NOT DISTINCT;
-CREATE UNIQUE INDEX comment_targets_cps_index ON comment_targets (context_identity, perspective, subgraph_identity, subgraph_blank) NULLS NOT DISTINCT;
+CREATE UNIQUE INDEX comment_targets_cpi_index ON comment_targets (context_identity, perspective, iri) NULLS NOT DISTINCT WHERE iri IS NOT NULL;
+CREATE UNIQUE INDEX comment_targets_cpt_index ON comment_targets (context_identity, perspective, triple_identity) NULLS NOT DISTINCT WHERE triple_identity IS NOT NULL;
+CREATE UNIQUE INDEX comment_targets_cps_index ON comment_targets (context_identity, perspective, subgraph_identity, subgraph_blank) NULLS NOT DISTINCT WHERE subgraph_identity IS NOT NULL AND subgraph_blank IS NOT NULL;
 /*
 note that perspective ti/si are used to scope comments on inclusion of triples in a perspective
 however if the triple is not currently in the perspective that can cause some confusion, so need

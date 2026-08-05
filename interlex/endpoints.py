@@ -345,6 +345,7 @@ class Endpoints(EndBase):
             'group_': self.group_,
             'ilx': self.ilx,
             'other': self.other,
+            'discussion': self.discussion,
             '*versions': self.versions,
             #'*versions_': self.versions,
             '<record_combined_identity>': self.get_version,
@@ -1190,7 +1191,9 @@ class Endpoints(EndBase):
         return self._vers(group, uri)
 
     @basic
-    def dns_get_version(self, group, dns_host, dns_path, record_combined_identity, extension=None):
+    def dns_get_version(self, group, dns_host, dns_path, record_combined_identity,
+                        #dns_extension=None,
+                        extension=None):
         uri = f'http://{dns_host}/{dns_path}'
         return self._get_ver(group, uri, record_combined_identity, extension)
 
@@ -1202,7 +1205,9 @@ class Endpoints(EndBase):
         return self._get_ver(group, uri, record_combined_identity, extension)
 
     @basic
-    def dns(self, group, dns_host, dns_path, extension=None):
+    def dns(self, group, dns_host, dns_path,
+            #dns_extension=None,
+            extension=None):
         # FIXME TODO perspective head
         subject = f'http://{dns_host}/{dns_path}'
         try:
@@ -1233,6 +1238,94 @@ class Endpoints(EndBase):
 
         return tripleRender(request, graph, group, None, None, tuple(),
                             title, redirect=False, simple=True, internal_links=internal_links)
+
+    @basic
+    def discussion(self, group, frag_pref_id=None, uri_path=None, dns_host=None, dns_path=None, ont_path=None, filename=None, extension=None,
+                   epoch_verstr_id=None, other_group=None,
+                   **kwargs):
+        # FIXME permissions on this are tricky/confusing because you want to be able to
+        # have discussions on other terms but we don't allow post to other user's namespaces
+        # so we likely need to punch a hole for cases like this
+        # we might consider trying to use the /own/ approach for this? but that isn't quite right
+        # it does have a reference to two groups but that is not really what it is for ...
+
+        if epoch_verstr_id is not None or other_group is not None:
+            abort(404)  # FIXME bad routing spec in uris
+
+        if kwargs:
+            breakpoint()
+        #log.debug(dict(fpi=frag_pref_id, up=uri_path, dh=dns_host, dp=dns_path, op=ont_path, fn=filename, kw=kwargs))
+
+        if request.method not in ('POST', 'GET'):
+            abort(405, 'TODO HEAD OPTIONS')
+
+        dbstuff = Stuff(self.session)
+        target_type = 'subject' if ont_path is None else 'ontology'
+
+        ext = f'.{extension}' if extension else ''
+        file = f'/{filename}{ext}' if filename else ''
+        if dns_host:
+            if ont_path:
+                # FIXME scheme issues
+                iri = f'http://{dns_host}/{ont_path}{file}'
+            else:
+                iri = f'http://{dns_host}/{dns_path}{file}'
+        elif uri_path:
+            iri = f'http://{self.reference_host}/{group}/uris/{uri_path}'
+        else:
+            if ont_path:
+                iri = f'http://{self.reference_host}/{group}/ontologies/{ont_path}{file}'
+            elif frag_pref_id:
+                iri = f'http://{self.reference_host}/base/{frag_pref_id}'
+            else:
+                breakpoint()
+                pass
+
+        if request.method == 'POST':
+            user = fl.current_user.groupname
+            data = request.json
+            try:
+                rows = dbstuff.postComment(
+                    user=user,
+                    target_type=target_type,
+                    comment_text=data['text'].strip(),
+                    group=group,
+                    iri=iri,
+                )
+            except Exception as e:
+                log.exception(e)
+                breakpoint()
+                abort(500)
+
+            code = 201
+
+        elif request.method == 'GET':
+            rows = dbstuff.getComments(iri)
+            code = 200
+
+        recs = [
+            {'type': 'comment-record',
+             'id': r.id,
+             'iri': r.iri,
+             'text': r.comment_text,
+             'datetime': isoformat(r.created_datetime),
+             'user': r.username,
+             'group': r.groupname,
+             'perspective-name': r.name,
+             **({'replaced': r.replaced} if r.replaced else {}),
+             **({'replaces': r.replaces} if r.replaces else {}),
+             } for r in rows]
+        out = {'type': 'discussion-record',
+               'record_count': len(recs),
+               'records': recs,}
+        if request.method == 'POST':
+            assert len(recs) == 1, f'oops {len(recs)} != 1'
+            resp = json.dumps(recs[0])
+            self.session.commit()
+        else:
+            resp = json.dumps(out)
+
+        return resp, code, ctaj
 
     @basic
     def lexical(self, group, label, db=None):
@@ -4383,6 +4476,7 @@ class Ontologies(Endpoints):
 
     @basic
     def ontologies_dns_version(self, group, dns_host, ont_path, epoch_verstr_ont, filename_terminal,
+                               #dns_extension=None,
                                extension=None, db=None):
         return self._ontologies_version(group=group,
                                         filename=None,

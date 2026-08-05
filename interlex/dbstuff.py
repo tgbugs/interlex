@@ -628,6 +628,45 @@ join groups as plu on plu.id = pl.acting_user
 where plu.groupname = :group'''
         return list(self.session_execute(sql, args))
 
+    def postComment(self, user, target_type, comment_text, group, iri=None):
+        kwargs = dict(iri=iri)
+        args = dict(user=user, target_type=target_type, comment_text=comment_text, group=group,
+                    **{k: v for k, v in kwargs.items() if v is not None})
+        # FIXME TODO verify that the target is valid via a trigger before insert
+        sql_iri = '''
+with pers as (select id from perspectives as p where p.group_id = idFromGroupname(:group) and p.default_group_perspective = TRUE)
+, maybe_target as (insert into comment_targets (target_type, iri, perspective)
+SELECT :target_type, :iri, p.id FROM pers AS p WHERE NOT EXISTS (select * from comment_targets AS ct2 WHERE ct2.target_type = :target_type AND ct2.iri = :iri AND ct2.perspective = p.id) returning *)
+, this_target as (select * from maybe_target UNION
+select * from comment_targets AS ct3 WHERE ct3.target_type = :target_type AND ct3.iri = :iri AND ct3.perspective in (select id from pers))
+, this_comment as (insert into comments (target, user_id, comment_text)
+SELECT tt.id, idFromUsername(:user), :comment_text FROM this_target AS tt
+returning *)
+select ct.target_type, ct.iri, g.groupname, p.name, u.groupname as username, c.* from this_comment as c join this_target as ct on c.target = ct.id
+left outer join perspectives as p on ct.perspective = p.id
+join groups as g on g.id = p.group_id
+join groups as u on u.id = c.user_id
+'''
+        if iri is not None:
+            sql = sql_iri
+        else:
+            raise NotImplementedError('TODO')
+
+        return list(self.session_execute(sql, args))
+
+    def getComments(self, iri):
+        args = dict(iri=iri)
+        sql = '''select ct.target_type, ct.iri, g.groupname, p.name, u.groupname as username, c.*
+from comment_targets as ct
+join comments as c on c.target = ct.id
+left outer join perspectives as p on ct.perspective = p.id
+join groups as g on g.id = p.group_id
+join groups as u on u.id = c.user_id
+where ct.iri = :iri
+order by c.created_datetime desc
+'''
+        return list(self.session_execute(sql, args))
+
     def createOntology(self, reference_host, group, path):
         spec = f'http://{reference_host}/{group}/ontologies/uris{path}/spec'
         args = dict(group=group, path=path, spec=spec)

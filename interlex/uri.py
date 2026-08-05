@@ -178,7 +178,8 @@ def uriStructure():
         'reviews':             ['<review>'],
         '<review>':            [None, 'vote'],
         '*ops-pull':           ['merge', 'close', 'reopen', 'lock'],
-        '*ilx_pattern':        [None, 'other', '*versions'],  # FIXME this is now doing a stupid redirect to ilx_pattern/ >_<
+        '*ilx_get':            ['discussion'],
+        '*ilx_pattern':        [None, 'other', '*versions', 'discussion'],  # FIXME this is now doing a stupid redirect to ilx_pattern/ >_<
         '*versions':           [None, '<record_combined_identity>', '<record_combined_identity>.<extension>'],  # FIXME rci naming FIXME also this can be top level too /u/record-combined/{id}
         '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
         '<other_group_diff>':  basic + ['lexical'] + branches,
@@ -199,27 +200,31 @@ def uriStructure():
         '<qt_start>':          ['<qt_predicate>'],
 
         'dns':                 ['<dns_host>'],
-        '<dns_host>':          ['*<path:dns_path>', '*<path:dns_path>.<extension>'],
-        '*<path:dns_path>':    [None, '*dns_versions'],
+        '<dns_host>':          ['*<path:dns_path>', '*<path:dns_path>.<dns_extension>'],
+        '*<path:dns_path>':    [None, '*dns_versions', 'discussion'],
         '*dns_versions':       [None, '*<record_combined_identity>', '*<record_combined_identity>.<extension>'],
 
         '*dns_ont':            ['<dns_ont_host>'],
-        '<dns_ont_host>':      ['*<path:dns_ontpath>'],
-        '*<path:dns_ontpath>': [None, '*dns_ont_version'],
+        '<dns_ont_host>':      ['*<path:dns_ontpath>', '*<path:dns_ontpath>.<dns_extension>'],
+        '*<path:dns_ontpath>': [None, '*dns_ont_version', 'discussion'],  # FIXME extension???
+        # dns_ontpath is the only case where we need to allow continuation after the .<extension> because it might be in the external url
+        # for interlex ontologies we do not include the extension in the ontology identifier so paths with .<extension> are terminal
+        '*<path:dns_ontpath>.<dns_extension>': [None, '*dns_ont_version', 'discussion'],
         '*dns_ont_version':    ['<epoch_verstr_ont>'],  # FIXME possibly only epoch/dt for these?
 
         '<path:ont_path>':     intermediate_filename,  # FIXME this would seem to only allow a single extension?
         '*<path:uris_ont_p>':  uris_intermediate_filename,  # FIXME this would seem to only allow a single extension?
         '*uris_ont':           uris_intermediate_filename + ['*<path:uris_ont_p>'],  # FIXME need the ability to dissociate node name from render name
-        '*<uris_filename>':    [None, '*uris_version'] + spec_ext,
+        '*<uris_filename>':    [None, '*uris_version', 'discussion'] + spec_ext,
         '*uris_version':       ['<epoch_verstr_ont>'],
 
-        '<filename>':          [None, 'version'],  # + spec_ext,  # TODO see if we need these, I'm going with no for now XXX not here but ont ilx needs it
+        '<filename>':          [None, 'version', 'discussion'],  # + spec_ext,  # TODO see if we need these, I'm going with no for now XXX not here but ont ilx needs it
         'version':             ['<epoch_verstr_ont>'],
         '<epoch_verstr_ont>':  ['<filename_terminal>', '<filename_terminal>.<extension>'],
         '<filename_terminal>': [None,] + spec_ext,
         'curies':              [None, '<prefix_iri_curie>', '<prefix_iri_curie>.<extension>'],  # external onts can be referenced from here...
         'uris':                ['<path:uri_path>'],  # TODO no ilx_ check here as well as in database
+        '<path:uri_path>':     [None, 'discussion'],
         'own':                 ['<other_group>'],
         'diff':                ['<other_group_diff>'],
         # TODO considerations here
@@ -246,6 +251,9 @@ def uriStructure():
                     '<filename_terminal>':['GET', 'POST'],
                     '<filename_terminal>.<extension>':['GET', 'POST'],
                     'mapped':['GET', 'POST'],
+
+                    # discussion
+                    'discussion': ['GET', 'POST'],
 
                     # pulls
                     'pull-new': ['GET', 'POST'],

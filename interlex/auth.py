@@ -192,8 +192,9 @@ class Auth:
 
     def __init__(self, session, rules_req_auth):
         self.session = session  # this is always needed now
-        self.orcid_openid_jwkc = jwt.PyJWKClient(f'https://{config.orcid_host}/oauth/jwks')
-        self.orcid_openid_sk = self.orcid_openid_jwkc.get_signing_keys()[0]
+        if _orcid_mock_public_key is None:
+            self.orcid_openid_jwkc = jwt.PyJWKClient(f'https://{config.orcid_host}/oauth/jwks')
+            self.orcid_openid_sk = self.orcid_openid_jwkc.get_signing_keys()[0]
 
         # we do need two things to improve this though
         # 1 swap out of this class every 30 mins or something
@@ -282,13 +283,14 @@ class Auth:
         # the openid public key for openid_token is a https://orcid.org/oauth/jwks
         # see also https://orcid.org/.well-known/openid-configuration
 
-        sk = self.orcid_openid_sk
         if _orcid_mock_public_key is None:
-            key = sk.key
+            key = self.orcid_openid_sk.key
+            algo = self.orcid_openid_sk.algorithm_name
         else:
             key = _orcid_mock_public_key
+            algo = 'RS256'
 
-        detok = jwt.decode(openid_token, key, sk.algorithm_name, audience=config.orcid_client_id, leeway=leeway)
+        detok = jwt.decode(openid_token, key, algo, audience=config.orcid_client_id, leeway=leeway)
 
         return detok
 
@@ -626,6 +628,13 @@ class Auth:
             msg = 'more like not implemented correctly amirite'
             raise NotImplementedError(msg)
 
+        punch_case = False
+        if (request.endpoint.startswith('Endpoints.discussion /') or
+            request.endpoint.startswith('Ontologies.discussion /')):
+            # FIXME TODO this is a horrible place to try to punch through
+            # the need_group_perms barrier for a specific endpoint :/
+            punch_case = True
+
         def gvk(k):
             return request.view_args[k] if k in request.view_args else None
 
@@ -638,8 +647,8 @@ class Auth:
                     request_group_other_diff)
                    if rg is not None]
         need_group_perms = [rg for rg in rgroups if rg != auth_user]
-        _read_private = read_might_require_auth  # XXX unfortunately have to start on and turn off
-        if need_group_perms:
+        _read_private = read_might_require_auth and not punch_case  # XXX unfortunately have to start on and turn off
+        if need_group_perms and not punch_case:
             if scope.endswith('-only'):
                 msg = f'token has invalid scope {scope} for other groups'
                 raise self.InvalidScopeError(request, msg)
