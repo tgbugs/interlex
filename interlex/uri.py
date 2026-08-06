@@ -177,7 +177,6 @@ def uriStructure():
         'reviews':             ['<review>'],
         '<review>':            [None, 'vote'],
         '*ops-pull':           ['merge', 'close', 'reopen', 'lock'],
-        '*ilx_get':            ['discussion'],
         '*ilx_pattern':        [None, 'other', '*versions', 'discussion'],  # FIXME this is now doing a stupid redirect to ilx_pattern/ >_<
         '*versions':           [None, '<record_combined_identity>', '<record_combined_identity>.<extension>'],  # FIXME rci naming FIXME also this can be top level too /u/record-combined/{id}
         '<other_group>':       branches,  # no reason to access /group/own/othergroup/ilx_ since identical to /group/ilx_
