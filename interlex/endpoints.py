@@ -357,7 +357,7 @@ class Endpoints(EndBase):
             'dns': self.dns,
             '*dns_versions': self.dns_versions,
             '*<record_combined_identity>': self.dns_get_version,
-            '*<record_combined_identity>.<extension>': self.get_version,
+            '*<record_combined_identity>.<extension>': self.dns_get_version,
 
             'lexical': self.lexical,
             'readable': self.readable,
@@ -1198,9 +1198,7 @@ class Endpoints(EndBase):
         return self._vers(group, uri)
 
     @basic
-    def dns_get_version(self, group, dns_host, dns_path, record_combined_identity,
-                        #dns_extension=None,
-                        extension=None):
+    def dns_get_version(self, group, dns_host, dns_path, record_combined_identity, extension=None):
         uri = f'http://{dns_host}/{dns_path}'
         return self._get_ver(group, uri, record_combined_identity, extension)
 
@@ -1212,9 +1210,7 @@ class Endpoints(EndBase):
         return self._get_ver(group, uri, record_combined_identity, extension)
 
     @basic
-    def dns(self, group, dns_host, dns_path,
-            #dns_extension=None,
-            extension=None):
+    def dns(self, group, dns_host, dns_path, extension=None):
         # FIXME TODO perspective head
         subject = f'http://{dns_host}/{dns_path}'
         try:
@@ -4435,6 +4431,9 @@ class Pulls(EndBase):
     def pull(self, group, pull):
         dbstuff = Stuff(self.session)
         rows = dbstuff.getPull(pull)
+        if not rows:
+            abort(404)
+
         row = rows[0]
         rec = self._rtoj(row, group, request, self.reference_host)
         log_rows = dbstuff.getPullLogs(pull)
@@ -4513,7 +4512,6 @@ class Ontologies(Endpoints):
 
     @basic
     def ontologies_dns_version(self, group, dns_host, ont_path, epoch_verstr_ont, filename_terminal,
-                               #dns_extension=None,
                                extension=None, db=None):
         return self._ontologies_version(group=group,
                                         filename=None,
@@ -4827,7 +4825,7 @@ class Ontologies(Endpoints):
                 # FIXME TODO extension handling is a problem here because the external url might have its own
                 fname = ont_path.rsplit('/')[-1]
                 title = fname  # FIXME TODO
-                if '.' in fname:
+                if '.' in fname and 'extension' not in request.args:
                     _ext = fname.rsplit('.')[-1]
                     if _ext:
                         request.view_args['extension'] = _ext

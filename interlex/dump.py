@@ -1761,7 +1761,7 @@ union
         return list(self.session_execute(sql, args))
 
     def checkPredicates(self, predicates):
-        """ return uris in predicate posiiton that do not have a predicate type """
+        """ return uris in predicate positon that do not have a predicate type """
         args = dict(predicates=tuple(predicates))
         sql = '''select
 s, bool_and(propertyp) from (

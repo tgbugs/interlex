@@ -53,7 +53,6 @@ def makeTestRoutes(limit=1):
     qt_preds = 'rdfs:subClassOf', 'ilx.partOf:',
     dns_hosts = 'purl.obolibrary.org',
     dns_paths = 'obo/UBERON_0000955',
-    dns_path_exts = tuple(f'{p}.{e}' for p in dns_paths for e in extensions)
 
     options = {
         '*ilx_pattern': ilx_patterns,
@@ -88,7 +87,6 @@ def makeTestRoutes(limit=1):
 
         '<dns_host>': dns_hosts,
         '*<path:dns_path>': dns_paths,
-        '*<path:dns_path>.<dns_extension>': dns_path_exts,
 
         '<pull>': pulls,
 
@@ -702,15 +700,24 @@ class TestRoutes(RouteTester, unittest.TestCase):
             endpoints._reset_mock = False
 
     def test_dns(self):
-        url = f'{self.prefix}/base/dns/purl.obolibrary.org/obo/GO_0007275.html?links=internal'
-        resp = self.client.get(url)
+        client = self.client
+
+        url = f'{self.prefix}/base/dns/uri.interlex.org/base/tmp_000000001?extension=html&links=internal'
+        resp = client.get(url)
+
+        url = f'{self.prefix}/base/ontologies/dns/uri.interlex.org/base/ontologies/tmp_000000001?extension=html&links=internal'
+        resp = client.get(url)
         return
 
-        url = f'{self.prefix}/base/dns/purl.obolibrary.org/obo/RO_0002492.html?links=internal'
-        resp = self.client.get(url)
+        url = f'{self.prefix}/base/dns/purl.obolibrary.org/obo/GO_0007275?extension=html&links=internal'
+        resp = client.get(url)
+        return
+
+        url = f'{self.prefix}/base/dns/purl.obolibrary.org/obo/RO_0002492?extension=html&links=internal'
+        resp = client.get(url)
 
         url = f'{self.prefix}/base/dns/purl.obolibrary.org/obo/RO_0002492'
-        resp = self.client.get(url)
+        resp = client.get(url)
 
     def test_ilx_version_rci(self):
         self.app.debug = True

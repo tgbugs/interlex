@@ -72,7 +72,6 @@ def uriStructure():
         '<dns_ont_host>': '<dns_host>',
         '*<path:dns_ontpath>': '<path:ont_path>',
         '*<path:dns_path>': '<path:dns_path>',
-        '*<path:dns_path>.<extension>': '<path:dns_path>.<extension>',
         '*dns_versions': 'versions',
         '*<record_combined_identity>': '<record_combined_identity>',
         '*<record_combined_identity>.<extension>': '<record_combined_identity>.<extension>',
@@ -200,16 +199,15 @@ def uriStructure():
         '<qt_start>':          ['<qt_predicate>'],
 
         'dns':                 ['<dns_host>'],
-        '<dns_host>':          ['*<path:dns_path>', '*<path:dns_path>.<dns_extension>'],
+        '<dns_host>':          ['*<path:dns_path>'],
         '*<path:dns_path>':    [None, '*dns_versions', 'discussion'],
         '*dns_versions':       [None, '*<record_combined_identity>', '*<record_combined_identity>.<extension>'],
 
         '*dns_ont':            ['<dns_ont_host>'],
-        '<dns_ont_host>':      ['*<path:dns_ontpath>', '*<path:dns_ontpath>.<dns_extension>'],
+        '<dns_ont_host>':      ['*<path:dns_ontpath>'],
         '*<path:dns_ontpath>': [None, '*dns_ont_version', 'discussion'],  # FIXME extension???
         # dns_ontpath is the only case where we need to allow continuation after the .<extension> because it might be in the external url
         # for interlex ontologies we do not include the extension in the ontology identifier so paths with .<extension> are terminal
-        '*<path:dns_ontpath>.<dns_extension>': [None, '*dns_ont_version', 'discussion'],
         '*dns_ont_version':    ['<epoch_verstr_ont>'],  # FIXME possibly only epoch/dt for these?
 
         '<path:ont_path>':     intermediate_filename,  # FIXME this would seem to only allow a single extension?

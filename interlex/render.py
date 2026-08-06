@@ -82,7 +82,9 @@ class TripleRender:
         ext_mimetype = None
         extension = (request.view_args['extension'] if
                      'extension' in request.view_args else
-                     None)
+                     (request.args['extension'] if
+                      'extension' in request.args
+                      else None))
 
         mimetypes = [mimetype for mimetype, number in request.accept_mimetypes]
         if extension:
