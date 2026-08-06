@@ -189,6 +189,15 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         self.url_blaster(urls, 0, fail=True, ok_test=ok_test)
 
+    def _skip_if_no_db_sync(self):
+        with self.app.app_context():
+            session = self.app.extensions['sqlalchemy'].session
+            q = Queries(session)
+            resp = q.checkSimpleSubjectPredicate('http://uri.interlex.org/base/ilx_0101431', None)
+
+        if not resp:
+            pytest.skip("The database has not been synced with existing data so this test would fail.")
+
     def test_negative(self):
         urls = [
             f'{self.prefix}/tgbugs/curies/BIRNLEEX:796?local=true',
@@ -222,7 +231,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
         assert not r4.json['existing'], r4.json['existing']
         #breakpoint()
 
-    def test_post_entity_new(self, endpoint='entity-new', data=None, client=None, tuser=None, token=None):
+    def test_post_entity_new(self, endpoint='entity-new', data=None, client=None, tuser=None, token=None, etype='owl:Class'):
         self.app.debug = True
         if client is None:
             client = self.app.test_client()
@@ -235,14 +244,14 @@ class TestRoutes(RouteTester, unittest.TestCase):
         diff = secrets.token_hex(6)
         if data is None:
             data = {
-                'rdf-type': 'owl:Class',
+                'rdf-type': etype,
                 'label': f'test term 1 {diff}',
                 'exact': [f'test term one {diff}', f'first test term {diff}'],
             }
 
         url = f'{self.prefix}/{tuser}/priv/{endpoint}'
         resp = client.get(url, headers=headers)
-        assert resp.status_code < 400, 'did you forget to run `python -m interlex.cli ops api-key`?'
+        assert resp.status_code < 400, f'{resp.status_code} did you forget to run `python -m interlex.cli ops api-key`?'
         resp1 = client.post(url, json=data, headers={**headers, 'Accept': 'application/json'})
         if resp1.status_code == 303:
             headers = {'Accept': 'text/turtle'}
@@ -269,6 +278,17 @@ class TestRoutes(RouteTester, unittest.TestCase):
         token = auth.get('interlex-test-api-key')
 
         #url = f'{self.prefix}/{tuser}/ilx_0101431'
+        _thost = test_host + (f':{test_port}' if test_port else '')
+        _datap, (_respp, _resp1p) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=tuser, token=token,
+                                                              etype='owl:ObjectProperty')
+
+        # FIXME FIXME big unresolved problem here with unnormalized predicates? we don't store those internally right ???
+        # but then we haven't com up with a solution for when you would like to be able to use two different users predicates
+        # in the same graph at the same time without generating ... because you have to produce triples from two separate
+        # perspectives and merge them into one graph, there is currently no way to author such content directly in interlex
+        # because all non-matched groups will cause an error ...
+        urlp = _resp1p.location.replace(_thost, 'uri.interlex.org')  # .replace(tuser, 'base')  # FIXME
+
         _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=tuser, token=token)
         url = _resp1.location
 
@@ -276,7 +296,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
             g = OntGraph()
             populateFromJsonLd(g, jld)
             s = list(g[:nm.expand('rdf:type'):nm.expand('owl:Class')])[0]
-            dels = [[s, nm.expand('definition:'), 'lol does not exist']]
+            dels = [[s, nm.expand('definition:'), {'value': 'lol does not exist', 'type': 'literal'}]]
             j = {
                 'del': dels,
             }
@@ -284,7 +304,8 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         def makej_simple_add(subject, nm, diff, jld):
             #p = nm.expand('ilxtr:some-predicate')  # heh, checks are working ^_^
-            p = nm.expand('ILX:0112796')  # related to for peak insipidness
+            #p = nm.expand('ILX:0112796')  # related to for peak insipidness
+            p = rdflib.URIRef(urlp)
             _s, _n = subject.rsplit('_', 1)
             o = _s + f'{int(_n) - 1:0>{len(_n)}}'
             adds = [
@@ -301,7 +322,8 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         def makej_simple_del(subject, nm, diff, jld):
             #p = nm.expand('ilxtr:some-predicate')
-            p = nm.expand('ILX:0112796')  # related to for peak insipidness
+            #p = nm.expand('ILX:0112796')  # related to for peak insipidness
+            p = rdflib.URIRef(urlp)
             g = OntGraph()
             populateFromJsonLd(g, jld)
             dels = [[s, p, {'type': ('uri' if isinstance(o, rdflib.URIRef) else 'literal'),
@@ -313,7 +335,8 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         def makej_simple_adddel(subject, nm, diff, jld):
             #p = nm.expand('ilxtr:some-predicate')
-            p = nm.expand('ILX:0112796')  # related to for peak insipidness
+            #p = nm.expand('ILX:0112796')  # related to for peak insipidness
+            p = rdflib.URIRef(urlp)
             _s, _n = subject.rsplit('_', 1)
             o = _s + f'{int(_n) - 1:0>{len(_n)}}'
             adds = [
@@ -394,7 +417,8 @@ class TestRoutes(RouteTester, unittest.TestCase):
         nm.populate_from(context)
         ont = [o for o in jld['@graph'] if o['@type'] == 'owl:Ontology'][0]
         pred = 'isAbout' if 'isAbout' in ont else 'http://purl.obolibrary.org/obo/IAO_0000136'
-        subject = ont[pred]['@id']
+        _subject = ont[pred]['@id']
+        subject = _subject if _subject.startswith('http') else nm.expand(_subject)  # FIXME auto adding curies for @context
         frag_pref_id = subject.rsplit('/')[-1]
         # FIXME isAbout also may fail to expand if {group} does not
         # use that curie since we aren't yet merging with base curies
@@ -496,7 +520,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
             assert dout['graph_combined_local_conventions_identity'] == gclc_id
             ''
 
-    def test_01_patch_ontspec(self, target_group=None):
+    def test_01_patch_ontspec(self, target_group=None, dotitle=True):
         self.app.debug = True
         client = self.app.test_client()
         auser = auth.get('test-api-user')
@@ -512,26 +536,30 @@ class TestRoutes(RouteTester, unittest.TestCase):
         resp1 = client.get(onts_url)
 
         data = {
-            'title': 'test ontology updated',
-                'add': [
-                    url3,
-                    #'http://uri.interlex.org/base/ilx_0101431',
-                    #'http://uri.interlex.org/base/ilx_0101432',
-                    #'http://uri.interlex.org/base/ilx_0101433',
-                    #'http://purl.obolibrary.org/obo/UBERON_0000955',
-                    #'http://purl.obolibrary.org/obo/BFO_0000002',
-                    #'http://purl.obolibrary.org/obo/IAO_0000001',
+            'add': [
+                url3,
+                #'http://uri.interlex.org/base/ilx_0101431',
+                #'http://uri.interlex.org/base/ilx_0101432',
+                #'http://uri.interlex.org/base/ilx_0101433',
+                #'http://purl.obolibrary.org/obo/UBERON_0000955',
+                #'http://purl.obolibrary.org/obo/BFO_0000002',
+                #'http://purl.obolibrary.org/obo/IAO_0000001',
                 ],
-                'del': [
-                    TestRoutes._ontspec_todel,
-                    #'http://uri.interlex.org/base/ilx_0101432',
-                    #'http://purl.obolibrary.org/obo/BFO_0000001',
+            'del': [
+                TestRoutes._ontspec_todel,
+                #'http://uri.interlex.org/base/ilx_0101432',
+                #'http://purl.obolibrary.org/obo/BFO_0000001',
                 ],
         }
+        if dotitle:
+            data['title'] = 'test ontology updated'
 
+        # FIXME TODO I'm also seeing that we need a way to deduplicate ontology specs
+        # so that we don't wind up with many duplicate triples just because someone has
+        # a different uri for their ontology ...
         # FIXME TODO somehow looking at this I'm seeing that if we don't already have it we need
         # to ensure that we don't wind up with duplicate ontologies all having a single subject in them
-        url = resp1.json[-1]['uri']
+        url = resp1.json[0]['uri']
         resp2 = client.get(url, headers={'Accept': 'text/turtle'})
         resp3 = client.patch(url, json=data, headers=headers)
         if resp3.location is not None:
@@ -556,6 +584,12 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
     def test_03_group_patch_ontspec(self):
         self.test_01_patch_ontspec('InterLex')
+
+    def test_04_post_ontspec_for_notitle(self):
+        self.test_00_post_ontspec()
+
+    def test_05_patch_ontspec_notitle(self):
+        self.test_01_patch_ontspec(dotitle=False)
 
     def test_post_user_new(self, auto_verify=False):
         self.app.debug = True
@@ -619,6 +653,8 @@ class TestRoutes(RouteTester, unittest.TestCase):
             endpoints._reset_mock = False
 
     def test_query_transitive(self):
+        self._skip_if_no_db_sync()  # FIXME TODO construct a test by inserting what we need
+
         sps = (
             #(False, 'UBERON:0000955', 'BFO:0000050'),
             (False, 'ILX:0100612', 'rdfs:subClassOf'),
@@ -685,14 +721,26 @@ class TestRoutes(RouteTester, unittest.TestCase):
         headers_get_vers = headers
         headers_get_ver = {**headers, 'Accept': 'text/turtle'}
 
-        base_url = f'{self.prefix}/{tuser}/ilx_0101431'
+        _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=tuser, token=token)
+        url = _resp1.location
+        base_url = url
         vers_url = base_url + '/versions'
         resp1 = client.get(vers_url, headers=headers_get_vers)
         j = resp1.json
         ver = j['versions'][0]['identity-record']
         ver_url = vers_url + '/' + ver
         resp2 = client.get(ver_url, headers=headers_get_ver)
-        breakpoint()
+
+        _thost = test_host + (f':{test_port}' if test_port else '')
+        iri = url.replace(_thost, 'uri.interlex.org').replace(tuser, 'base')  # FIXME
+
+        # FIXME should rci always return with the base urls or substitute the user in?
+        # i think we have to use the base urls in this case otherwise the identity won't match
+        if iri not in resp2.text:
+            breakpoint()
+            pass
+
+        assert iri in resp2.text, f'{iri} not in response'
 
     def test_user_role(self):
         self.app.debug = True
@@ -708,8 +756,10 @@ class TestRoutes(RouteTester, unittest.TestCase):
         resp3 = client1.get(base_url)
         resp4 = client1.delete(base_url)
         resp5 = client1.get(base_url)
-        hrm = [r.data for r in (resp1, resp2, resp3, resp4, resp5)]
-        breakpoint()
+        hrm = [r.data for r, ex_code in zip((resp1, resp2, resp3, resp4, resp5),
+                                            (404, 200, 200, 200, 404))
+               if r.status_code != ex_code]
+        assert not hrm, hrm
 
     def test_discussion_flow_00_post(self):
         self.app.debug = True

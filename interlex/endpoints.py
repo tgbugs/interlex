@@ -680,7 +680,10 @@ class Endpoints(EndBase):
                             return t, f'group mismatch {u_group} not in ({group}, base)'
                         if position == 's' and u_frag_pref_id != frag_pref_id:
                             return t, f'bad subject {u_frag_pref_id} != {frag_pref_id}'
-                        if position == 'p' and (URIRef(e) not in pred_special and not u_frag_pref_id.startswith('ilx_')):
+                        if position == 'p' and (URIRef(e) not in pred_special and
+                                                not (u_frag_pref_id.startswith('ilx_') or
+                                                     not config.use_real_frag_pref and
+                                                     u_frag_pref_id.startswith('tmp_'))):
                             # this only covers basic syntactic special predicates
                             # a second pass that goes to the database is required
                             # to ensure the predicates have proper types
@@ -727,6 +730,10 @@ class Endpoints(EndBase):
                         #_un = u.__class__(u.scheme, u.netloc, npath, u.params, u.query, u.fragment)
                         #u_norm = URIRef(_un.geturl())
                         u_norm = URIRef(_un)
+
+                    elif u.scheme not in ('http', 'https'):
+                        # FIXME TODO we can probably expand curies here ...
+                        return t, f'bad scheme {u.scheme} for {e} did you fail to expand curies'
 
                     else:
                         u_norm = URIRef(e)
@@ -4106,7 +4113,37 @@ class Priv(EndBase):
         """
 
         if request.method == 'GET':
-            abort(501, 'TODO')  # TODO html form ...
+            rdf_type_options = '\n      '.join([f'<option value="{t}">{t}</option>' for t in self._type_curies])
+            _entity_check_form = f'''
+<form action="" method="post" class="entity-check">
+
+  <div class="entity-check">
+    <label for="rdf-type">Type: </label>
+    <select name="rdf-type" id="rdf-type">
+      {rdf_type_options}
+    </select>
+  </div>
+
+  <div class="entity-check">
+    <label for="label">Label: </label>
+    <input type="text" name="label" id="label" required />
+  </div>
+
+  <div class="entity-check">
+    <input type="submit" value="Check Entity" />
+  </div>
+
+</form>
+'''
+
+            return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head><title>InterLex Check Entity</title></head>
+<body>
+{_entity_check_form}
+</body>
+</html>'''
 
         nm = OntGraph(bind_namespaces='none').namespace_manager
         nm.populate_from(self.getGroupCuries2(group))

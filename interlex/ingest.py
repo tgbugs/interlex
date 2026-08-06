@@ -2023,9 +2023,10 @@ def process_named(counts, gen, batchsize=None, dout=None, debug=False, path_embe
                         constant_dict={'nt': 'named_embedded_seq'})
 
     # FIXME pr hits missing identities here somehow possibly an off by one error at the end of the loop?
-    for chunk in chunk_list(irels, batchsize):
-        yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES', chunk, ocdn,
-                            constant_dict={'p': 'hasNamedRecord', 's': graph_named_identity})
+    if irels:
+        for chunk in chunk_list(irels, batchsize):
+            yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES', chunk, ocdn,
+                                constant_dict={'p': 'hasNamedRecord', 's': graph_named_identity})
 
     if s is None:
         dout['named_count'] = 0

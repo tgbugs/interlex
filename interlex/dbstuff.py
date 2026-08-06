@@ -518,6 +518,7 @@ order by ids.first_seen desc
 select * from ontologies as o
 join identities as ids on o.spec_head_identity = ids.identity
 where o.perspective = (select persFromGroupname(:group))
+order by first_seen desc
 '''
         return list(self.session_execute(sql, args))
 
