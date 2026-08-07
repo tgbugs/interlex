@@ -11,7 +11,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from pyontutils.utils_fast import utcnowtz
 from interlex import config
 from interlex.core import dbUri, mqUri, diffCuries, remove_terminals, TERMINAL
-from interlex.core import RegexConverter, make_paths, makeParamsValues
+from interlex.core import RegexConverter, make_path_checks, makeParamsValues
 from interlex.utils import printD, makeSimpleLogger
 from interlex.tasks import cel
 from interlex.config import ilx_pattern
@@ -590,7 +590,7 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
     add_api_rule = api_rule_maker(api, doc_namespaces)       # api binding
 
     parent_child, node_methods, path_to_route, path_names = structure()  # uri path nodes
-    paths = list(make_paths(parent_child))                               # paths
+    paths, checks = make_path_checks(parent_child)                       # paths
     routes = ['/'.join(remove_terminals([path_to_route(node) for node in path])) for path in paths]
 
     @app.route('/favicon.ico')

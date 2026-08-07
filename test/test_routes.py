@@ -1,4 +1,5 @@
 import base64
+import inspect
 import unittest
 import pytest
 import requests
@@ -8,7 +9,7 @@ from pyontutils.ontutils import url_blaster
 from pyontutils.core import OntGraph, populateFromJsonLd
 from interlex import endpoints, auth as iauth
 from interlex.uri import uriStructure, run_uri
-from interlex.core import make_paths, remove_terminals
+from interlex.core import make_path_checks, remove_terminals
 from interlex.dump import Queries
 from interlex.config import ilx_pattern, auth
 from interlex.config import test_host, test_port
@@ -24,16 +25,34 @@ if iauth._orcid_mock_public_key is None:
     iauth._orcid_mock_private_key = _priv.save_pkcs1()
 
 
+def make_checker(infun):
+    def parameterize(value):
+        fun = infun(value)
+        def check(response):
+            return fun(response)
+
+        fs = inspect.getsource(fun)
+        check.__qualname__ = f'{fs.split(maxsplit=1)[0].strip()}-{value}'
+        return check
+
+    return parameterize
+
+
+nop = make_checker(lambda v: (lambda r: True))
+ok_contains_string = make_checker(lambda v: (lambda r: v in r.text))
+
+
 def makeTestRoutes(limit=1):
     parent_child, node_methods, path_to_route, path_names = uriStructure()
     groups = 'base', 'tgbugs'  # , 'origin'  # base redirects to default/curated ...
     other_groups = 'latest', 'curated'  # , 'bob'  # FIXME apparently NoGroup is insanely slow on error???
     ilx_patterns = 'ilx_0123456', 'tmp_000000001', 'ilx_0090000', 'cde_1000000'
+    ilx_patterns_check = [nop, ok_contains_string, ok_contains_string, ok_contains_string]
     words = 'isReadablePredicate', 'cookies'
     labels = 'brain', 'mus musculus'
     versions = '1524344335', '2018-04-01'  # FIXME should version alone 404 or return the qualifier?
     filenames = 'brain', 'myOntology', 'your-ontology-123', '_yes_this_works'
-    extensions = 'ttl', 'owl', 'n3', 'xml', 'json'
+    extensions = 'jsonld', 'ttl', 'owl', 'n3', 'xml', 'json'
     filenames_extensions = tuple(f + '.' + e for f in filenames for e in extensions)
     ilx_patterns_extensions = tuple(f + '.' + e for f in ilx_patterns for e in extensions)
     spec_extensions = tuple('spec.' + e for e in extensions)
@@ -95,10 +114,15 @@ def makeTestRoutes(limit=1):
         # TODO
         # '<record_combined_identity>': record_combined_identities,
     }
+
+    check_funs = {
+        '*ilx_pattern': ilx_patterns_check,
+    }
+
     # make cartesian product of combinations
-    paths = make_paths(parent_child, options=options, limit=limit)
+    paths, checks = make_path_checks(parent_child, options=options, check_funs=check_funs, limit=limit)
     routes = ['/'.join(remove_terminals([path_to_route(node) for node in path])) for path in paths]
-    return routes
+    return routes, checks
 
 
 class RouteTester:
@@ -128,10 +152,34 @@ class RouteTester:
 
     def _url_blaster(
             self, urls, rate, timeout=5, verbose=False, debug=False,
-            method='head', fail=False, negative=False, ok_test=lambda r: r.ok):
+            method='head', fail=False, negative=False, ok_test=(lambda r: r.ok), checks=tuple()):
         meth = getattr(self.client, method)
         fails = []
         all_ = [self._fix_resp(meth(url)) for url in urls]
+        checked_fail = []
+        checked_ok = []
+        checked_ok_but = []
+        for resp, rchecks in zip(all_, checks):
+            if rchecks:
+                passing = []
+                failing = []
+                for check in rchecks:
+                    if check(resp):
+                        passing.append(check)
+                    else:
+                        failing.append(check)
+                if failing:
+                    checked_fail.append((resp, failing, passing))
+                else:
+                    if resp.ok:
+                        checked_ok.append((resp, passing))
+                    else:
+                        checked_ok_but.append((resp, passing))
+
+        if checked_fail:
+            breakpoint()
+            ''
+
         not_ok = [_.url for _ in all_ if not ok_test(_)]
         print('Failed:')
         if not_ok:
@@ -165,8 +213,8 @@ class RouteTester:
 
 class TestRoutes(RouteTester, unittest.TestCase):
 
-    def test_routes(self):
-        routes = makeTestRoutes()  # up limit here for more tests, 2 is about max reasonable
+    def test_all_routes(self):
+        routes, checks = makeTestRoutes()  # up limit here for more tests, 2 is about max reasonable
         # TODO a way to mark expected failures
         urls = [
             # NOTE: have to use lists here because url_blaster needs to call shuffle
@@ -185,7 +233,10 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
             return r.ok or r.status_code == 501
 
-        self.url_blaster(urls, 0, fail=True, ok_test=ok_test)
+        if self.url_blaster == self._url_blaster:
+            self.url_blaster(urls, 0, fail=True, ok_test=ok_test, checks=checks)
+        else:
+            self.url_blaster(urls, 0, fail=True, ok_test=ok_test)
 
     def _skip_if_no_db_sync(self):
         with self.app.app_context():

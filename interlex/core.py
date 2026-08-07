@@ -431,29 +431,45 @@ def remove_terminals(route):
     return route
 
 
-def make_paths(parent_child, parents=tuple(), roots=('u', '<group>'), options=tuple(), limit=9999, depth=0, path_names=tuple()):
+def make_path_checks(parent_child, parents=tuple(), roots=('u', '<group>'), options=tuple(), check_funs=tuple(), limit=9999, depth=0, path_names=tuple()):
+    path_checks = make_paths(parent_child, parents, roots=roots, options=options, check_funs=check_funs,
+                             limit=limit, depth=depth, path_names=path_names)
+    paths, checks = zip(*path_checks)
+    return paths, checks
+
+
+zt=tuple()
+def make_paths(parent_child, parents=tuple(), roots=('u', '<group>'), options=tuple(), check_funs=tuple(), limit=9999, depth=0, path_names=tuple()):
     """ path_names is actually a dict, but hey mutable defaults """
     if not parents:
         parents = roots
 
-    def inner(child, parent, idepth):
-        for path in make_paths(parent_child, (child,), roots=roots, options=options, limit=limit, depth=idepth,
-                               path_names=path_names):
+    def inner(child, parent, _check, idepth):
+        for path, checks in make_paths(parent_child, (child,), roots=roots, options=options, check_funs=check_funs,
+                                       limit=limit, depth=idepth, path_names=path_names):
             #printD('PATH:', path)
             if parent in options:
-                for option in options[parent][:limit]:
+                opts = options[parent][:limit]
+                if parent in check_funs:
+                    gen = zip(opts, check_funs[parent][:limit])
+                else:
+                    gen = zip(opts, (None for _ in opts))
+
+                for option, check in gen:
                     if parent in roots:
                         prefix = '', option
                     else:
                         prefix = option,
 
-                    yield prefix + path
+                    if check:
+                        checks = (check(option),) + checks
+
+                    yield prefix + path, checks
 
             elif parent in roots:
-                yield ('', parent) + path
+                yield ('', parent) + path, zt
             else:
-                yield (parent,) + path
-
+                yield (parent,) + path, checks
 
     for parent in parents:
         if parent in parent_child:
@@ -463,26 +479,44 @@ def make_paths(parent_child, parents=tuple(), roots=('u', '<group>'), options=tu
                     todo = options[child][:limit]
                     if child in parent_child:  # only branches need to go again
                         todo += child,
-                    for option in todo:
-                        yield from inner(option, parent, depth + 1)
+
+                    if child in check_funs:
+                        tocheck = check_funs[child][:limit]
+                        if child in parent_child:
+                            tocheck += None,
+                        gen = zip(todo, tocheck)
+                    else:
+                        gen = zip(todo, (None for _ in todo))
+
+                    for option, check in gen:
+                        yield from inner(option, parent, check, depth + 1)
                 else:
-                    yield from inner(child, parent, depth + 1)
+                    yield from inner(child, parent, None, depth + 1)
         else:
             if parent in options:
-                for option in options[parent][:limit]:
+                opts = options[parent][:limit]
+                if parent in check_funs:
+                    gen = zip(opts, check_funs[parent][:limit])
+                else:
+                    gen = zip(opts, (None for _ in opts))
+
+                for option, check in gen:
+                    # FIXME where the heck did path come from here ???
                     path += option,
-                    yield path
+                    if check:
+                        checks += check(option),
+                    yield path, checks
             elif parent is None:  # branches that are also terminals
-                yield TERMINAL,
+                yield (TERMINAL,), zt
             elif parent == depth:
                 # branchers that are also terminals at a given depth
                 # where the depth should be considered as the zero indexed
                 # depth of the empty string following the slash
-                yield TERMINAL,
+                yield (TERMINAL,), zt
             elif isinstance(parent, int):
                 pass  # skip other depths
             else:
-                yield parent,
+                yield (parent,), zt
 
 
 class RegexConverter(BaseConverter):
