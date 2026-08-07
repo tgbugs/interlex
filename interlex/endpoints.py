@@ -1244,7 +1244,7 @@ class Endpoints(EndBase):
 
     @basic
     def discussion(self, group, frag_pref_id=None, uri_path=None, dns_host=None, dns_path=None, ont_path=None, filename=None, extension=None,
-                   epoch_verstr_id=None, other_group=None,
+                   epoch_verstr_id=None, other_group=None, other_group_diff=None,
                    **kwargs):
         # FIXME permissions on this are tricky/confusing because you want to be able to
         # have discussions on other terms but we don't allow post to other user's namespaces
@@ -1252,7 +1252,7 @@ class Endpoints(EndBase):
         # we might consider trying to use the /own/ approach for this? but that isn't quite right
         # it does have a reference to two groups but that is not really what it is for ...
 
-        if epoch_verstr_id is not None or other_group is not None:
+        if epoch_verstr_id is not None or other_group is not None or other_group_diff is not None:
             abort(404)  # FIXME bad routing spec in uris
 
         if kwargs:
