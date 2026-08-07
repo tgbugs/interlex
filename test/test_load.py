@@ -62,7 +62,7 @@ class TestLoader(unittest.TestCase):
         names = [ttl/p for p in paths]
         # TODO the ontology should define the iri path mapping in its own metadata?
         # and/or infer it using the augpathlib logic that I implemented somewhere already?
-        ebns = [rdflib.URIRef(os.path.join('http://ontology.neuinfo.org/NIF/ttl', p)) for p in paths]
+        ebns = [rdflib.URIRef(f'http://ontology.neuinfo.org/NIF/ttl/{p}') for p in paths]
         for name, ebn in list(zip(names, ebns))[::-1]:
             #self.FileFromFile.session.return_value = results
             fff = self.FileFromFile(user='tgbugs', group='tgbugs')  # FIXME get a real test user

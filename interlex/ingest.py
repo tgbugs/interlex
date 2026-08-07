@@ -2308,7 +2308,13 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
         _serialization_identity = aug.LocalPath(localfs).checksum(cypher=hashlib.sha256)
         b64cs = base64.urlsafe_b64encode(
             _serialization_identity).rstrip(b'=').decode()
-        working_path = base / f'local-file-system{url.path}' / b64cs
+
+        if localfs.drive:
+            _up = url.path.replace(':', '')
+        else:
+            _up = url.path
+
+        working_path = base / f'local-file-system{_up}' / b64cs
     else:
         resp = requests.get(uri_string, stream=True, timeout=5)
         resp.close()

@@ -89,10 +89,11 @@ class TestIngestIdentityFunction(unittest.TestCase):
         # evil violations many assumptions
         path = auth.get_path('git-local-base') / 'pyontutils/ttlser/test/evil.ttl'
         session = getSession()
+        class MyAssertionError(Exception): pass
         try:
-            ingest_path(path, 'tgbugs', session=session)
-            raise AssertionError('should have failed')
-        except AssertionError as e:
+            ingest_path(path, 'tgbugs', session=session, debug=True)
+            raise MyAssertionError('should have failed')
+        except MyAssertionError as e:
             raise
         except Exception as e:
             # we expect this to fail at the moment because we have not
