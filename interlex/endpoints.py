@@ -441,7 +441,7 @@ class Endpoints(EndBase):
 
     def build_reference_name(self, group, path):
         # need this for testing, in an ideal world we read from headers
-        return os.path.join(f'https://{self.reference_host}', group, path)
+        return f'https://{self.reference_host}/{group}/{path}'
 
     @staticmethod
     def iriFromPrefix(prefix, *ordered_prefix_sets):
@@ -4603,7 +4603,7 @@ class Ontologies(Endpoints):
             else:
                 abort(415, ct)
 
-            opfn = '/' + os.path.join(ont_path, filename)  # TODO make sure works with all path combos
+            opfn = f'/{ont_path}/{filename}'  # TODO make sure works with all path combos
             dbstuff = Stuff(self.session)
             if subjects:
                 ssub = set(subjects)  # TODO counter dupes
@@ -4669,7 +4669,7 @@ class Ontologies(Endpoints):
             # FIXME beware uri host mismatch
             # FIXME also beware uri scheme mismatch
             # FIXME TODO getGraphByIdentity
-            opfn = '/' + os.path.join(ont_path, filename)
+            opfn = f'/{ont_path}/{filename}'
             spec_uri = f'http://{self.reference_host}/{group}/ontologies/uris{opfn}/spec'
 
             trows = list(self.queries.getGraphByName(spec_uri))
@@ -4837,7 +4837,7 @@ class Ontologies(Endpoints):
                 # virtual can't post to, only spec
                 # managed is own /uris/ + that allows post and will go through the term mapping flow and scratch space ... ends up being quite complex
                 # i think in theory everything can ultimately become a managed ontology but impl will take some work
-                opfn = os.path.join(ont_path, filename)
+                opfn = f'{ont_path}/{filename}'
                 if uris:
                     opfn = 'ontologies/uris/' + opfn
                 else:
@@ -4880,7 +4880,7 @@ class Ontologies(Endpoints):
 
             elif not (uris or dns or spec or from_ilx):
                 if filename:
-                    opfn = os.path.join(ont_path, filename)
+                    opfn = f'{ont_path}/{filename}'
                 else:
                     opfn = ont_path
 
@@ -4915,8 +4915,8 @@ class Ontologies(Endpoints):
 
         elif request.method == 'POST':
             extension = '.' + extension if extension else ''
-            match_path = os.path.join(ont_path, filename + extension)
-            path = os.path.join('ontologies', match_path)  # FIXME get middle from request?
+            match_path = f'{ont_path}/{filename + extension}'
+            path = f'ontologies/{match_path}'  # FIXME get middle from request?
             #request_reference_name = request.headers['']
             #request_reference_name = request.url  # ??
             reference_name = self.build_reference_name(group, path)
