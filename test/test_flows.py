@@ -24,7 +24,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.sql import text as sql_text
 from flask_sqlalchemy import SQLAlchemy
 from interlex import config, endpoints, auth as iauth
-from interlex.uri import make_paths, uriStructure, route_methods, run_uri
+from interlex.uri import make_path_checks, uriStructure, route_methods, run_uri
 from interlex.auth import hash_password
 from interlex.core import dbUri, getScopedSession, remove_terminals
 from interlex.utils import log
@@ -934,7 +934,7 @@ def combinatorics():
         #'<group>': group,
     }
 
-    paths = list(make_paths(parent_child, options=options, limit=10))
+    paths, checks = make_path_checks(parent_child, options=options, limit=10)
     tpaths = [p for p in paths if 'priv' in p]
     tmethods = [route_methods(n, node_methods, path_names) for n in tpaths]
     tpm = [(p, m) for p, m in zip (tpaths, tmethods)]
