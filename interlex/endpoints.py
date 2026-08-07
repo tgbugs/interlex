@@ -4603,7 +4603,11 @@ class Ontologies(Endpoints):
             else:
                 abort(415, ct)
 
-            opfn = f'/{ont_path}/{filename}'  # TODO make sure works with all path combos
+            if ont_path:
+                opfn = f'/{ont_path}/{filename}'  # TODO make sure works with all path combos
+            else:
+                opfn = f'/{filename}'
+
             dbstuff = Stuff(self.session)
             if subjects:
                 ssub = set(subjects)  # TODO counter dupes
@@ -4669,7 +4673,11 @@ class Ontologies(Endpoints):
             # FIXME beware uri host mismatch
             # FIXME also beware uri scheme mismatch
             # FIXME TODO getGraphByIdentity
-            opfn = f'/{ont_path}/{filename}'
+            if ont_path:
+                opfn = f'/{ont_path}/{filename}'
+            else:
+                opfn = f'/{filename}'
+
             spec_uri = f'http://{self.reference_host}/{group}/ontologies/uris{opfn}/spec'
 
             trows = list(self.queries.getGraphByName(spec_uri))
@@ -4837,11 +4845,16 @@ class Ontologies(Endpoints):
                 # virtual can't post to, only spec
                 # managed is own /uris/ + that allows post and will go through the term mapping flow and scratch space ... ends up being quite complex
                 # i think in theory everything can ultimately become a managed ontology but impl will take some work
-                opfn = f'{ont_path}/{filename}'
-                if uris:
-                    opfn = 'ontologies/uris/' + opfn
+
+                if ont_path:
+                    opfn = f'/{ont_path}/{filename}'
                 else:
-                    opfn = 'ontologies/' + opfn
+                    opfn = f'/{filename}'
+
+                if uris:
+                    opfn = 'ontologies/uris' + opfn
+                else:
+                    opfn = 'ontologies' + opfn
 
                 #extension = '' if extension is None else f'.{extension}'  # this is needed by render not query (duh)
                 scheme = 'http'  # FIXME TODO ... still need to determine
@@ -4879,12 +4892,18 @@ class Ontologies(Endpoints):
                 return tripleRender(request, graph, group, None, None, tuple(), title, ontid=ont_uri, redirect=False, **tr_kwargs)
 
             elif not (uris or dns or spec or from_ilx):
-                if filename:
-                    opfn = f'{ont_path}/{filename}'
+                if ont_path:
+                    if filename:
+                        opfn = f'/{ont_path}/{filename}'
+                    else:
+                        opfn = f'/{ont_path}'
                 else:
-                    opfn = ont_path
+                    if filename:
+                        opfn = f'/{filename}'
+                    else:
+                        opfn = ''
 
-                opfn = 'ontologies/' + opfn
+                opfn = f'ontologies{opfn}'
 
                 scheme = 'http'  # FIXME TODO ... still need to determine
                 if filename == 'spec' and not spec:
@@ -4915,7 +4934,11 @@ class Ontologies(Endpoints):
 
         elif request.method == 'POST':
             extension = '.' + extension if extension else ''
-            match_path = f'{ont_path}/{filename + extension}'
+            if ont_path:
+                match_path = f'{ont_path}/{filename + extension}'
+            else:
+                match_path = filename + extension
+
             path = f'ontologies/{match_path}'  # FIXME get middle from request?
             #request_reference_name = request.headers['']
             #request_reference_name = request.url  # ??
