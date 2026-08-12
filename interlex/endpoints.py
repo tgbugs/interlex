@@ -4388,7 +4388,7 @@ class Pulls(EndBase):
             'to-groupname': r.to_groupname,
             'to-pers-name': r.to_pers_name,
             'to-original-identity': r.original_to_identity.hex(),
-            'to-identity': r.to_identity.hex(),
+            'to-identity': r.to_identity.hex() if r.to_identity else r.original_to_identity.hex(),
         }
         vurib = rec['subject'].replace(reference_host, request.host) + '/versions/'
         rec['from-variant-uri'] = vurib + rec['from-identity']
