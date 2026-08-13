@@ -413,6 +413,7 @@ class Endpoints(EndBase):
             abort(501, 'TODO')
 
         config = {'type': 'display-config',
+                  'name': 'global',
                   'config': {
                       'render-label-default': 'curie-group',
                       'render-label-predicate-order': [
@@ -518,7 +519,7 @@ class Endpoints(EndBase):
                                'type': 'tab-config',
                                'name': 'overview',
                                'config': {},
-                               'widget-configs': [
+                               'sub-configs': [
                                    {'type': 'widget-config', 'name': 'hierarchy',},
                                    {'type': 'widget-config', 'name': 'table',},
                                ],
