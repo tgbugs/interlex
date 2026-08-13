@@ -397,111 +397,204 @@ class Endpoints(EndBase):
         }
         return super().get_func(nodes, mapping)
 
-    def configuration(self, group, config_type): # /<group>/priv/configuration or something like that
-        abort(501, 'TODO')
+    def configuration(self, group): # /<group>/priv/configuration or something like that
         # https://github.com/MetaCell/interlex/blob/feature/cellcard/public/config/cell-card-mappings.json
 
-        # TODO the main issue that appears here is about how the config faciliates
-        # interactions between levels, specifically so far between tabs and widgets
-        # where the tab itself might have some defaults but each widget might override
-        # or whether some widgets might be coupled together for certain config elements
-        # like predicate-order, another case is where a widget might have different
-        # behavior when the superclass of the entity is different
-
-        # FIXME these should probably come bundled in a singel json not split out by config type
-        config = {'type': 'display-config'
-                  'configs': {
-                      'constants': {
-                          'ontology-metadata-predicate-for-community-link': 'ilxtr:communityLink',  # but we don't really want people to mess with this because it will break
+        # one note about how cell-card-mappings.json works right now that needs to be changed
+        # it does mappings for every field however that is backwards for a number of these because
+        # it is not the field that specifies what maps to it it is the predicate that says how it should be rendered
+        # mapping only happens for widgets that explicitly specify the mapping, similarly tooltips should not be sourced
+        # from the config but from the data in the ontology, an additional rule is needed for how to handle tooltips for
+        # mappings that have multiple possible predicates, and in that case the rule is to go in the order they are
+        # defined in the config (TODO see if that works in json ...) and pick the first one with a matching top prioroity predicate
+        # then second, then third, etc. normally this means that the first predicate will be the one where users add the display predicate
+        config = {'type': 'display-config',
+                  'config': {
+                      'render-label-default': 'curie-group',
+                      'render-label-predicate-order': [
+                          'ilxr:displayLabel',
+                          'skos:prefLabel',
+                          'rdfs:label',
+                      ],
+                      'render-tooltip-predicate-order': [
+                          'ilxr:displayDefinition',
+                      ],
+                      'display-order-predicate-order': [],
+                      'display-order-predicate-order-rule': 'natural-sort-render-label',
+                      'display-order-field-order-rule': 'natural-sort-render-label',
+                      'display-order-object-order-rule': 'natural-sort-render-label',
+                      'display-field-predicate-mapping': {  # putting this at global config level to see if it works up here
+                          'Species': ['ilxtr:hasInstanceInTaxon',],  # TODO all the neurdf predicates as well XXX frontend will want to dedupe and probably skip blanknodes
+                          'Soma location': ['ilxtr:hasSomaLocatedIn',],
+                          'Circuit role': ['ilxtr:hasCircuitRolePhenotype',],
+                          'Physiology': ['ilxtr:hasFunctionalPhenotype',],
+                          'Axon type': ['ilxtr:hasAxonPhenotype',],
+                          'Adaptation': ['ilxtr:hasAdaptationPhenotype',],
+                          'Threshold': ['ilxtr:hasThresholdPhenotype',],
+                          'Neurotransmitter': ['ilxtr:hasNeurotransmitterPhenotype',],
+                          'Marker genes': ['ilxtr:hasNucleicAcidExpressionPhenotype',],
                       },
-                      'group-settings': {},  # for PRECISION {'default-single-term-tab-where-applicable': 'cell-card'}
-                      'entity-rendering': {
-                          'render-label-predicate-order': [
-                              'ilxr:displayLabel',
-                              'skos:prefLabel',
-                              'rdfs:label',
-                              # reminder default if all predicates are absent is to render the curie
-                          ],
-                          'render-label-default': 'group-curie',  # options are 'group-curie', 'iri', 'ontology-curie', 'base-curie' probably never going to use base-curie
-                          # really is curie-or-iri-if-no-curie-defined i.e. don't compact to ns1: ns2: etc.
-                          # also group-curie-dont-include-base-if-missing
-                          'render-tooltip-predicate-order': [
-                              'definition',  # the is the curie for IAO something or other
-                          ],
-                          'render-tooltip-default': None,  # if none are found leave it blank
-                      },
-                      'widget-configs': {'wdg-configs': [  # XXX we likely need to avoid this pattern and just nest widgets under tabs and tabs under entity types (ontology, entity, etc.)
-                          # there are currently three major types of widges that we want to be able to configure right now
-                          # tabular property views, tree hierarchy views, and graph views, they have standard things that we tend to want to configure
-                          {'wdg-type': 'properties',
-                           'parent-type': 'widget',  # yeah ... here's the problem we run into these configurations are hierachical
-                           },
-                          {'wdg-type': 'hierarchy',},
-                          {'wdg-type': 'graph',},
-                          {'wdg-type': 'cell-relationship-graph',
-                           'parent-type': 'graph',
-                           }
-                          {'type': 'wdg-config',
-                           'wdg-type': 'biological-properties',  # FIXME TODO what if different superclasses should have different properties displayed? e.g. cell vs anatomy
-                           'predicate-order': [],
-                           },
-                          {'type': 'wdg-config',
-                           'wdg-type': 'anatomical-properties',
-                           'predicate-order': [],
-                           },
-                          {'type': 'wdg-config',
-                           'wdg-type': 'relationship-graph',
-                           'predicate-display-mapping': {},  # TODO
-                           'predicate-whitelist': [
-                               'rdfs:subClassOf',
-                               'ilxtr:hasMolecularPhenotype',
-                           ],
-                           'clickable-things': [],
-                           },
-                          {'type': 'wdg-config',
-                           'wdg-type': 'hierarchy',
-                           'click-behavior': 'new-tab',
-                           'render-label-predicate-order': [],  # we might leave this one empty because we always want curies or something (not really)
-                           },
-                      ]},
-                      'tab-config': {'type': 'ilx-tab-config',
-                                     'tab-configs': [
-                                         {'type': 'tab-config',
-                                          'tab-type': 'ontology-grid-view',
-                                          'card-default-rows': 4,  # this means the starting view if the user has not "zoomed" the card size by increasing the number of predicates
-                                          'card-default-ordering-rule': 'natural-sort-curie',  # TODO not in mvp but thinking ahead, another rule might be 'sort-by-predicate'
-                                          'predicate-order': [],  # TODO what to do if 
-                                          'filter-predicate-order': [],  # TODO what if this was the same as the card and then alphabetical? or what if it followed whatever order, or number of types with predicate etc.
-                                          'card-predicate-order': [
-                                              'ilxtr:hasSomaLocatedIn',  # XXX do we use the neurdf predicates?
-                                              'ilxtr:hasMolecularPhenotype',  # XXX this implies that we need to pull subPropertyOf
-                                              # ... there are a bunch more that we need here
-                                          ],
-                                          'entity-rendering': {  # this allows us to override defaults for the global entity-rendering
-                                              'render-label-predicate-order': [
-                                                  'ilxtr:localLabel',
-                                              ],
-                                              'render-tooltip-predicate-order': [
-                                                  'ilxr:displayDefinition',  # replacement rule is to remove any duplicates from the global config and then prepend the list here first
-                                              ],
-                                          },
-                                          },
-                                         {'type': 'tab-config',
-                                          'tab-type': 'ontology-browse',
-                                          },
-                                         {'type': 'tab-config',
-                                          'tab-type': 'ontology-overview',
-                                          },
-                                         {'type': 'tab-config',
-                                          'tab-type': 'term-overview',
-                                          },
-                                         {'type': 'tab-config',
-                                          'tab-type': 'term-cell-card',
-                                          }
-                                     ]
-                                     },
                   },
-        }
+                  'sub-configs': [
+                      {'type': 'thing-config',
+                       'name': 'ontology',
+                       'config': {},
+                       'sub-configs': [
+                           {
+                               'type': 'tab-config',
+                               'name': 'browse',
+                               'config': {},
+                               'sub-configs': [
+                                   {'type': 'widget-config', 'name': 'hierarchy',
+                                    'config': {},
+                                    },
+                                   {'type': 'widget-config', 'name': 'table',
+                                    'config': {},
+                                    },
+                               ],
+                            },
+                           {
+                               'type': 'tab-config',
+                               'name': 'overview',
+                               'config': {},
+                               'sub-configs': [],
+                           },
+                           {
+                               'type': 'tab-config',
+                               'name': 'grid',
+                               'config': {
+                                   'display-order-predicate-order': [],
+                                   'render-label-predicate-order': [
+                                       'ilxtr:localLabel',
+                                   ],
+                                   'render-tooltip-predicate-order': [
+                                       'ilxr:displayDefinition',  # replacement rule is to remove any duplicates from the global config and then prepend the list here first
+                                   ],
+                               },
+                               'sub-configs': [
+                                   {'type': 'widget-config', 'name': 'filters',
+                                    'config': {'display-order-predicate-order': [],
+                                               },
+                                    },
+                                   {'type': 'widget-config', 'name': 'cards',
+                                    'config': {'default-rows': 4,
+                                               'display-order-predicate-order': [],
+                                               },
+                                    'sub-configs': [
+                                        {'type': 'section-config', 'name': 'header', 'config': {
+                                            'display-order-predicate-order-whitelist': [  # TODO may want to allow more complex config here?
+                                                'ilxtr:neurondmBaseClass',
+                                                'ilxtr:hasAxonPhenotype',
+                                                'ilxtr:hasInstanceInTaxon',
+                                            ],
+                                        },},
+                                        {'type': 'section-config', 'name': 'rows', 'config': {
+                                            'display-order-predicate-order': [
+                                                'ilxtr:hasSomaLocatedIn',
+                                                'ilxtr:hasNucleicAcidExpressionPhenotype',
+                                                'ilxtr:hasFunctionalPhenotype',
+                                            ],
+                                        },},
+                                        {'type': 'section-config', 'name': 'footer', 'config': {
+                                            'display-order-predicate-order-whitelist': [
+                                                'ilxtr:literatureCitation',
+                                            ],
+                                        },},
+                                    ],
+                                    },
+                               ],
+                           },
+                       ],
+                       },
+                      {'type': 'thing-config',
+                       'name': 'entity',
+                       'config': {},  # for PRECISION this would be {'default-tab-when-tab-present': 'cell-card'}
+                       'sub-configs': [
+                           {
+                               'type': 'tab-config',
+                               'name': 'overview',
+                               'config': {},
+                               'widget-configs': [
+                                   {'type': 'widget-config', 'name': 'hierarchy',},
+                                   {'type': 'widget-config', 'name': 'table',},
+                               ],
+                            },
+                           {
+                               'type': 'tab-config',
+                               'name': 'cell-card',
+                               'config': {},
+                               'sub-configs': [
+                                   {'type': 'widget-config', 'name': 'properties-anatomical',
+                                    'config': {
+                                        'display-order-field-order': [
+                                            'Soma location',
+                                            'Sensory terminal location',
+                                            'Synapse location',
+                                            'Circuit role',
+                                        ],
+                                        'display-field-predicate-mapping': {
+                                            'Soma location': ['ilxtr:hasSomaLocatedIn',],
+                                            'Sensory terminal location': ['ilxtr:hasAxonSensorySubcellularElementIn',],
+                                            'Synapse location': ['ilxtr:hasAxonPresynapticElementIn',],
+                                            'Circuit role': ['ilxtr:hasCircuitRolePhenotype',],
+                                        },
+                                    },
+                                    },
+                                   {'type': 'widget-config', 'name': 'properties-biological',
+                                    'config': {
+                                        'display-order-field-order': [  # TODO need additional info to live here like required, chip, etc.
+                                            'Species',
+                                            'Soma location',
+                                            #'Neuron base class',
+                                            'Circuit role',
+                                            'Physiology',
+                                            'Axon type',
+                                            'Adaptation',
+                                            'Threshold',
+                                            'Neurotransmitter',
+                                            'Marker genes',
+                                        ],
+                                        'display-field-predicate-mapping': {
+                                            'Species': ['ilxtr:hasInstanceInTaxon',],  # TODO all the neurdf predicates as well XXX frontend will want to dedupe and probably skip blanknodes
+                                            'Soma location': ['ilxtr:hasSomaLocatedIn',],
+                                            'Circuit role': ['ilxtr:hasCircuitRolePhenotype',],
+                                            'Physiology': ['ilxtr:hasFunctionalPhenotype',],
+                                            'Axon type': ['ilxtr:hasAxonPhenotype',],
+                                            'Adaptation': ['ilxtr:hasAdaptationPhenotype',],
+                                            'Threshold': ['ilxtr:hasThresholdPhenotype',],
+                                            'Neurotransmitter': ['ilxtr:hasNeurotransmitterPhenotype',],
+                                            'Marker genes': ['ilxtr:hasNucleicAcidExpressionPhenotype',],
+                                        },
+                                    },
+                                    },
+                                   {'type': 'widget-config', 'name': 'hierarchy',
+                                    'config': {},
+                                    },
+                                   {'type': 'widget-config', 'name': 'graph-relationship',
+                                    'config': {
+                                        'display-predicate-whitelist': [
+                                            'rdfs:subClassOf',
+                                            'ilxtr:hasMolecularPhenotype',
+                                            'ilxtr:hasNucleicAcidExpressionPhenotype',
+                                            'ilxtr:hasSomaLocatedIn',
+                                            'ilxtr:assertedSubClassOf',
+                                        ],
+                                        'clickable-things': [],
+                                    },
+                                    },
+                                   {'type': 'widget-config', 'name': 'transcriptomic-profile',
+                                    'config': {
+                                        'display-field-predicate-mapping': {  # FIXME should this be display-field-whitelist?
+                                            'Marker genes': ['ilxtr:hasNucleicAcidExpressionPhenotype',],
+                                        },
+                                    },
+                                    },
+                               ],
+                           },
+                       ],
+                       },
+                  ],
+                  }
 
         return json.dumps(config), 200, ctaj
 
