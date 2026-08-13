@@ -344,6 +344,7 @@ class Endpoints(EndBase):
             'group_': self.group_,
             'ilx': self.ilx,
             'other': self.other,
+            'configuration': self.configuration,
             'discussion': self.discussion,
             '*versions': self.versions,
             #'*versions_': self.versions,
@@ -397,7 +398,7 @@ class Endpoints(EndBase):
         }
         return super().get_func(nodes, mapping)
 
-    def configuration(self, group): # /<group>/priv/configuration or something like that
+    def configuration(self, group): # /<group>/configuration or something like that
         # https://github.com/MetaCell/interlex/blob/feature/cellcard/public/config/cell-card-mappings.json
 
         # one note about how cell-card-mappings.json works right now that needs to be changed
@@ -408,6 +409,9 @@ class Endpoints(EndBase):
         # mappings that have multiple possible predicates, and in that case the rule is to go in the order they are
         # defined in the config (TODO see if that works in json ...) and pick the first one with a matching top prioroity predicate
         # then second, then third, etc. normally this means that the first predicate will be the one where users add the display predicate
+        if request.method != 'GET':
+            abort(501, 'TODO')
+
         config = {'type': 'display-config',
                   'config': {
                       'render-label-default': 'curie-group',

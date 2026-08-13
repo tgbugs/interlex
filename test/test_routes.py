@@ -1013,6 +1013,14 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         assert not bads, bads
 
+    def test_configuration(self):
+        self.app.debug = True
+        client = self.app.test_client()
+        resp0 = client.get(f'{self.prefix}/base/configuration')
+        resp1 = client.get(f'{self.prefix}/tgbugs/configuration')
+        assert resp0.json, 'nothing?'
+        assert resp0.json == resp1.json, 'oops'
+
 
 class TestApiDocs(RouteTester, unittest.TestCase):
     def test_docs(self):

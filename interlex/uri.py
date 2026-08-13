@@ -109,7 +109,7 @@ def uriStructure():
     # reminder: None is used to mark branches that are also terminals
     parent_child = {
         '<group>':             [None] + basic + ['*ilx_get', 'lexical'] + branches + compare + [
-            'priv', 'pulls', 'contributions', 'prov', 'external', 'dns', 'query'],
+            'priv', 'pulls', 'contributions', 'prov', 'external', 'dns', 'query', 'configuration'],
         'u':                   ['ops', '*priv'],
         'ops':                 ['login',
                                 'user-new',
@@ -248,6 +248,9 @@ def uriStructure():
                     '<filename_terminal>':['GET', 'POST'],
                     '<filename_terminal>.<extension>':['GET', 'POST'],
                     'mapped':['GET', 'POST'],
+
+                    # configuration
+                    'configuration': ['GET', 'POST'],
 
                     # discussion
                     'discussion': ['GET', 'POST'],
