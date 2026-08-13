@@ -26,7 +26,7 @@ from interlex import tasks
 from interlex import config
 from interlex import exceptions as exc
 from interlex.auth import Auth, gen_key
-from interlex.core import diffCuries, makeParamsValues, default_prefixes, from_title_subjects_ontspec
+from interlex.core import diffCuries, makeParamsValues, default_prefixes, from_title_subjects_ontspec, pred_special
 from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
 from interlex.utils import log as _log
@@ -35,7 +35,6 @@ from interlex.ingest import ingest_ontspec, ingest_record, reingest_gclc
 from interlex.vervar import process_vervar, get_latest_group_subject_hack
 from interlex.render import TripleRender  # FIXME need to move the location of this
 from interlex.dbstuff import Stuff
-from interlex.namespaces import ilxr  # FIXME should be in another file
 from interlex.notifications import send_message, get_smtp_spec, msg_email_verify, msg_user_recover, msg_user_recover_alt, msg_user_recover_success
 
 log = _log.getChild('endpoints')
@@ -763,19 +762,6 @@ class Endpoints(EndBase):
             current_specials = set()
             current_user_uri = set()
             current_user_uri_pred = set()
-            pred_special = (
-                # these are the only non ILX predicates allowed, anything else that
-                # is not a property of some kind will be block for ilx_ records
-                # FIXME TODO efficient check that predicates have the correct type
-
-                # FIXME regularize these and shorten them, likely to ilxr: versions
-                # or even better http://uilx.org/b/r/ versions ...
-                rdf.type, rdfs.label, ilxtr.hasExactSynonym,
-                ilxtr.hasExternalId, ilxtr.duplicateOf, replacedBy,
-                ilxtr.hasIlxId,  # not used on ilx records, but when we abstract this it is needed
-                ilxr.synonym,  # synonyms # FIXME really need to review complexity of synonym types because they should be mutex and thus diff preds
-                definition,  # this is one of the cardinality of 1 that is not enforced by a separate table so we need to enforce via process
-            )
             pred_card1 = (
                 definition,
                 rdfs.label,  # ok to double check this even though we have the laex

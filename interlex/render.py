@@ -15,6 +15,7 @@ from pyontutils.qnamefix import cull_prefixes
 from pyontutils.namespaces import isAbout, ilxtr, ILX, definition, NIFRID
 from pyontutils.closed_namespaces import rdf, rdfs, owl
 from interlex import exceptions as exc
+from interlex.core import pred_special
 from interlex.utils import log
 from interlex.namespaces import ilxr
 
@@ -171,6 +172,9 @@ class TripleRender:
             # i.e. "show me all triples attached to a term and include
             # triples with predicates from other users"
             def sub_group(e, gs=f'/{group}/'):
+                if e in pred_special:  # FIXME yeah this is bad
+                    return e
+
                 if 'uri.interlex.org/base/' in e:  # FIXME reference_host
                     return rdflib.URIRef(e.replace('/base/', gs, 1))
                 else:

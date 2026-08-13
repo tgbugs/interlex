@@ -18,20 +18,34 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.routing import BaseConverter
 from ttlser import DeterministicTurtleSerializer, CustomTurtleSerializer
 from pyontutils.core import makeGraph, OntId, OntGraph
-from pyontutils.utils import TermColors as tc, injective_dict
+from pyontutils.utils import TermColors as tc, injective_dict, isoformat
 from pyontutils.namespaces import PREFIXES as uPREFIXES
-from pyontutils.namespaces import ilxtr, rdf, rdfs, owl, oboInOwl, NIFRID, ILX, dc
+from pyontutils.namespaces import ilxtr, rdf, rdfs, owl, oboInOwl, NIFRID, ILX, dc, definition, replacedBy
 from pyontutils.combinators import annotation
 from pyontutils.identity_bnode import IdentityBNode, IdLocalBNode
 from interlex import config
 from interlex.utils import printD, log
 from interlex.config import auth
-from interlex.namespaces import fma
+from interlex.namespaces import fma, ilxr
 
 metadata_type_marker_priority = (
     ilxtr.OntologySpec,  # ilxtr.TermSet needs to be shifted from this ... also reingest the termsets entirely to be proper specs
     owl.Ontology,
 )
+
+pred_special = {
+    # these are the only non ILX predicates allowed, anything else that
+    # is not a property of some kind will be block for ilx_ records
+    # FIXME TODO efficient check that predicates have the correct type
+
+    # FIXME regularize these and shorten them, likely to ilxr: versions
+    # or even better http://uilx.org/b/r/ versions ...
+    rdf.type, rdfs.label, ilxtr.hasExactSynonym,
+    ilxtr.hasExternalId, ilxtr.duplicateOf, replacedBy,
+    ilxtr.hasIlxId,  # not used on ilx records, but when we abstract this it is needed
+    ilxr.synonym,  # synonyms # FIXME really need to review complexity of synonym types because they should be mutex and thus diff preds
+    definition,  # this is one of the cardinality of 1 that is not enforced by a separate table so we need to enforce via process
+}
 
 record_types = (
     owl.Class,
