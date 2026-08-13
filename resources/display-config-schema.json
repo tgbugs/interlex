@@ -1,0 +1,161 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "InterLex display configuration",
+  "description": "JSON Schema for interlex display configuration",
+  "type": "object",
+  "required": ["type", "name"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "display-config"
+    },
+    "name": {
+      "type": "string"
+    },
+    "config": {
+      "$ref": "#/definitions/config-object"
+    },
+    "sub-configs": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/thing-config" }
+    }
+  },
+  "definitions": {
+    "config-object": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "default-tab-when-tab-present": {
+          "type": "string",
+          "enum": ["cell-card"]
+        },
+        "default-rows": {
+          "type": "integer"
+        },
+        "clickable-things": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "render-label-default": {
+          "type": "string",
+          "enum": ["curie-group"]
+        },
+        "render-label-predicate-order": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "render-tooltip-predicate-order": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "display-order-predicate-order": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "display-order-predicate-order-whitelist": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "display-order-predicate-order-rule": {
+          "type": "string",
+          "enum": ["natural-sort-render-label"]
+        },
+        "display-order-field-order-rule": {
+          "type": "string",
+          "enum": ["natural-sort-render-label"]
+        },
+        "display-order-object-order-rule": {
+          "type": "string",
+          "enum": ["natural-sort-render-label"]
+        },
+        "display-order-field-order": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "Species",
+              "Soma location",
+              "Circuit role",
+              "Physiology",
+              "Axon type",
+              "Adaptation",
+              "Threshold",
+              "Neurotransmitter",
+              "Marker genes",
+              "Sensory terminal location",
+              "Synapse location"
+            ]
+          }
+        },
+        "display-field-predicate-mapping": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "display-predicate-whitelist": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "thing-config": {
+      "type": "object",
+      "required": ["type", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "thing-config" },
+        "name": { "type": "string" },
+        "config": { "$ref": "#/definitions/config-object" },
+        "sub-configs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/tab-config" }
+        }
+      }
+    },
+    "tab-config": {
+      "type": "object",
+      "required": ["type", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "tab-config" },
+        "name": { "type": "string" },
+        "config": { "$ref": "#/definitions/config-object" },
+        "sub-configs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/widget-config" }
+        }
+      }
+    },
+    "widget-config": {
+      "type": "object",
+      "required": ["type", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "widget-config" },
+        "name": { "type": "string" },
+        "config": { "$ref": "#/definitions/config-object" },
+        "sub-configs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/section-config" }
+        }
+      }
+    },
+    "section-config": {
+      "type": "object",
+      "required": ["type", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "section-config" },
+        "name": { "type": "string" },
+        "config": { "$ref": "#/definitions/config-object" },
+        "sub-configs": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
+    }
+  }
+}
