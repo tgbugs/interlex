@@ -397,6 +397,193 @@ class Endpoints(EndBase):
         }
         return super().get_func(nodes, mapping)
 
+    def configuration(self, group, config_type): # /<group>/priv/configuration or something like that
+        abort(501, 'TODO')
+        # https://github.com/MetaCell/interlex/blob/feature/cellcard/public/config/cell-card-mappings.json
+
+        # TODO the main issue that appears here is about how the config faciliates
+        # interactions between levels, specifically so far between tabs and widgets
+        # where the tab itself might have some defaults but each widget might override
+        # or whether some widgets might be coupled together for certain config elements
+        # like predicate-order, another case is where a widget might have different
+        # behavior when the superclass of the entity is different
+
+        # FIXME these should probably come bundled in a singel json not split out by config type
+        if config_type == 'constants':
+            out = {
+                'ontology-metadata-predicate-for-community-link': 'ilxtr:communityLink',  # but we don't really want people to mess with this because it will break
+            }
+        elif config_type == 'group-settings':
+            if group == 'PRECISION':
+                out = {'default-single-term-tab-where-applicable': 'cell-card'}
+            else:
+                out = {}
+
+        elif config_type == 'entity-rendering':
+            out = {
+                'render-label-predicate-order': [
+                    'ilxr:displayLabel',
+                    'skos:prefLabel',
+                    'rdfs:label',
+                    # reminder default if all predicates are absent is to render the curie
+                ],
+                'render-label-default': 'group-curie',  # options are 'group-curie', 'iri', 'ontology-curie', 'base-curie' probably never going to use base-curie
+                # really is curie-or-iri-if-no-curie-defined i.e. don't compact to ns1: ns2: etc.
+                # also group-curie-dont-include-base-if-missing
+                'render-tooltip-predicate-order': [
+                    'definition',  # the is the curie for IAO something or other
+                ],
+                'render-tooltip-default': None,  # if none are found leave it blank
+            }
+
+        elif config_type == 'widget-config':
+            # there are three major types of widges that we want to be able to configure right now
+            # tabular property views, tree hierarchy views, and graph views, they have standard things that we tend to want to configure
+            [
+                {'wdg-type': 'properties',
+                 'parent-type': 'widget',  # yeah ... here's the problem we run into these configurations are hierachical
+                 },
+                {'wdg-type': 'hierarchy',},
+                {'wdg-type': 'graph',},
+                {'wdg-type': 'cell-relationship-graph',
+                 'parent-type': 'graph',
+                 }
+            ]
+            out = {'wdg-configs': [
+                {'type': 'wdg-config',
+                 'wdg-type': 'biological-properties',  # FIXME TODO what if different superclasses should have different properties displayed? e.g. cell vs anatomy
+                 'predicate-order': [],
+                 },
+                {'type': 'wdg-config',
+                 'wdg-type': 'anatomical-properties',
+                 'predicate-order': [],
+                 },
+                {'type': 'wdg-config',
+                 'wdg-type': 'relationship-graph',
+                 'predicate-display-mapping': {},  # TODO
+                 'predicate-whitelist': [
+                     'rdfs:subClassOf',
+                     'ilxtr:hasMolecularPhenotype',
+                 ],
+                 'clickable-things': [],
+                 },
+                {'type': 'wdg-config',
+                 'wdg-type': 'hierarchy',
+                 'click-behavior': 'new-tab',
+                 'render-label-predicate-order': [],  # we might leave this one empty because we always want curies or something (not really)
+                 },
+            ]}
+        elif config_type == 'tab-config':
+            out = {'type': 'ilx-tab-config',
+                   'tab-configs': [
+                       {'type': 'tab-config',
+                        'tab-type': 'ontology-grid-view',
+                        'card-default-rows': 4,  # this means the starting view if the user has not "zoomed" the card size by increasing the number of predicates
+                        'card-default-ordering-rule': 'natural-sort-curie',  # TODO not in mvp but thinking ahead, another rule might be 'sort-by-predicate'
+                        'predicate-order': [],  # TODO what to do if 
+                        'filter-predicate-order': [],  # TODO what if this was the same as the card and then alphabetical? or what if it followed whatever order, or number of types with predicate etc.
+                        'card-predicate-order': [
+                            'ilxtr:hasSomaLocatedIn',  # XXX do we use the neurdf predicates?
+                            'ilxtr:hasMolecularPhenotype',  # XXX this implies that we need to pull subPropertyOf
+                            # the complete list is here
+                            'ilxtr:hasAdaptationPhenotype',
+                            'ilxtr:hasAnatomicalSystemPhenotype',
+                            'ilxtr:hasAxonLeadingToSensorySubcellularElementIn',
+                            'ilxtr:hasAxonLocatedIn',
+                            'ilxtr:hasAxonMorphologicalPhenotype',
+                            'ilxtr:hasAxonPhenotype',
+                            'ilxtr:hasAxonPresynapticElementIn',
+                            'ilxtr:hasAxonSensorySubcellularElementIn',
+                            'ilxtr:hasAxonSensorySubcellularStructure',
+                            'ilxtr:hasBiologicalSex',
+                            'ilxtr:hasCircuitRolePhenotype',
+                            'ilxtr:hasClassificationPhenotype',
+                            'ilxtr:hasComputedMolecularPhenotype',
+                            'ilxtr:hasComputedMolecularPhenotypeFromDNA',
+                            'ilxtr:hasComputedMolecularPhenotypeFromProtein',
+                            'ilxtr:hasComputedMolecularPhenotypeFromRNA',
+                            'ilxtr:hasComputedPhenotype',
+                            'ilxtr:hasConnectionDeterminedByCellFilling',
+                            'ilxtr:hasConnectionDeterminedByElectronMicroscopy',
+                            'ilxtr:hasConnectionDeterminedByElectrophysiology',
+                            'ilxtr:hasConnectionDeterminedByPharmacology',
+                            'ilxtr:hasConnectionDeterminedBySynapticPhysiology',
+                            'ilxtr:hasConnectionDeterminedByViralTracing',
+                            'ilxtr:hasConnectionPhenotype',
+                            'ilxtr:hasDendriteLocatedIn',
+                            'ilxtr:hasDendriteMorphologicalPhenotype',
+                            'ilxtr:hasDendritePhenotype',
+                            'ilxtr:hasDendriteSensorySubcellularElementIn',
+                            'ilxtr:hasDevelopmentalStage',
+                            'ilxtr:hasDevelopmentalStructure',
+                            'ilxtr:hasDevelopmentalType',
+                            'ilxtr:hasDriverExpressionConstitutivePhenotype',
+                            'ilxtr:hasDriverExpressionInducedPhenotype',
+                            'ilxtr:hasDriverExpressionPhenotype',
+                            'ilxtr:hasElectrophysiologicalPhenotype',
+                            'ilxtr:hasExperimentalPhenotype',
+                            'ilxtr:hasExpressionPhenotype',
+                            'ilxtr:hasForwardConnectionPhenotype',
+                            'ilxtr:hasFunctionalCircuitRolePhenotype',
+                            'ilxtr:hasFunctionalPhenotype',
+                            'ilxtr:hasInstanceInSpecies',
+                            'ilxtr:hasInstanceInTaxon',
+                            'ilxtr:hasLayerLocationPhenotype',
+                            'ilxtr:hasLocationPhenotype',
+                            'ilxtr:hasMolecularPhenotype',
+                            'ilxtr:hasMorphologicalPhenotype',
+                            'ilxtr:hasNeurotransmitterPhenotype',
+                            'ilxtr:hasNucleicAcidExpressionPhenotype',
+                            'ilxtr:hasPhenotype',
+                            'ilxtr:hasPhenotypeModifier',
+                            'ilxtr:hasPresynapticElementIn',
+                            'ilxtr:hasPresynapticTerminalsIn',
+                            'ilxtr:hasProcessLocatedIn',
+                            'ilxtr:hasProjectionLaterality',
+                            'ilxtr:hasProjectionPhenotype',
+                            'ilxtr:hasProteinExpressionPhenotype',
+                            'ilxtr:hasReporterExpressionPhenotype',
+                            'ilxtr:hasReverseConnectionPhenotype',
+                            'ilxtr:hasSensorySubcellularElementIn',
+                            'ilxtr:hasSmallMoleculePhenotype',
+                            'ilxtr:hasSomaLocatedIn',
+                            'ilxtr:hasSomaLocatedInLayer',
+                            'ilxtr:hasSomaLocationLaterality',
+                            'ilxtr:hasSomaPhenotype',
+                            'ilxtr:hasTaxonRank',
+                            'ilxtr:hasThresholdPhenotype',
+                            'ilxtr:isMemberOfCircuit',
+                            'ilxtr:phenotypeCooccuresWith',
+                            'ilxtr:phenotypeObservedInBrainRegion',
+                            'ilxtr:phenotypeOf',
+                            'ilxtr:receivesProjectionFrom',
+                        ],
+                        'entity-rendering': {  # this allows us to override defaults for the global entity-rendering
+                            'render-label-predicate-order': [
+                                'ilxtr:localLabel',
+                            ],
+                            'render-tooltip-predicate-order': [
+                                'ilxr:displayDefinition',  # replacement rule is to remove any duplicates from the global config and then prepend the list here first
+                            ],
+                        },
+                        },
+                       {'type': 'tab-config',
+                        'tab-type': 'ontology-browse',
+                        },
+                       {'type': 'tab-config',
+                        'tab-type': 'ontology-overview',
+                        },
+                       {'type': 'tab-config',
+                        'tab-type': 'term-overview',
+                        },
+                       {'type': 'tab-config',
+                        'tab-type': 'term-cell-card',
+                        }
+                   ]
+                }
+
+        return out
+
     def getGroupCuries2(self, group):
         _refgroup = 'base'  # FIXME base hardcoded
         basePREFIXES = self.queries.getGroupCuries(_refgroup)  # TODO cache these maybe?
