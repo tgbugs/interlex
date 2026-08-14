@@ -22,3 +22,4 @@ GRANT UPDATE (expected_bound_name) ON interlex.reference_names TO "interlex-user
 GRANT UPDATE (spec_head_identity) ON interlex.ontologies TO "interlex-user";
 GRANT UPDATE (head_identity) ON interlex.perspective_heads TO "interlex-user";
 GRANT UPDATE (acting_user, status) ON interlex.pull_requests TO "interlex-user";
+GRANT UPDATE (config) ON interlex.display_configuration TO "interlex-user";
