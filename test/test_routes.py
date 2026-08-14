@@ -983,7 +983,59 @@ class TestRoutes(RouteTester, unittest.TestCase):
 
         assert not bads, bads
 
-    def test_pull_04_merge(self):
+    def test_pull_04_close_reopen_lock_unlock(self):
+        bads = []
+        group_clients = {g: c for g, _, c in self._pull_upcs}
+        headers = {'Content-Type': 'application/json'}
+        for group, _, client in self._pull_upcs:
+            pull_url = f'{self.prefix}/{group}/pulls'
+            resp = client.get(pull_url)
+            if resp.status_code < 400:
+                for pr in resp.json['records']:
+                    # to
+                    # close
+                    assert pr['to-groupname'] == group
+                    to_client = client
+                    resp1 = to_client.post(pr['url'] + '/ops/close')
+                    if resp1.status_code >= 400: bads.append((resp, resp1))
+                    # reopen
+                    resp2 = to_client.post(pr['url'] + '/ops/reopen')
+                    if resp2.status_code >= 400: bads.append((resp, resp2))
+                    # lock
+                    resp6 = to_client.post(pr['url'] + '/ops/lock')
+                    if resp6.status_code >= 400: bads.append((resp, resp6))
+                    # unlock
+                    resp7 = to_client.post(pr['url'] + '/ops/unlock')
+                    if resp7.status_code >= 400: bads.append((resp, resp7))
+                    # TODO lock (fail) for curator and contributor (only owner can unlock)
+
+                    # from
+                    # close
+                    assert pr['from-groupname'] != group
+                    from_client = group_clients[pr['from-groupname']]
+                    from_url_base = pr['url'].replace(group, pr['from-groupname'])
+                    resp3 = from_client.post(from_url_base + '/ops/close')
+                    if resp3.status_code >= 400: bads.append((resp, resp3))
+                    # reopen
+                    resp4 = from_client.post(from_url_base + '/ops/reopen')
+                    if resp4.status_code >= 400: bads.append((resp, resp4))
+                    # lock (fail)
+                    resp5 = from_client.post(from_url_base + '/ops/lock')
+                    if resp5.status_code < 400: bads.append((resp, resp5))
+
+                    continue  # FIXME TODO someone else
+                    fail_client = self.client
+                    resp0 = fail_client.post(pr['url'].replace(group, pr['from-groupname']) + '/ops/merge',
+                                             headers=headers, json=data)
+                    if resp0.status_code != 401:
+                        bads.append((resp, resp0))
+
+        if bads:
+            breakpoint()
+
+        assert not bads, bads
+
+    def test_pull_05_merge(self):
         bads = []
         group_clients = {g: c for g, _, c in self._pull_upcs}
         headers = {'Content-Type': 'application/json'}

@@ -610,6 +610,26 @@ where pl.pull_id = :pull order by datetime desc'''
         sql = 'SELECT mergePull(:acting_user, :pull, :efi, :eti)'
         self.session_execute(sql, args)
 
+    def closePull(self, acting_user, pull):
+        args = dict(acting_user=acting_user, pull=pull)
+        sql = 'SELECT closeUnclosePull(:acting_user, :pull)'
+        self.session_execute(sql, args)
+
+    def reopenPull(self, acting_user, pull):
+        args = dict(acting_user=acting_user, pull=pull)
+        sql = 'SELECT closeUnclosePull(:acting_user, :pull, TRUE)'
+        self.session_execute(sql, args)
+
+    def lockPull(self, acting_user, pull):
+        args = dict(acting_user=acting_user, pull=pull)
+        sql = 'SELECT lockUnlockPull(:acting_user, :pull)'
+        self.session_execute(sql, args)
+
+    def unlockPull(self, acting_user, pull):
+        args = dict(acting_user=acting_user, pull=pull)
+        sql = 'SELECT lockUnlockPull(:acting_user, :pull, TRUE)'
+        self.session_execute(sql, args)
+
     def getPulls(self, group):
         args = dict(group=group)
         sql = (f'{self._sql_pulls} where gt.groupname = :group'

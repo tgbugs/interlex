@@ -4561,6 +4561,7 @@ class Pulls(EndBase):
             'close': self.close,
             'reopen': self.reopen,
             'lock': self.lock,
+            'unlock': self.unlock,
             'submitted': self.submitted,
         }
         return super().get_func(nodes, mapping=mapping)
@@ -4672,15 +4673,76 @@ class Pulls(EndBase):
 
     @basic
     def close(self, group, pull):
-        return 'TODO', 501
+        acting_user = fl.current_user.groupname
+        dbstuff = Stuff(self.session)
+        try:
+            dbstuff.closePull(acting_user, pull)
+        except sa.exc.InternalError as e:
+            if (e.orig.diag.source_function == 'exec_stmt_raise' and
+                e.orig.diag.context.startswith('PL/pgSQL function closeunclosepull(') and
+                e.orig.diag.message_primary.startswith('pull request was not (un)closed due to bad user permissions')):
+                abort(401, e.orig.diag.message_primary)
+            else:
+                log.exception(e)
+                abort(500, 'something went wrong')
+
+        self.session.commit()
+        return 'ok', 200
 
     @basic
     def reopen(self, group, pull):
-        return 'TODO', 501
+        acting_user = fl.current_user.groupname
+        dbstuff = Stuff(self.session)
+        try:
+            dbstuff.reopenPull(acting_user, pull)
+        except sa.exc.InternalError as e:
+            if (e.orig.diag.source_function == 'exec_stmt_raise' and
+                e.orig.diag.context.startswith('PL/pgSQL function closeunclosepull(') and
+                e.orig.diag.message_primary.startswith('pull request was not (un)closed due to bad user permissions')):
+                abort(401, e.orig.diag.message_primary)
+            else:
+                log.exception(e)
+                abort(500, 'something went wrong')
+
+        self.session.commit()
+        return 'ok', 200
 
     @basic
     def lock(self, group, pull):
-        return 'TODO', 501
+        # permanent close and no more comments
+        acting_user = fl.current_user.groupname
+        dbstuff = Stuff(self.session)
+        try:
+            dbstuff.lockPull(acting_user, pull)
+        except sa.exc.InternalError as e:
+            if (e.orig.diag.source_function == 'exec_stmt_raise' and
+                e.orig.diag.context.startswith('PL/pgSQL function lockunlockpull(') and
+                e.orig.diag.message_primary.startswith('pull request was not (un)locked due to bad user permissions')):
+                abort(401, e.orig.diag.message_primary)
+            else:
+                log.exception(e)
+                abort(500, 'something went wrong')
+
+        self.session.commit()
+        return 'ok', 200
+
+    @basic
+    def unlock(self, group, pull):
+        acting_user = fl.current_user.groupname
+        dbstuff = Stuff(self.session)
+        try:
+            dbstuff.unlockPull(acting_user, pull)
+        except sa.exc.InternalError as e:
+            if (e.orig.diag.source_function == 'exec_stmt_raise' and
+                e.orig.diag.context.startswith('PL/pgSQL function lockunlockpull(') and
+                e.orig.diag.message_primary.startswith('pull request was not (un)locked due to bad user permissions')):
+                abort(401, e.orig.diag.message_primary)
+            else:
+                log.exception(e)
+                abort(500, 'something went wrong')
+
+        self.session.commit()
+        return 'ok', 200
 
 
 class Ontologies(Endpoints):
