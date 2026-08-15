@@ -3,7 +3,8 @@ database queries that are more than select e.g. all the user and group
 stuff beyond dump and load
 """
 
-from sqlalchemy.sql import text as sql_text
+from sqlalchemy.sql import bindparam, text as sql_text
+from sqlalchemy.dialects.postgresql import JSONB
 from interlex import config
 from interlex.core import makeParamsValues
 from interlex.utils import log
@@ -15,8 +16,14 @@ class Stuff:
     def __init__(self, session):
         self.session = session
 
-    def session_execute(self, sql, params=None):
-        return self.session.execute(sql_text(sql), params=params)
+    def session_execute(self, sql, params=None, bindparams=tuple()):
+        text = sql_text(sql)
+        if bindparams:
+            statement = text.bindparams(*bindparams)
+        else:
+            statement = text
+
+        return self.session.execute(statement, params=params)
 
     def insert_curies(self, group, curies):
         values = tuple((cp, ip) for cp, ip in curies.items())
@@ -751,3 +758,15 @@ insert into existing_iris (perspective, ilx_prefix, ilx_id, iri) SELECT pers.pid
 insert into uris (perspective, uri_path) SELECT pers.pid, v.up FROM ( VALUES {values_template} ) AS v (up) JOIN pers ON TRUE'''
         self.session_execute(sql, params)
 
+    def getDisplayConfig(self, group):
+        args = dict(group=group)
+        sql = 'SELECT config FROM display_configuration WHERE group_id = idFromGroupname(:group)'
+        return list(self.session_execute(sql, args))
+
+    def updateDisplayConfig(self, group, config):
+        args = dict(group=group, config=config)
+        sql = '''
+INSERT INTO display_configuration (group_id, config)
+VALUES (idFromGroupname(:group), :config)
+ON CONFLICT (group_id) DO UPDATE SET config = EXCLUDED.config'''
+        self.session_execute(sql, args, bindparams=(bindparam('config', type_=JSONB),))

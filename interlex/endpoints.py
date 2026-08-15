@@ -10,6 +10,7 @@ from functools import wraps
 from collections import defaultdict  # FIXME yeah move the bit that needs this to another file
 from urllib.parse import urlparse, quote as url_quote
 import requests
+import jsonschema
 import sqlalchemy as sa
 import flask_login as fl
 from flask import request, redirect, url_for, abort, Response, session as fsession
@@ -409,8 +410,49 @@ class Endpoints(EndBase):
         # mappings that have multiple possible predicates, and in that case the rule is to go in the order they are
         # defined in the config (TODO see if that works in json ...) and pick the first one with a matching top prioroity predicate
         # then second, then third, etc. normally this means that the first predicate will be the one where users add the display predicate
-        if request.method != 'GET':
-            abort(501, 'TODO')
+        dbstuff = Stuff(self.session)
+        if request.method == 'GET':
+            rows = dbstuff.getDisplayConfig(group)
+            if rows:
+                config = rows[0].config
+                return json.dumps(config), 200, ctaj
+        elif request.method == 'POST':
+            config = request.json
+            if not config:
+                out = {'code': 422,
+                       'message': 'no config',}
+
+            if not hasattr(self, '_validator_display_config'):
+                # FIXME FIXME FIXME this needs to be moved to a dedicated schema loading process
+                from pathlib import Path
+                _p = Path(__file__).parent.parent / 'resources/display-config-schema.json'  # FIXME
+                with open(_p, 'rt') as f:
+                    self._schema_display_config = json.load(f)
+
+                self._validator_display_config = jsonschema.validators.validator_for(
+                    self._schema_display_config)(self._schema_display_config)
+
+            errors = list(self._validator_display_config.iter_errors(config))
+            if errors:
+                out = {'code': 422,
+                       'message': 'jsonschema validation failed',
+                       'errors': [{'message': e.message,
+                                   'path': '#/' + '/'.join([str(_) for _ in e.path]),
+                                   'schema_path': '#/' + '/'.join([str(_) for _ in e.schema_path]),
+                                   'validator_value': e.validator_value,}
+                                  for e in errors],}
+                return json.dumps(out), 422, ctaj
+            else:
+                try:
+                    dbstuff.updateDisplayConfig(group, config)
+                except Exception as e:
+                    log.exception(e)
+                    abort(500, 'something went wrong')
+
+                self.session.commit()
+                return json.dumps({'code': 200, 'message': 'config updated'}), 200, ctaj
+        else:
+            abort(405)
 
         config = {'type': 'display-config',
                   'name': 'global',

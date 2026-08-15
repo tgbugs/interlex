@@ -935,14 +935,16 @@ CREATE TABLE display_configuration_history(
        datetime TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
-CREATE FUNCTION display_configuration_history() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION display_configuration_history() RETURNS trigger AS $$
 BEGIN
+IF NEW.config != OLD.config THEN
     INSERT INTO display_configuration_history (group_id, config) VALUES (NEW.group_id, NEW.config);
-    RETURN NULL;
+END IF;
+RETURN NULL;
 END;
 $$ language plpgsql;
 
-CREATE TRIGGER display_configuration_history AFTER INSERT OR UPDATE ON display_configuration_history
+CREATE TRIGGER display_configuration_history AFTER INSERT OR UPDATE ON display_configuration
        FOR EACH ROW EXECUTE PROCEDURE display_configuration_history();
 
 /*

@@ -1073,6 +1073,29 @@ class TestRoutes(RouteTester, unittest.TestCase):
         assert resp0.json, 'nothing?'
         assert resp0.json == resp1.json, 'oops'
 
+    def test_configuration_post_schema(self):
+        self.app.debug = True
+        client = self.app.test_client()
+
+        resp0 = client.get(f'{self.prefix}/base/configuration')
+        # valid config
+        valid_config = resp0.json
+        resp = client.post(f'{self.prefix}/tgbugs/configuration', json=valid_config)
+        assert resp.status_code == 200, resp.status_code
+        assert resp.json.get('message') == 'config updated'
+
+        # invalid config
+        invalid_config = valid_config
+        invalid_config['sub-configs'][0]['sub-configs'][0]['sub-configs'][0]['type'] = 'not-a-config'
+        resp2 = client.post(f'{self.prefix}/tgbugs/configuration', json=invalid_config)
+        assert resp2.status_code == 422, f'Expected 422, got {resp2.status_code}'
+        assert 'errors' in resp2.json
+        errors = resp2.json['errors']
+        assert errors
+        assert 'message' in errors[0]
+        assert 'path' in errors[0]
+        assert 'schema_path' in errors[0]
+
 
 class TestApiDocs(RouteTester, unittest.TestCase):
     def test_docs(self):
