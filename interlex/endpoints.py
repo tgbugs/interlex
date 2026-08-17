@@ -464,7 +464,7 @@ class Endpoints(EndBase):
                           'rdfs:label',
                       ],
                       'render-tooltip-predicate-order': [
-                          'ilxr:displayDefinition',
+                          'ilxr:shortDefinition',
                       ],
                       'display-order-predicate-order': [],
                       'display-order-predicate-order-rule': 'natural-sort-render-label',
@@ -624,7 +624,7 @@ class Endpoints(EndBase):
                                             'ilxtr:hasMolecularPhenotype',
                                             'ilxtr:hasNucleicAcidExpressionPhenotype',
                                             'ilxtr:hasSomaLocatedIn',
-                                            'ilxtr:assertedSubClassOf',
+                                            'TEMP:assertedSubClassOf',
                                         ],
                                         'clickable-things': [],
                                     },
