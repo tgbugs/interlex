@@ -1112,22 +1112,16 @@ CREATE TABLE triples(
        -- I think what we will have to do is add a set of immediate fixes on ingest that we always run
        -- that work on specific fields and immediately fix things after load as an immediate change set
        -- CHECK (o_lit ~* '(^\S+|\S+$)'),  -- no leading or trailing whitespace TODO also for other columns
-       CHECK ((uri_host(s) <> reference_host()) OR
-             -- currently we prevent users from entering /{group-other-than-base}/{ilx,cde,pde,fde}_ etc.
-             -- however user uris are allowed
-              (uri_host(s) = reference_host() AND (uri_path_array(s))[2] !~* '[A-Za-z]+_[0-9]+') OR -- FIXME or cde_, fde_, etc
-              -- TODO we can't check that the id is actually in the database without a trigger
-              -- TODO also prevent users from creating ilx_ fragments in /uris/
-              -- only base may have ilx ids, all the rest are by construction from qualifiers
-              -- FIXME un hardcode 'base' and 'ilx_'
-              (uri_host(s) = reference_host() AND (uri_path_array(s))[1] = 'base' AND (uri_path_array(s))[2] ~* '[A-Za-z]+_[0-9]+')),
+       CHECK (uri_host(s) <> reference_host() OR
+              uri_path(s) ~ '^/base(/|$)' OR
+              uri_path(s) !~* '^/[^/]*/[^/]*[A-Za-z]+_[0-9]+'),
        -- these two should always be an exact copy of the checks for s
-       CHECK ((uri_host(p) <> reference_host()) OR
-              (uri_host(p) = reference_host() AND (uri_path_array(p))[2] !~* '[A-Za-z]+_[0-9]+') OR
-              (uri_host(p) = reference_host() AND (uri_path_array(p))[1] = 'base' AND (uri_path_array(p))[2] ~* '[A-Za-z]+_[0-9]+')),
-       CHECK ((uri_host(o) <> reference_host()) OR
-              (uri_host(o) = reference_host() AND (uri_path_array(o))[2] !~* '[A-Za-z]+_[0-9]+') OR
-              (uri_host(o) = reference_host() AND (uri_path_array(o))[1] = 'base' AND (uri_path_array(o))[2] ~* '[A-Za-z]+_[0-9]+')),
+       CHECK (uri_host(p) <> reference_host() OR
+              uri_path(p) ~ '^/base(/|$)' OR
+              uri_path(p) !~* '^/[^/]*/[^/]*[A-Za-z]+_[0-9]+'),
+       CHECK (uri_host(o) <> reference_host() OR
+              uri_path(o) ~ '^/base(/|$)' OR
+              uri_path(o) !~* '^/[^/]*/[^/]*[A-Za-z]+_[0-9]+'),
        CHECK ((s IS NOT NULL AND s_blank IS NULL) OR
               (s IS NULL AND s_blank IS NOT NULL) OR
               (s = 'annotation' AND s_blank IS NOT NULL)), -- reminder: this was to speed up retrieval of triples that are part of 3 triple annotation ?

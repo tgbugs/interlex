@@ -7,6 +7,12 @@ use the =tgbugs/musl:interlex= docker image defined at
 See the ebuild in tgbugs-overlay.
 [[https://github.com/tgbugs/tgbugs-overlay/blob/master/dev-python/interlex/interlex-9999.ebuild]]
 *** Setup for =pguri= postgres module
+Note that =pguri= is now optional but has performance tradeoffs relative to the plpgsql implementation.
+Once you have =pguri= installed (see below) you can run
+#+begin_src bash
+bin/interlex-dbsetup --pguri $PORT $DBNAME
+#+end_src
+and interlex will use the =pguri= c extension instead of the plpgsql implementation for the uri type.
 **** Gentoo
 A =dev-db/pguri-9999.ebuild= is available in [[https://github.com/tgbugs/tgbugs-overlay]]
 #+begin_src bash

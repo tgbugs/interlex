@@ -25,15 +25,38 @@ ALTER ROLE "interlex-user" SET search_path = interlex, public;
 
 -- postgres postgres
 
+-- rds needs this https://stackoverflow.com/a/34898033
+SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'rdsadmin') AS rds \gset
+
+\if :rds
+GRANT "interlex-admin" TO CURRENT_USER;
+\endif
+
+-- postgres postgres
+
 DROP DATABASE IF EXISTS :database;
 
 -- postgres postgres
 
+\if :rds
+CREATE DATABASE :database -- interlex
+    WITH OWNER = 'interlex-admin'
+    ENCODING = 'UTF8'
+    LC_COLLATE = 'en_US.UTF-8'
+    LC_CTYPE = 'en_US.UTF-8'
+    CONNECTION LIMIT = -1;
+\else
 CREATE DATABASE :database -- interlex
     WITH OWNER = 'interlex-admin'
     ENCODING = 'UTF8'
     TABLESPACE = pg_default
-    LC_COLLATE = 'en_US.UTF-8'  -- this was a gentoo locale issue check ${LANG}
+    LC_COLLATE = 'en_US.UTF-8'
     LC_CTYPE = 'en_US.UTF-8'
     CONNECTION LIMIT = -1;
+\endif
 
+-- postgres postgres
+
+\if :rds
+REVOKE "interlex-admin" FROM CURRENT_USER;
+\endif

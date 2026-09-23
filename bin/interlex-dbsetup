@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
-# interlex-dbsetup [PORT] [DATABASE]
+# interlex-dbsetup [--pguri|--no-pguri] [PORT] [DATABASE] [HOST]
 set -e
+
+USE_PGURI=""
+POSARGS=()
+for _arg in "$@"; do
+    case "$_arg" in
+        --pguri)    USE_PGURI=1 ;;
+        --no-pguri) USE_PGURI=0 ;;
+        *)          POSARGS+=("$_arg") ;;
+    esac
+done
+set -- "${POSARGS[@]}"
+
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do # resolve all symlinks
   DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
@@ -32,21 +44,39 @@ else
     DATABASE=$2
 fi
 
-echo running dbsetup for ${DATABASE} on ${PORT}
+if [ -z $3 ]; then
+    HOST=localhost
+else
+    HOST=$3
+fi
+
+if [ -z "${USE_PGURI}" ]; then
+    USE_PGURI=0
+fi
+if [ "${USE_PGURI}" = "1" ]; then
+    URI_SQL="${SQL}/extensions-pguri.sql"
+else
+    URI_SQL="${SQL}/pguri_sql.sql"
+fi
+
+echo running dbsetup for ${DATABASE} on ${HOST}:${PORT}
+
 
 # postgres setup (these need to fail loudly)
-psql -U postgres -h localhost -p ${PORT} -d postgres  -f "${SQL}/postgres.sql" -v ON_ERROR_STOP=on -v database=$DATABASE
-psql -U postgres -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/extensions.sql" -v ON_ERROR_STOP=on
+psql -U postgres -h ${HOST} -p ${PORT} -d postgres  -f "${SQL}/postgres.sql" -v ON_ERROR_STOP=on -v database=$DATABASE
+
+psql -U postgres -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${URI_SQL}" -v ON_ERROR_STOP=on
+psql -U postgres -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/extensions.sql" -v ON_ERROR_STOP=on
 
 # interlex-admin setup
-psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/schemas.sql" -v ON_ERROR_STOP=on
-psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/groups.sql" -v ON_ERROR_STOP=on
-psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/triples.sql" -v ON_ERROR_STOP=on
-psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/user-uris.sql" -v ON_ERROR_STOP=on
-psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/pulls.sql" -v ON_ERROR_STOP=on
-psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/comments.sql" -v ON_ERROR_STOP=on
-psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/inserts.sql" -v ON_ERROR_STOP=on -v resources=${RESOURCES}
-psql -U interlex-admin -h localhost -p ${PORT} -d ${DATABASE} -f "${SQL}/permissions.sql" -v ON_ERROR_STOP=on -v database=${DATABASE}
+psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/schemas.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/groups.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/triples.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/user-uris.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/pulls.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/comments.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/inserts.sql" -v ON_ERROR_STOP=on -v resources=${RESOURCES}
+psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/permissions.sql" -v ON_ERROR_STOP=on -v database=${DATABASE}
 
 # tests
 export DBSETUPTEST=1
