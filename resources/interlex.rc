@@ -71,8 +71,7 @@ configcheck() {
     if [ ! -f ${PGPASS} ]; then
         eend 1 "${PGPASS} does not exist!"
         OOPS=1
-    fi
-    if [ $(stat -c %a ${PGPASS}) != 600 ]; then
+    elif [ $(stat -c %a ${PGPASS}) != 600 ]; then
         eend 1 "${PGPASS} is readable by others! Please chmod 0600 ${PGPASS}"
         OOPS=1
     fi
