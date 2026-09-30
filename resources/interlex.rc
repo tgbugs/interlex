@@ -71,9 +71,15 @@ configcheck() {
     if [ ! -f ${PGPASS} ]; then
         eend 1 "${PGPASS} does not exist!"
         OOPS=1
-    elif [ $(stat -c %a ${PGPASS}) != 600 ]; then
-        eend 1 "${PGPASS} is readable by others! Please chmod 0600 ${PGPASS}"
-        OOPS=1
+    else
+        if [ "$(stat -c '%U:%G' ${PGPASS} 2>/dev/null)" != "${SVCUSER}:${SVCGROUP}" ]; then
+            eend 1 "${PGPASS} is not owned by ${SVCUSER}:${SVCGROUP}"
+            OOPS=1
+        fi
+        if [ $(stat -c %a ${PGPASS}) != 600 ]; then
+            eend 1 "${PGPASS} is readable by others! Please chmod 0600 ${PGPASS}"
+            OOPS=1
+        fi
     fi
 
     if [ ${OOPS} -ne 0 ]; then
@@ -82,7 +88,8 @@ configcheck() {
 
     ebegin "Testing database config"
     su - ${SVCUSER} -c "
-    psql -U interlex-user \
+    psql --no-password \
+         -U interlex-user \
          -h ${DB_HOST} \
          -p ${DB_PORT} \
          -d ${DATABASE} \
