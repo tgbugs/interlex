@@ -1,6 +1,8 @@
 # configuration file for the interlex web server
 # permissions on this file should be set to 0600
 
+# postgres ssl connection mode set to disable if e.g. connecting via ssh port forwarding
+PGSSLMODE=require
 # gunicorn log level
 LOG_LEVEL=
 # database server host

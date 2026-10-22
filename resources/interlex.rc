@@ -18,8 +18,9 @@ start_stop_daemon_args="
 --group ${SVCGROUP}
 --user ${SVCUSER}
 --wait 1500
---env DB_HOST=${DB_HOST}
---env DB_PORT=${DB_PORT}
+--env PGSSLMODE=${PGSSLMODE}
+--env INTERLEX_DB_HOST=${DB_HOST}
+--env INTERLEX_DB_PORT=${DB_PORT}
 --env INTERLEX_DATABASE=${DATABASE}
 --env BROKER_URL=${BROKER_URL}
 --env PYTHONPATH=${PYTHONPATH}
@@ -87,13 +88,13 @@ configcheck() {
     fi
 
     ebegin "Testing database config"
-    su - ${SVCUSER} -c "
+    PGSSLMODE=${PGSSLMODE} runuser -u ${SVCUSER} -- \
     psql --no-password \
          -U interlex-user \
          -h ${DB_HOST} \
          -p ${DB_PORT} \
          -d ${DATABASE} \
-         -c 'SELECT reference_host()'"
+         -c 'SELECT reference_host()'
     eend $? "Failed to connect to database check /etc/conf.d/${SVCNAME}" || return 1
 
     checkpath --directory --owner ${command_owner} --mode 0775 "${run_dir}/${SVCNAME}"
