@@ -81,10 +81,12 @@ psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/permissio
 # tests
 export DBSETUPTEST=1
 # FIXME only run tests if we are on testing database probably to avoid pollution?
+export INTERLEX_TEST_HOST=${HOST}
 export INTERLEX_TEST_PORT=${PORT}
 export INTERLEX_TEST_DATABASE=${DATABASE}
 echo running python tests 
 pytest "${PATH_TEST}"/test_constraints.py
 unset DBSETUPTEST
+unset INTERLEX_TEST_HOST
 unset INTERLEX_TEST_PORT
 unset INTERLEX_TEST_DATABASE
