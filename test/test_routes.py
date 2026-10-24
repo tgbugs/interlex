@@ -12,7 +12,7 @@ from interlex.uri import uriStructure, run_uri
 from interlex.core import make_path_checks, remove_terminals
 from interlex.dump import Queries
 from interlex.config import ilx_pattern, auth
-from interlex.config import test_host, test_port
+from interlex.config import test_http_host, test_http_port
 from interlex.ingest import reingest_gclc
 from interlex.dbstuff import Stuff
 from interlex.utils import log
@@ -126,8 +126,8 @@ def makeTestRoutes(limit=1):
 
 
 class RouteTester:
-    host = test_host
-    port = test_port
+    host = test_http_host
+    port = test_http_port
     scheme = 'http'
     with_server = False
 
@@ -327,7 +327,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
         token = auth.get('interlex-test-api-key')
 
         #url = f'{self.prefix}/{tuser}/ilx_0101431'
-        _thost = test_host + (f':{test_port}' if test_port else '')
+        _thost = test_http_host + (f':{test_http_port}' if test_http_port else '')
         _datap, (_respp, _resp1p) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=tuser, token=token,
                                                               etype='owl:ObjectProperty')
 
@@ -522,7 +522,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
         token = auth.get('interlex-test-api-key')
 
         _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=auser, token=token)
-        _thost = test_host + (f':{test_port}' if test_port else '')
+        _thost = test_http_host + (f':{test_http_port}' if test_http_port else '')
         url1 = _resp1.location.replace(_thost, 'uri.interlex.org').replace(auser, 'base')  # FIXME
         _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=auser, token=token)
         url2 = _resp1.location.replace(_thost, 'uri.interlex.org').replace(auser, 'base')  # FIXME
@@ -577,7 +577,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
         token = auth.get('interlex-test-api-key')
 
         _data, (_resp, _resp1) = self.test_post_entity_new(endpoint='entity-new', client=client, tuser=auser, token=token)
-        _thost = test_host + (f':{test_port}' if test_port else '')
+        _thost = test_http_host + (f':{test_http_port}' if test_http_port else '')
         url3 = _resp1.location.replace(_thost, 'uri.interlex.org').replace(auser, 'base')  # FIXME
 
         headers = {'Authorization': f'Bearer {token}'}
@@ -789,7 +789,7 @@ class TestRoutes(RouteTester, unittest.TestCase):
         ver_url = vers_url + '/' + ver
         resp2 = client.get(ver_url, headers=headers_get_ver)
 
-        _thost = test_host + (f':{test_port}' if test_port else '')
+        _thost = test_http_host + (f':{test_http_port}' if test_http_port else '')
         iri = url.replace(_thost, 'uri.interlex.org').replace(tuser, 'base')  # FIXME
 
         # FIXME should rci always return with the base urls or substitute the user in?

@@ -3,7 +3,7 @@ from sqlalchemy.sql import text as sql_text
 from interlex import endpoints, auth as iauth
 from interlex.uri import run_uri
 from interlex.utils import log
-from interlex.config import auth, test_host, test_port
+from interlex.config import auth, test_http_host, test_http_port
 from interlex.dbstuff import Stuff
 
 # FIXME TODO these are things that could be in dbstuff but that are
@@ -23,8 +23,8 @@ def make_test_user(username, password, db_kwargs, email=None, make_admin=False):
     app = run_uri(echo=True, test=True, db_kwargs=db_kwargs)
     client = app.test_client()
     scheme = 'http'
-    host = test_host  # XXX HACK the uses db host as uri host
-    port = test_port
+    host = test_http_host
+    port = test_http_port
 
     _port = f':{port}' if port else ''
     prefix = f'{scheme}://{host}{_port}'
