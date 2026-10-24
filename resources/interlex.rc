@@ -32,8 +32,8 @@ command_args="
 --daemon
 --pid ${pidfile}
 --name interlex-uri
---workers 8
---worker-class tornado
+--workers ${WORKERS}
+--worker-class ${WORKER_CLASS}
 --timeout 30
 --group ${SVCGROUP}
 --user ${SVCUSER}

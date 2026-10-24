@@ -17,3 +17,7 @@ BROKER_URL="ampq://username:password@localhost:5672/interlex"
 LOG_LOC=/var/log/interlex
 # development settings
 PYTHONPATH=
+# gunicorn workers
+WORKERS=6
+# gunicorn worker class
+WORKER_CLASS=sync
