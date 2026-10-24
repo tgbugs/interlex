@@ -43,7 +43,9 @@
      'test-api-user': {
          'default': None,
          'environment-variables': 'INTERLEX_TEST_API_USER',},
-     'test-host': 'localhost',
+     'test-host': {
+         'default': 'localhost',
+         'environment-variables': 'INTERLEX_TEST_HOST',},
      'test-database': {
          'default': '__interlex_testing',
          'environment-variables': 'INTERLEX_TEST_DATABASE',},

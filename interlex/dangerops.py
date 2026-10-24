@@ -23,7 +23,7 @@ def make_test_user(username, password, db_kwargs, email=None, make_admin=False):
     app = run_uri(echo=True, test=True, db_kwargs=db_kwargs)
     client = app.test_client()
     scheme = 'http'
-    host = test_host
+    host = test_host  # XXX HACK the uses db host as uri host
     port = test_port
 
     _port = f':{port}' if port else ''
