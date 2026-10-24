@@ -1,7 +1,7 @@
 import unittest
 import pytest
 from pyontutils.ontutils import url_blaster
-from interlex.config import test_host, test_stress_port
+from interlex.config import test_http_host, test_stress_port
 
 
 def blast(scheme, host, port, start, stop):
@@ -12,7 +12,7 @@ def blast(scheme, host, port, start, stop):
 
 
 class TestStress(unittest.TestCase):
-    host = test_host
+    host = test_http_host
     port = test_stress_port
     scheme = 'http'
 
