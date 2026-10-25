@@ -2362,7 +2362,33 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
     metadata = ori.metadata()
 
     # XXX XXX XXX preamble
-    metadata.graph
+    try:
+        metadata.graph
+    except Exception as e:
+        log.exception(e)
+        resp = requests.get(ori.iri)
+        class Oops:
+            format = metadata.format
+            _rapper_input_type = metadata.rapper_input_type()
+            identifier = iri
+            identifier_bound = None
+            identifier_version = None
+            identifier_actionable = iri
+            _progenitors = {'stream-http': resp}
+            graph = OntGraph(bind_namespaces='none')
+            def rapper_input_type(self):
+                return self._rapper_input_type
+            progenitor = OntResIri.progenitor
+
+        Oops.iri = iri
+        metadata = Oops()
+        sigh = OntGraph(bind_namespaces='none').parse(data=resp.text, format=metadata.format)
+        metadata.graph.namespace_manager.populate_from(sigh)
+        #sigh.metadata_type_markers.extend([])  # TODO search more than just owl.Ontology
+        mtrips = list(sigh.metadata())
+        if mtrips:
+            metadata.graph.populate_from_triples(mtrips)
+
     check_metadata_subjects(metadata)
     bound_name = metadata.identifier_bound
     bound_version_name = metadata.identifier_version
@@ -2559,9 +2585,8 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
         if not trip_seq:  # graph_rows is now a generator
             breakpoint()
 
-        _ = [out_graph.add(t) for t in trip_seq]
         log.debug('begin populate outgraph')
-        out_graph.namespace_manager.populate_from()
+        _ = [out_graph.add(t) for t in trip_seq]
         log.debug('end populate outgraph')
 
         if len(trip_seq) != triple_count:
