@@ -647,6 +647,13 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
 
     runonce()
 
+    if proxy_n == 0:
+        _upn = config.auth.get('proxy-n')
+        try:
+            proxy_n = int(_upn)
+        except Exception as e:
+            pass
+
     if proxy_n > 0:
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_n, x_proto=proxy_n, x_host=proxy_n)
         #'X-Real-Ip':

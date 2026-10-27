@@ -5,6 +5,8 @@
 PGSSLMODE=require
 # gunicorn log level
 LOG_LEVEL=
+# access log format
+LOG_FORMAT='%(h)s - - %(t)s "%(r)s" %(s)s -'
 # database server host
 DB_HOST=localhost
 # database server port

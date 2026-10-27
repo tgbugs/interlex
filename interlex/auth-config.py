@@ -33,6 +33,10 @@
      'port-guni-curies': 8612,
      'port-guni-alt': 8618,
 
+     'proxy-n': {
+         'default': 0,
+         'environment-variables': 'INTERLEX_PROXY_N',},
+
      # database connection logic XXX don't need once we use orthauth
      'dev-remote-hosts': [],
 

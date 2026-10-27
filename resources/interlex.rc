@@ -39,6 +39,8 @@ command_args="
 --user ${SVCUSER}
 --log-level ${LOG_LEVEL}
 --log-file ${LOG}
+--access-logfile -
+--access-logformat '${LOG_FORMAT}'
 --capture-output
 interlex.uri_server:app
 "
