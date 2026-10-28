@@ -303,7 +303,11 @@ class Post(clif.Dispatcher):
         from interlex.config import auth
         # FIXME obviously allowing the group name as the default password is unspeakably dumb
         api_key = auth.get('interlex-api-key')  # os.environ.get('INTERLEX_API_KEY', group)  # FIXME
-        headers = {'Authorization': 'Bearer ' + api_key}
+        if api_key is None:
+            headers = {}
+        else:
+            headers = {'Authorization': 'Bearer ' + api_key}
+
         if self.options.local:
             from interlex.config import port_uri
             host = f'localhost:{port_uri}'
