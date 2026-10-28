@@ -480,20 +480,25 @@ def skipapi(auth_user='empty'):
         return db, auth_user, True
 
     from interlex import endpoints
-    endpoints.getBasicDB = getBasicDB_DANGERZONE
+    if endpoints.getBasicDB != getBasicDB_DANGERZONE:
+        endpoints.getBasicDB = getBasicDB_DANGERZONE
 
 
 class Ops(clif.Dispatcher):
 
-    _post = Post._post
+    _s_post = Post._post
+
+    def _post(self):
+        scheme, host, group, headers = self._s_post()
+        if not headers:
+            skipapi()
+        return scheme, host, group, headers
 
     def _get_session_etc(self, query_cache_size=500):
         from .core import getScopedSession, dbUri
         from .config import auth
         if self.options.production:
             scheme, host, group, headers = self._post()
-            if not headers:
-                skipapi()
             dburi = dbUri()
             kwargs = None
         else:
@@ -539,8 +544,6 @@ class Ops(clif.Dispatcher):
         app = run_uri()
 
         scheme, host, group, headers = self._post()
-        if not headers:
-            skipapi()
         ontology_iri = self.options.rdf_iri
 
         u = urlparse(ontology_iri)
