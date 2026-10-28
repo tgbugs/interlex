@@ -470,6 +470,19 @@ class Post(clif.Dispatcher):
         raise NotImplementedError()
 
 
+def skipapi(auth_user='empty'):
+    # if you have the database password you can do anything you want anyway
+    def getBasicDB_DANGERZONE(self, group, request):
+        db = self.getBasicInfo(group, auth_user)
+        msg = ('no api key present, bypassing access to '
+               f'{group} as {auth_user} for {request}')
+        log.warning(msg)
+        return db, auth_user, True
+
+    from interlex import endpoints
+    endpoints.getBasicDB = getBasicDB_DANGERZONE
+
+
 class Ops(clif.Dispatcher):
 
     _post = Post._post
@@ -479,6 +492,8 @@ class Ops(clif.Dispatcher):
         from .config import auth
         if self.options.production:
             scheme, host, group, headers = self._post()
+            if not headers:
+                skipapi()
             dburi = dbUri()
             kwargs = None
         else:
@@ -524,6 +539,8 @@ class Ops(clif.Dispatcher):
         app = run_uri()
 
         scheme, host, group, headers = self._post()
+        if not headers:
+            skipapi()
         ontology_iri = self.options.rdf_iri
 
         u = urlparse(ontology_iri)
