@@ -1,6 +1,6 @@
 import secrets, base64
 from sqlalchemy.sql import text as sql_text
-from interlex import endpoints, auth as iauth
+from interlex import endpoints, auth as iauth, config
 from interlex.uri import run_uri
 from interlex.utils import log
 from interlex.config import auth, test_http_host, test_http_port
@@ -17,7 +17,8 @@ if iauth._orcid_mock_public_key is None:
     iauth._orcid_mock_private_key = _priv.save_pkcs1()
 
 
-def make_test_user(username, password, db_kwargs, email=None, make_admin=False):
+def make_test_user(username, password, db_kwargs, email=None,
+                   orcid=None, orcid_name=None, do_orcid=True, make_admin=False):
     """ you probably shouldn't be using this """
     log.info(db_kwargs)
     app = run_uri(echo=True, test=True, db_kwargs=db_kwargs)
@@ -57,9 +58,18 @@ def make_test_user(username, password, db_kwargs, email=None, make_admin=False):
         dbstuff.email_verify_complete(test_token)
         session.commit()
 
-        orcid_meta = endpoints.Ops._make_orcid_meta(expires_in_seconds=None)
-        endpoints.Ops._insert_orcid_meta(session, orcid_meta, user=user)
-        session.commit()
+        if do_orcid:
+            # this is not the best way to handle this, the actual orcid association
+            # is still needed but must be deferred at the point where we run this
+            orcid_meta = endpoints.Ops._make_orcid_meta(expires_in_seconds=None)
+            if orcid is not None:
+                orcid_meta['orcid'] = orcid.identifier.suffix
+            if orcid_name is not None:
+                orcid_meta['name'] = orcid_name
+
+            endpoints.Ops._insert_orcid_meta(session, orcid_meta, user=user)
+            session.commit()
+
         if make_admin:
             args = dict(groupname=user)
             sql = "INSERT INTO user_permissions (group_id, user_id, user_role) VALUES (0, idFromGroupname(:groupname), 'admin');"
@@ -76,6 +86,41 @@ def revoke_admin(user, db_kwargs):
         sql = "UPDATE user_permissions SET user_role = 'deleted' WHERE group_id = 0 AND user_id = idFromusername(:groupname);"
         session.execute(sql_text(sql), params=args)
         session.commit()
+
+
+def register_first_admin():
+    import sys
+    from getpass import getpass
+    import idlib
+    db_kwargs = {k:auth.get(f'db-{k}') for k in ('host', 'port', 'database')}
+    log.info(db_kwargs)
+    try:
+        username = sys.argv[1]
+        email = sys.argv[2]
+        _orcid = sys.argv[3]
+        orcid_name = sys.argv[4]
+    except IndexError:
+        msg = 'username, email, orcid, and orcid-name are required'
+        raise ValueError(msg)
+
+    msg = f'\nSet password for new admin user {username}'
+    print(msg)
+    a = getpass()
+    b = getpass()
+    if a == b:
+        password = a
+    else:
+        raise ValueError('passwords do not match')
+
+    kls = idlib.systems.orcid.OrcidSandbox if config.orcid_sandbox else idlib.Orcid
+    try:
+        orcid = kls(_orcid)
+    except idlib.systems.orcid.OrcidId.OrcidMalformedError as e:
+        msg = f'this system is configured to use {config.orcid_host}'
+        raise TypeError(msg) from e
+
+    make_test_user(username, password, db_kwargs, email=email,
+                   orcid=orcid, orcid_name=orcid_name, make_admin=True)
 
 
 def example_main():
