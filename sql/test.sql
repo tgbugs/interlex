@@ -43,9 +43,11 @@ INSERT INTO triples (s, p, o)
 SELECT * FROM user_emails JOIN groups ON groups.id = user_emails.user_id;
 SELECT * FROM users;
 
+INSERT INTO users (id) VALUES (idFromGroupname('tgbugs'));
 INSERT INTO orgs VALUES (idFromGroupname('uberon'), idFromGroupname('tgbugs'));  -- if run before I am a user fails
 
 DELETE FROM orgs WHERE id = idFromGroupname('uberon');
+DELETE FROM users WHERE id = idFromGroupname('tgbugs');
 
 SELECT * FROM groups;
 SELECT * FROM user_permissions;
