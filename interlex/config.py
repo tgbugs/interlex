@@ -94,3 +94,7 @@ def _set_orcid():
 
 orcid_host, orcid_client_id, orcid_client_secret = None, None, None
 _set_orcid()
+
+# https vs http hack
+# TODO we really need to come up with a systematic solution for this
+httpshosts = ('raw.githubusercontent.com',)

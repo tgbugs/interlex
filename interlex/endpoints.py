@@ -31,7 +31,7 @@ from interlex.core import diffCuries, makeParamsValues, default_prefixes, from_t
 from interlex.dump import TripleExporter, Queries
 from interlex.load import FileFromIRIFactory, FileFromPostFactory, TripleLoaderFactory, BasicDBFactory, UnsafeBasicDBFactory
 from interlex.utils import log as _log
-from interlex.config import ilx_pattern  # FIXME pull from database probably
+from interlex.config import ilx_pattern, httpshosts  # FIXME pull from database probably
 from interlex.ingest import ingest_ontspec, ingest_record, reingest_gclc
 from interlex.vervar import process_vervar, get_latest_group_subject_hack
 from interlex.render import TripleRender  # FIXME need to move the location of this
@@ -5112,7 +5112,8 @@ class Ontologies(Endpoints):
                 #return tripleRender(request, graph, user, 'FIXMEFIXME', object_to_existing)
             elif dns:
                 name_type = 'bound'
-                uri_string = f'https://{host}/{ont_path}'
+                scheme = 'https' if host in httpshosts else 'http'
+                uri_string = f'{scheme}://{host}/{ont_path}'  # FIXME http vs https
                 local_convention_rows = self.queries.getCuriesByName(uri_string, type=name_type)
                 curies = {p: n for p, n in local_convention_rows}
                 # FIXME getGraphByName produces incorrect results for precision.ttl :/
