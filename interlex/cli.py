@@ -502,7 +502,12 @@ class Ops(clif.Dispatcher):
             dburi = dbUri()
             kwargs = None
         else:
-            group = auth.get('test-api-user')
+            _group = auth.get('test-api-user')
+            group = self.options.user if _group is None else _group
+            if group and _group and group != _group:
+                msg = f'cli --user does not match config test-api-user {_group} != {group}'
+                raise ValueError(msg)
+
             kwargs = {k:auth.get(f'test-{k}') for k in ('host', 'port', 'database')}
             kwargs['dbuser'] = auth.get('db-user')
             dburi = dbUri(**kwargs)
