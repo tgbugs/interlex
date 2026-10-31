@@ -1,5 +1,9 @@
 # locally modified config files
 docs/config.org
+docs/local
+docs/dev
+docs/staging
+docs/prod
 
 # temp files
 *.bak
