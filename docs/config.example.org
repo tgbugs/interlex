@@ -319,6 +319,12 @@ If you need secrets to be different per instance move the variable into the sect
 #+name: &profile-ssh-host
 :
 
+sandbox
+#+name: &cfg-real-frag-prefix
+: false
+#+name: &cfg-orcid-sandbox
+: true
+
 postgres
 #+name: &cfg-pgsslmode
 : disable
@@ -372,6 +378,12 @@ admin
 :
 #+name: &profile-ssh-host
 :
+
+sandbox
+#+name: &cfg-real-frag-prefix
+: false
+#+name: &cfg-orcid-sandbox
+: true
 
 postgres
 #+name: &cfg-pgsslmode
@@ -427,6 +439,12 @@ admin
 #+name: &profile-ssh-host
 :
 
+sandbox
+#+name: &cfg-real-frag-prefix
+: false
+#+name: &cfg-orcid-sandbox
+: true
+
 postgres
 #+name: &cfg-pgsslmode
 : require
@@ -480,6 +498,12 @@ admin
 :
 #+name: &profile-ssh-host
 :
+
+sandbox
+#+name: &cfg-real-frag-prefix
+: true
+#+name: &cfg-orcid-sandbox
+: false
 
 postgres
 #+name: &cfg-pgsslmode
@@ -696,7 +720,7 @@ auth-stores:
   secrets:
     path: '{:user-config-path}/orthauth/secrets.sxpr'
 auth-variables: &<<&config-profile()>>
-  use-real-frag-pref: false
+  use-real-frag-pref: <<&cfg-real-frag-prefix()>>
   interlex-api-key:
   test-api-user:
   interlex-test-api-key:
@@ -733,6 +757,7 @@ auth-variables: &<<&config-profile()>>
   test-port: <<&cfg-db-port()>>
   smtp-host:
   smtp-port:
+  orcid-sandbox: <<&cfg-orcid-sandbox()>>
   orcid-client-id:
     path: orcid interlex client-id
   orcid-client-secret:
