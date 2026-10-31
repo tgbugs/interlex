@@ -48,6 +48,7 @@ INSERT INTO orgs VALUES (idFromGroupname('uberon'), idFromGroupname('tgbugs')); 
 
 DELETE FROM orgs WHERE id = idFromGroupname('uberon');
 DELETE FROM users WHERE id = idFromGroupname('tgbugs');
+DELETE FROM reference_names WHERE perspective = (SELECT p.id FROM perspectives AS p WHERE p.group_id = idFromGroupname('tgbugs'));
 
 SELECT * FROM groups;
 SELECT * FROM user_permissions;
