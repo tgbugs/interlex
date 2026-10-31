@@ -241,7 +241,7 @@ Change =user= to match your system, do not use =~/= because it expands different
 
 #+name: &ilx-setup-podman-0-orch
 #+begin_src bash orch=t :noweb yes
-_entrypoints=<<&debug-entrypoints()>> # uncomment line for development
+#_entrypoints=<<&debug-entrypoints()>> # uncomment line for development
 container_id=$(podman run --privileged ${_entrypoints:+-v ${_entrypoints}:${_entrypoints}} -v nested-docker-data:/var/lib/docker --rm -di alpine:latest)
 #+end_src
 # contaier_id=$(podman ps -lqf ancestor=alpine:latest)
