@@ -48,6 +48,7 @@ SELECT o.id FROM orgs AS o JOIN groups AS g ON g.id = o.id WHERE g.groupname = :
 '''
         return list(self.session_execute(sql, params=params))
 
+    _user_new_reserved = False  # HACK dangerops
     def user_new(self, username, email, argon2_string=None, orcid=None, email_verify=True):
         params = dict(groupname=username, email=email)
 
@@ -79,8 +80,13 @@ SELECT o.id FROM orgs AS o JOIN groups AS g ON g.id = o.id WHERE g.groupname = :
             # using CURRENT_TIMESTAMP means we can detect unvalidated emails,
             # also user email_validated will be true but no email will be
 
+        if self._user_new_reserved:
+            sql_group_new = '(SELECT g.id FROM groups AS g WHERE g.groupname = :groupname AND NOT EXISTS (SELECT * FROM users AS u WHERE u.id = idFromGroupname(:groupname)) AND NOT EXISTS (SELECT * FROM orgs AS o WHERE o.id = idFromGroupname(:groupname)))'
+        else:
+            sql_group_new = '(INSERT INTO groups (groupname) VALUES (:groupname) RETURNING id)'
+
         sql = f'''
-WITH grow AS (INSERT INTO groups (groupname) VALUES (:groupname) RETURNING id),
+WITH grow AS {sql_group_new},
 {sql_users}
 gre AS (INSERT INTO user_emails (user_id, email, email_primary{ever}) SELECT id, :email, TRUE{ever_val} FROM gru RETURNING user_id)
 {sql_pass};

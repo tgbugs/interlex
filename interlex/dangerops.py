@@ -103,6 +103,10 @@ def register_first_admin():
         msg = 'username, email, orcid, and orcid-name are required'
         raise ValueError(msg)
 
+    reserved = False
+    if len(sys.argv) == 6 and sys.argv[5] == '--reserved':
+        reserved = True
+
     msg = f'\nSet password for new admin user {username}'
     print(msg)
     a = getpass()
@@ -119,8 +123,20 @@ def register_first_admin():
         msg = f'this system is configured to use {config.orcid_host}'
         raise TypeError(msg) from e
 
-    make_test_user(username, password, db_kwargs, email=email,
-                   orcid=orcid, orcid_name=orcid_name, make_admin=True)
+    if reserved:
+        from interlex import dbstuff
+        dbstuff.Stuff._user_new_reserved = True
+        from interlex import dump
+        _gge = dump.Queries.getGroupExisting
+        dump.Queries.getGroupExisting = (lambda self, groupname: tuple())
+
+    try:
+        make_test_user(username, password, db_kwargs, email=email,
+                       orcid=orcid, orcid_name=orcid_name, make_admin=True)
+    finally:
+        if reserved:
+            dbstuff.Stuff._user_new_reserved = False
+            dump.Queries.getGroupExisting = _gge
 
 
 def example_main():
