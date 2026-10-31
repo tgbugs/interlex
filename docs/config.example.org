@@ -1,0 +1,1142 @@
+#+property: header-args :eval no-export
+
+This config interacts heavily with [[~/git/dockerfiles/source.org::*interlex]].
+The =dockerfiles/source.org= forge repo is https://github.com/tgbugs/dockerfiles.
+
+By default the src blocks in this file assume that the current working
+directory will be the location of this config.org file. If you want to
+run them from anywhere, use the output of as value for =&this-dir=.
+src_elisp[:results raw]{(directory-file-name (file-name-directory (buffer-file-name)))}
+# XXX can't use :cache yes for some reason i don't have time to find
+
+#+name: &this-dir
+: .
+
+Quick links [[*variables]] [[&cfg-orch-sec-path]] [[&debug-entrypoints]] [[&podman-user]]
+
+* ops
+See [[*core flow][core flow]] or copy this ~config.example.org~ file to ~config.org~
+and edit the variables sections and tangle with ~C-c C-v C-t~ or run.
+
+The resulting ~${config_profile}/config~ folder should be copied to the profile host
+along with ~${config_profile}/workflow-funs-ilx.sh~.
+
+To change which configuration will tangle add or remove ~COMMENT~ on a section.
+Only one section can be active at a time. If multiple sections are active the
+exact value for a variable is usually the one that appears first in the file.
+
+The setup process expects to run on two systems, one orchestrator (orch) and
+the remote profile host (host). The orchestrator expects to have
+bash, docker, podman, emacs, cat, and tar.
+
+** code :noexport:
+register helper funs
+#+begin_src elisp :tangle (let () (defun pff (str) (concat (org-babel-ref-resolve "&config-profile") "/" str)) (defun cff (str) (concat (org-babel-ref-resolve "&config-profile") "/config/" str)) "./.hack.el")
+#+end_src
+** remote profile host
+Use =C-c C-v C-v=  to view the expanded form in buffer or view =${config_profile}/setup-ssh.sh=.
+src_elisp{(find-file (pff "setup-ssh.sh"))}
+
+Lines to be run on the remote profile host are prefixed with ~:~.
+#+name: &setup-ssh
+#+begin_src bash :noweb yes :noweb-prefix yes :eval never :tangle (pff "setup-ssh.sh")
+# remote profile host specific setup
+profile_host=$(emacs --batch --eval "(require 'org)" --eval '(progn (with-temp-buffer (insert-file-contents (pop argv)) (org-mode) (princ (org-babel-ref-resolve "&profile-ssh-host"))))' <<&this-dir()>>/config.org)
+: <<&ilx-setup-host-0-host>>
+# start shared section
+<<&ilx-setup-0-orch>>
+: <<&ilx-setup-1-host>>
+<<&ilx-setup-2-orch>>
+<<&ilx-setup-3-orch>>
+: <<&ilx-setup-4-host>>
+<<&ilx-setup-5-orch>>
+: <<&ilx-setup-6-host>>
+<<&ilx-setup-8-orch>>
+: <<&ilx-setup-9-host>>
+<<&ilx-setup-10-orch>>
+#+end_src
+
+** remote podman
+Test everything using podman as if it were the remote.
+Use =C-c C-v C-v=  to view the expanded form in buffer or view =${config_profile}/setup-podman.sh=.
+src_elisp{(find-file (pff "setup-podman.sh"))}
+
+This block should be run as if with =set -e= enabled.
+# reminder: before running this make sure there isn't already another pod that is using the nested-docker-data volume
+#+name: &setup-podman
+#+begin_src bash :noweb yes :noweb-prefix yes :tangle (pff "setup-podman.sh")
+# podman specific setup
+<<&ilx-setup-podman-0-orch>>
+podman exec -i ${container_id} <<&ilx-setup-podman-1-host>>
+podman exec -d ${container_id} <<&ilx-setup-podman-2-host>>
+# start shared section
+<<&ilx-setup-0-orch>>
+podman exec -i ${container_id} <<&ilx-setup-1-host>>
+<<&ilx-setup-2-orch-podman>>
+<<&ilx-setup-3-orch>>
+podman exec -i ${container_id} <<&ilx-setup-4-host>>
+<<&ilx-setup-5-orch-podman>>
+podman exec -i ${container_id} <<&ilx-setup-6-host>>
+<<&ilx-setup-8-orch>>
+podman exec -i ${container_id} <<&ilx-setup-9-host>>
+<<&ilx-setup-10-orch>> \
+http://www.w3.org/1999/02/22-rdf-syntax-ns \
+http://www.w3.org/2000/01/rdf-schema \
+http://www.w3.org/2002/07/owl \
+http://www.w3.org/2004/02/skos/core \
+https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_elements.ttl \
+https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_terms.ttl \
+http://protege.stanford.edu/plugins/owl/dc/dublincore.owl
+#+end_src
+
+If you need to debug the nested docker container you can obtain an interactive shell by running
+src_bash[:eval never]{podman exec -it ${container_id} sh -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-default /var/lib/interlex/config'}
+
+** implementation
+#+name: t
+: true
+*** core flow
+This =config.org= file is available as part of the interlex package in the =tgbugs/musl:interlex= image.
+If you do not already have a copy of the file you can obtain it by running
+src_bash[:eval never]{docker run --rm --entrypoint /usr/bin/bzcat tgbugs/musl:interlex /usr/share/doc/interlex-9999/config.example.org.bz2 > config.org}
+as shown below and then make edits locally.
+# We do not noweb profile or sentinel for this block so that the commands here will continue to work if changes to config.org are made.
+#+name: &ilx-setup-0-orch
+#+begin_src sh :var orch=t :noweb yes
+docker pull tgbugs/musl:interlex
+[ -f <<&this-dir()>>/config.org ] || docker run --rm --entrypoint /usr/bin/bzcat tgbugs/musl:interlex /usr/share/doc/interlex-9999/config.example.org.bz2 > <<&this-dir()>>/config.org
+# config.org to set various configuration values before proceeding by adding COMMENT
+# to the variables local heading and then removing COMMENT from the section you are configuring
+# the rest of this process is driven by value of &config-profile for that section
+emacs --batch --eval "(require 'org)" --eval '(org-babel-tangle-file (pop argv))' <<&this-dir()>>/config.org
+profile=$(emacs --batch --eval "(require 'org)" --eval '(progn (with-temp-buffer (insert-file-contents (pop argv)) (org-mode) (princ (org-babel-ref-resolve "&config-profile"))))' <<&this-dir()>>/config.org)
+sentinel=$(emacs --batch --eval "(require 'org)" --eval '(progn (with-temp-buffer (insert-file-contents (pop argv)) (org-mode) (princ (org-babel-ref-resolve "&cfg-db-name"))))' <<&this-dir()>>/config.org)
+[ -z "${sentinel}" ] && echo "the sentinel value for this process &cfg-db-name is not set do not continue"
+config_profile=<<&this-dir()>>/${profile}
+[ -f ${config_profile}/dhparam.pem ] || docker run -v ${config_profile}:/output --entrypoint /usr/bin/openssl -d --rm tgbugs/musl:interlex dhparam -out /output/dhparam.pem 4096
+#+end_src
+
+#+name: &ilx-setup-1-host
+#+begin_src sh :var host=t
+docker pull tgbugs/musl:interlex
+mkdir /var/lib/interlex
+#+end_src
+
+#+name: &ilx-setup-2-orch
+#+begin_src bash :var orch=t
+tar -czf - -C ${config_profile}/config .   | ssh -T ${profile_host} 'umask 077 && TMP_DIR=$(mktemp -d /tmp/transfer.XXXXXX) && tar -xzf - -C "${TMP_DIR}"  && mv "${TMP_DIR}"  /var/lib/interlex/config'
+cat ${config_profile}/workflow-funs-ilx.sh | ssh -T ${profile_host} 'umask 077 && TMP_FILE=$(mktemp /tmp/transfer.XXXXXX)   && cat >         "${TMP_FILE}" && mv "${TMP_FILE}" /var/lib/interlex/workflow-funs-ilx.sh'
+#+end_src
+
+#+name: &ilx-setup-2-orch-podman
+#+begin_src bash :var orch=t
+tar -czf - -C ${config_profile}/config .   | podman exec -i ${container_id} sh -c 'umask 077 && TMP_DIR=$(mktemp -d /tmp/transfer.XXXXXX) && tar -xzf - -C "${TMP_DIR}"  && mv "${TMP_DIR}"  /var/lib/interlex/config'
+cat ${config_profile}/workflow-funs-ilx.sh | podman exec -i ${container_id} sh -c 'umask 077 && TMP_FILE=$(mktemp /tmp/transfer.XXXXXX)   && cat >         "${TMP_FILE}" && mv "${TMP_FILE}" /var/lib/interlex/workflow-funs-ilx.sh'
+#+end_src
+
+# XXX FIXME if docker-run-ilx-setup failed for some reason _other_ than a missing password then it will obviously fail when run again
+# to fix it we need a check-password.sh entrypoint to propagate the result out of the entrypoint level
+#+name: &ilx-setup-3-orch
+#+begin_src bash :var orch=t :noweb yes
+source ${config_profile}/workflow-funs-ilx.sh
+docker-run-ilx-setup     ${config_profile}/config ~/.pgpass  # XXX DANGERZONE
+setupok=$?
+docker-run-ilx-passwords ${config_profile}/config ~/.pgpass
+[ "${setupok}" = 0 ] || docker-run-ilx-setup     ${config_profile}/config ~/.pgpass  # XXX DANGERZONE
+# XXX tested up to this point
+docker-run-ilx-admin     ${config_profile}/config ~/.pgpass <<&cfg-ilx-admin-user()>> <<&cfg-ilx-admin-email()>> <<&cfg-ilx-admin-orcid()>> '<<&cfg-ilx-admin-orcid-name()>>' # --reserved # use as needed
+
+docker-run-ilx-api-key   ${config_profile}/config ${config_profile}/user-config-api-key.yaml <<&cfg-orch-sec-path()>> <<&cfg-ilx-admin-user()>>
+#+end_src
+
+If curies hangs for some reason make sure the clean up the inner
+docker container before running the server, otherwise the certbot
+process will find the curies container rather than the server
+container (which is kind of weird and probably a FIXME).
+# FIXME there's got to be a better way than sh source && ...
+#+name: &ilx-setup-4-host
+#+begin_src bash :var host=t
+sh -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-curies'
+#+end_src
+
+#+name: &ilx-setup-5-orch
+#+begin_src bash
+while [ ! -f ${config_profile}/dhparam.pem ]; do sleep 1; done  # wait for the background dhparam generation to finish
+cat ${config_profile}/dhparam.pem          | ssh -T ${profile_host} 'umask 077 && TMP_FILE=$(mktemp /tmp/transfer.XXXXXX)   && cat >         "${TMP_FILE}" && mv "${TMP_FILE}" /tmp/dhparam.pem'
+#+end_src
+
+#+name: &ilx-setup-5-orch-podman
+#+begin_src bash
+while [ ! -f ${config_profile}/dhparam.pem ]; do sleep 1; done  # wait for the background dhparam generation to finish
+cat ${config_profile}/dhparam.pem          | podman exec -i ${container_id} sh -c 'umask 077 && TMP_FILE=$(mktemp /tmp/transfer.XXXXXX)   && cat >         "${TMP_FILE}" && mv "${TMP_FILE}" /tmp/dhparam.pem'
+#+end_src
+
+In the ssh case most of these need to be run as root.
+# FIXME there's got to be a better way than sh source && ...
+#+name: &ilx-setup-6-host
+#+begin_src bash :var host=t
+chown root:root /tmp/dhparam.pem
+chmod 644 /tmp/dhparam.pem
+mv /tmp/dhparam.pem /etc/ssl/certs/dhparam.pem
+sh -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-host-init'
+sh -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-server'  # FIXME need a way to not follow logs by default here
+#+end_src
+
+#+name: &ilx-setup-8-orch
+#+begin_src bash :var orch=t :noweb yes
+docker run --network host --rm --entrypoint /usr/bin/curl tgbugs/musl:interlex --connect-timeout 2 --max-time 5 http://<<&profile-hostname()>>
+docker run --network host --rm --entrypoint /usr/bin/curl tgbugs/musl:interlex --connect-timeout 2 --max-time 5 https://<<&profile-hostname()>>
+#+end_src
+
+#+name: &ilx-setup-9-host
+#+begin_src bash :var host=t
+sh -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-certbot'
+#+end_src
+
+ingest of external ontologies (usually this should be run from the orchestrator or some powerful worker host)
+#+name: &ilx-setup-10-orch
+#+begin_src bash :var orch=t :noweb yes
+docker run --rm --entrypoint /usr/bin/curl tgbugs/musl:interlex https://<<&profile-hostname()>> | grep -i 'issuer:'  # TODO proper cert validation
+docker-run-ilx-ingest ${config_profile}/config
+#+end_src
+
+*** setup ssh
+#+name: &ilx-setup-host-0-host
+#+begin_src bash
+# TODO this is not automated because it requires os detection and root
+#+end_src
+
+# uname -a
+# lsb_release -a
+#+name: &host-os-id-version-id
+#+begin_src bash :dir (concat "/ssh:" (org-babel-ref-resolve "&profile-ssh-host") ":")
+source /etc/os-release; echo ${ID}-${VERSION_ID};
+#+end_src
+
+These of course must be run as root so they are not fully automated right now.
+
+**** gentoo
+#+name: &ssh-setup-gentoo
+#+begin_src bash
+emerge -avn app-containers/docker app-containers/docker-cli app-containers/podman app-editors/emacs
+#+end_src
+
+**** ubuntu
+#+name: &ssh-setup-ubuntu
+#+begin_src bash
+apt install docker.io podman emacs-nox
+#+end_src
+
+**** alpine
+#+name: &ssh-setup-alpine
+#+begin_src bash
+apk add docker podman emacs
+#+end_src
+
+*** setup podman
+**** container as host
+Change =user= to match your system, do not use =~/= because it expands differently in nested containers.
+#+name: &debug-entrypoints
+: /home/user/git/dockerfiles/musl/interlex/entrypoints
+
+#+name: &ilx-setup-podman-0-orch
+#+begin_src bash orch=t :noweb yes
+_entrypoints=<<&debug-entrypoints()>> # uncomment line for development
+container_id=$(podman run --privileged ${_entrypoints:+-v ${_entrypoints}:${_entrypoints}} -v nested-docker-data:/var/lib/docker --rm -di alpine:latest)
+#+end_src
+# contaier_id=$(podman ps -lqf ancestor=alpine:latest)
+
+#+name: &ilx-setup-podman-1-host
+#+begin_src sh :var host=t
+apk add docker
+#+end_src
+
+separate so it can run as a daemon
+#+name: &ilx-setup-podman-2-host
+#+begin_src sh :var host=t
+dockerd --iptables=false
+#+end_src
+
+**** cgroups
+On some systems in order to run docker inside a rootless podman
+container there are some additional steps that are required.
+You may be able to find other ways to obtain a user writable
+=/sys/fs/cgroup= owned by root instead of nobody in the container.
+Note that I do not fully understand the security implications of
+doing this. However it seems safer than running podman as root.
+
+src_elisp[:results raw]{(user-login-name)}
+
+#+name: &podman-user
+: user
+
+#+begin_src bash :dir /su:: :noweb yes :eval never 
+USER_UID=$(id -u <<&podman-user()>>)
+USER_CGROUP=/sys/fs/cgroup/user.slice/user-${USER_UID}.slice
+
+# clean up session if it exists
+rmdir "${USER_CGROUP}/session" 2>/dev/null || true
+
+# enable parent controllers
+echo "+cpu +memory +pids +io" > /sys/fs/cgroup/cgroup.subtree_control
+mkdir -p /sys/fs/cgroup/user.slice
+echo "+cpu +memory +pids +io" > /sys/fs/cgroup/user.slice/cgroup.subtree_control
+
+# user cgroup directory
+mkdir -p ${USER_CGROUP}
+
+# enable user cgroup controller before session
+echo "+cpu +memory +pids +io" > ${USER_CGROUP}/cgroup.subtree_control
+
+# create session
+mkdir -p ${USER_CGROUP}/session
+
+# chow the user cgroup
+chown -R <<&podman-user()>>:<<&podman-user()>> ${USER_CGROUP}
+#+end_src
+
+When you need to run docker inside podman start podman in a shell with the following.
+#+begin_src bash :dir /su:: :noweb yes :eval never
+USER_UID=$(id -u <<&podman-user()>>)
+
+# as root move current process into the session
+echo $$ > /sys/fs/cgroup/user.slice/user-${USER_UID}.slice/session/cgroup.procs
+
+# drop in as the podman user to retain some of the advantages of rootless
+su - <<&podman-user()>>
+#+end_src
+
+* variables
+If you need secrets to be different per instance move the variable into the sections below.
+#+name: &cfg-orch-sec-path
+: /dev/null
+
+** COMMENT local
+#+name: &config-profile
+: local
+#+name: &profile-hostname
+: localhost
+#+name: &profile-ssh-host
+:
+
+postgres
+#+name: &cfg-pgsslmode
+: disable
+#+name: &cfg-db-host
+: localhost
+#+name: &cfg-db-port
+: 5432
+#+name: &cfg-db-name
+: interlex_local
+#+name: &cfg-test-db-name
+: __interlex_testing
+
+elastic
+#+name: &cfg-es-host
+: localhost
+#+name: &cfg-es-port
+: 9200
+#+name: &cfg-es-index
+: interlex_local
+#+name: &cfg-test-es-host
+: localhost
+#+name: &cfg-test-es-port
+: 9200
+#+name: &cfg-test-es-index
+: interlex_local_testing
+
+mariadb
+#+name: &cfg-alt-db-host
+: localhost
+#+name: &cfg-alt-db-port
+: 3306
+#+name: &cfg-alt-db-name
+:
+#+name: &cfg-alt-db-user
+:
+
+admin
+#+name: &cfg-ilx-admin-user
+:
+#+name: &cfg-ilx-admin-email
+:
+#+name: &cfg-ilx-admin-orcid
+:
+#+name: &cfg-ilx-admin-orcid-name
+:
+
+** COMMENT dev
+#+name: &config-profile
+: dev
+#+name: &profile-hostname
+:
+#+name: &profile-ssh-host
+:
+
+postgres
+#+name: &cfg-pgsslmode
+: disable
+#+name: &cfg-db-host
+:
+#+name: &cfg-db-port
+: 5432
+#+name: &cfg-db-name
+:
+#+name: &cfg-test-db-name
+:
+
+elastic
+#+name: &cfg-es-host
+:
+#+name: &cfg-es-port
+: 9200
+#+name: &cfg-es-index
+:
+#+name: &cfg-test-es-host
+:
+#+name: &cfg-test-es-port
+: 9200
+#+name: &cfg-test-es-index
+:
+
+mariadb
+#+name: &cfg-alt-db-host
+: localhost
+#+name: &cfg-alt-db-port
+: 3306
+#+name: &cfg-alt-db-name
+:
+#+name: &cfg-alt-db-user
+:
+
+admin
+#+name: &cfg-ilx-admin-user
+:
+#+name: &cfg-ilx-admin-email
+:
+#+name: &cfg-ilx-admin-orcid
+:
+#+name: &cfg-ilx-admin-orcid-name
+:
+
+** COMMENT staging
+#+name: &config-profile
+: staging
+#+name: &profile-hostname
+:
+#+name: &profile-ssh-host
+:
+
+postgres
+#+name: &cfg-pgsslmode
+: require
+#+name: &cfg-db-host
+:
+#+name: &cfg-db-port
+: 5432
+#+name: &cfg-db-name
+:
+#+name: &cfg-test-db-name
+:
+
+elastic
+#+name: &cfg-es-host
+:
+#+name: &cfg-es-port
+: 9200
+#+name: &cfg-es-index
+:
+#+name: &cfg-test-es-host
+:
+#+name: &cfg-test-es-port
+: 9200
+#+name: &cfg-test-es-index
+:
+
+mariadb
+#+name: &cfg-alt-db-host
+:
+#+name: &cfg-alt-db-port
+: 3306
+#+name: &cfg-alt-db-name
+:
+#+name: &cfg-alt-db-user
+:
+
+admin
+#+name: &cfg-ilx-admin-user
+:
+#+name: &cfg-ilx-admin-email
+:
+#+name: &cfg-ilx-admin-orcid
+:
+#+name: &cfg-ilx-admin-orcid-name
+:
+
+** COMMENT prod
+#+name: &config-profile
+: prod
+#+name: &profile-hostname
+:
+#+name: &profile-ssh-host
+:
+
+postgres
+#+name: &cfg-pgsslmode
+: require
+#+name: &cfg-db-host
+:
+#+name: &cfg-db-port
+: 5432
+#+name: &cfg-db-name
+:
+#+name: &cfg-test-db-name
+:
+
+elastic
+#+name: &cfg-es-host
+:
+#+name: &cfg-es-port
+: 9200
+#+name: &cfg-es-index
+:
+#+name: &cfg-test-es-host
+:
+#+name: &cfg-test-es-port
+: 9200
+#+name: &cfg-test-es-index
+:
+
+mariadb
+#+name: &cfg-alt-db-host
+:
+#+name: &cfg-alt-db-port
+: 3306
+#+name: &cfg-alt-db-name
+:
+#+name: &cfg-alt-db-user
+:
+
+admin
+#+name: &cfg-ilx-admin-user
+:
+#+name: &cfg-ilx-admin-email
+:
+#+name: &cfg-ilx-admin-orcid
+:
+#+name: &cfg-ilx-admin-orcid-name
+:
+
+* services
+** nginx
+
+#+name: &nginx-conf
+#+begin_src nginx :tangle (cff "nginx.conf") :mkdirp yes
+user nginx nginx;
+worker_processes 1;
+include modules-enabled/*.conf;
+
+events {
+	worker_connections 1024;
+	use epoll;
+}
+
+http {
+	# logging
+	log_format main
+		'$remote_addr - $remote_user [$time_local] '
+		'"$request" $status $bytes_sent '
+		'"$http_referer" "$http_user_agent" '
+		'"$gzip_ratio"';
+	access_log /var/log/nginx/access.log;
+	error_log /var/log/nginx/error.log;
+
+	# gentoo ships a big mimetypes file
+	types_hash_max_size 4096;
+	include mime.types.nginx;
+	default_type application/octet-stream;
+	
+	# general
+	sendfile on;
+	tcp_nopush on;
+	tcp_nodelay on;
+	server_tokens off;
+	
+	# timeouts
+	client_header_timeout 10m;
+	client_body_timeout 10m;
+	proxy_read_timeout 900s;
+	send_timeout 10m;
+
+	# gzip
+	gzip on;
+	gzip_vary on;
+	gzip_proxied any;
+	gzip_min_length 512;
+	gzip_disable "msie6";
+	gzip_types
+		application/atom+xml
+		application/x-javascript
+		application/javascript
+		application/json
+		application/xml
+		text/comma-separated-values
+		text/csv
+		text/css
+		text/html
+		text/plain
+		text/tsv
+		text/turtle;
+
+	# ssl
+	ssl_protocols TLSv1.2 TLSv1.3;
+	ssl_prefer_server_ciphers on;
+	# ssl_ciphers from https://docs.aws.amazon.com/cloudhsm/latest/userguide/third-offload-linux-openssl.html
+	# but reordered and removed old cyphers, only relevant for 1.2
+	ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+	ssl_session_cache shared:SSL:10m;
+	ssl_session_tickets off;
+	ssl_stapling on;
+	ssl_stapling_verify on;
+	ssl_dhparam /etc/ssl/certs/dhparam.pem;  # openssl dhparam -out /tmp/dhparam.pem 4096  # DO NOT RUN ON AMAZON scp it over
+	resolver 1.1.1.1 8.8.8.8 valid=300s;
+	resolver_timeout 5s;
+	
+	# include at end so that sites inherit from this config
+	include /etc/nginx/conf.d/*.conf;
+}
+#+end_src
+
+#+name: &nginx-uri-host-conf
+#+begin_src nginx :noweb yes :tangle (cff (concat (org-babel-ref-resolve "&profile-hostname") ".conf"))
+upstream interlex-uri {
+	server unix:/run/interlex/socket;
+}
+
+server {
+	listen 80;
+	listen [::]:80;
+	server_name <<&profile-hostname()>>
+
+	access_log /var/log/nginx/<<&profile-hostname()>>.access_log main;
+	error_log /var/log/nginx/<<&profile-hostname()>>.error_log debug;
+
+	return 301 https://$server_name$request_uri;
+}
+
+server {
+	listen 443 ssl;
+	listen [::]:443;
+	server_name <<&profile-hostname()>>;
+
+	ssl_certificate /etc/letsencrypt/live/<<&profile-hostname()>>/fullchain.pem;
+	ssl_certificate_key /etc/letsencrypt/live/<<&profile-hostname()>>/privkey.pem;
+
+	access_log /var/log/nginx/<<&profile-hostname()>>.ssl_access_log main;
+	error_log /var/log/nginx/<<&profile-hostname()>>.ssl_error_log debug;
+
+	location / {
+		proxy_pass http://interlex-uri;
+		client_max_body_size 10m;
+		proxy_redirect off;
+		proxy_set_header Host $host;
+		proxy_set_header X-Real-IP $remote_addr;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Host $server_name;
+		proxy_set_header X-Forwarded-Proto $scheme;
+		add_header 'Access-Control-Allow-Origin' '*';
+	}
+}
+#+end_src
+
+** conf.d server
+#+begin_src sh :tangle (cff "server-confd") :noweb yes
+LOG_LEVEL=info
+LOG_LOC=/var/log/interlex
+LOG_FORMAT='%(h)s - - %(t)s "%(r)s" %(s)s -'
+PROXY_N=1
+DATABASE=<<&cfg-db-name()>>
+PGSSLMODE=<<&cfg-pgsslmode()>>
+DB_HOST=<<&cfg-db-host()>>
+DB_PORT=<<&cfg-db-port()>>
+WORKERS=6
+WORKER_CLASS=sync
+#+end_src
+
+** conf.d worker
+#+begin_src sh :tangle (cff "worker-confd") :noweb yes
+LOG_LEVEL=info
+LOG_LOC=/var/log/interlex/es-index
+DATABASE=<<&cfg-db-name()>>
+PGSSLMODE=<<&cfg-pgsslmode()>>
+DB_HOST=<<&cfg-db-host()>>
+DB_PORT=<<&cfg-db-port()>>
+ES_INDEX=<<&cfg-es-index()>>
+ES_HOST=<<&cfg-es-host()>>
+ES_PORT=<<&cfg-es-port()>>
+#+end_src
+
+* config
+** user-config
+For the orchestrator api-key step.
+#+begin_src yaml :tangle (pff "user-config-api-key.yaml") :noweb yes
+auth-stores:
+  secrets:
+    path: '{:user-config-path}/orthauth/secrets.sxpr'
+auth-variables: &<<&config-profile()>>
+  interlex-api-key:
+    path: interlex api tgbugs <<&config-profile()>>
+  interlex-test-api-key:
+    path: interlex api tgbugs <<&config-profile()>>-test
+#+end_src
+
+For the host.
+#+begin_src yaml :tangle (cff "user-config.yaml") :noweb yes
+auth-stores:
+  secrets:
+    path: '{:user-config-path}/orthauth/secrets.sxpr'
+auth-variables: &<<&config-profile()>>
+  use-real-frag-pref: false
+  interlex-api-key:
+  test-api-user:
+  interlex-test-api-key:
+  proxy-n: 1
+  alt-db-user: <<&cfg-alt-db-user()>>
+  alt-db-host: <<&cfg-alt-db-host()>>
+  alt-db-port: <<&cfg-alt-db-port()>>
+  alt-db-database: <<&cfg-alt-db-name()>>
+  dev-remote-hosts:
+  debug:
+  db-user:
+  db-host: <<&cfg-db-host()>>
+  db-port: <<&cfg-db-port()>>
+  db-database: <<&cfg-db-name()>>
+  debug:
+  fl-cookie-httponly: false
+  fl-session-secret-key:
+    path: interlex staging flask session-secret-key
+  ilx-pattern:
+  mq-accept-content:
+  mq-broker-backend:
+  mq-broker-url:
+  mq-vhost:
+  port-alt:
+  port-api:
+  port-curies:
+  port-guni-alt:
+  port-guni-curies:
+  port-guni-uri:
+  port-uri:
+  test-http-host:
+  test-database: <<&cfg-test-db-name()>>
+  test-host: <<&cfg-db-host()>>
+  test-port: <<&cfg-db-port()>>
+  smtp-host:
+  smtp-port:
+  orcid-client-id:
+    path: orcid interlex client-id
+  orcid-client-secret:
+    path: orcid interlex client-secret
+  orcid-sandbox-client-id:
+    path: orcid-sandbox interlex client-id
+  orcid-sandbox-client-secret:
+    path: orcid-sandbox interlex client-secret
+  redirect-allow-hosts:
+    - localhost
+    - interlex.dev.metacell.us
+    - frontend.olympiangods.org
+  existing-user-map:
+  # elasticsearch stuff
+  es-bulk-max-bytes:
+  es-prod-host: <<&cfg-es-host()>>
+  es-prod-index: interlex_staging_prod
+  es-prod-username: interlex
+  es-prod-password:
+    path: scicrunch elasticsearch interlex
+  es-prod-port: <<&cfg-es-port()>>
+  es-prod-request-timeout:
+  es-prod-scheme: https
+  es-test-host: <<&cfg-test-es-host()>>
+  es-test-index: interlex_staging_test
+  es-test-username: interlex
+  es-test-password:
+    path: scicrunch elasticsearch interlex
+  es-test-port: <<&cfg-test-es-port()>>
+  es-test-request-timeout:
+  es-test-scheme:
+  es-purge-days: 
+  es-purge-every:
+#+end_src
+
+** secrets
+For the host
+#+begin_src lisp :tangle (if (not (file-exists-p (cff "secrets-interlex.sxpr"))) (cff "secrets-interlex.sxpr") "no") :tangle-mode (or #o600)
+(
+:interlex      (:staging (:flask (:session-secret-key "TODO")))
+:orcid         (:interlex (:client-id "TODO" :client-secret "TODO"))
+:orcid-sandbox (:interlex (:client-id "TODO" :client-secret "TODO"))
+:scicrunch     (:elasticsearch (:interlex "TODO"))
+)
+#+end_src
+
+For the orchestrator you will likely want to generate api keys yourself to put in your secrets file.
+#+begin_src bash
+docker run --rm --entrypoint /usr/bin/python tgbugs/musl:interlex -c 'import logging; logging.DEBUG = 0; from interlex.auth import gen_key; [print(gen_key()) for _ in range(4)]'
+#+end_src
+
+** pgpass
+#+begin_src conf :noweb yes :tangle (if (not (file-exists-p (cff ".pgpass-interlex"))) (cff ".pgpass-interlex") "no") :tangle-mode (or #o600)
+<<&cfg-db-host()>>:<<&cfg-db-port()>>:*:interlex-user:TODO
+#+end_src
+There are no circumstances under which the profile host should need
+access to the interlex-admin password, so anything requiring
+interlex-admin should be run from the orchestrator.
+# <<&cfg-db-host()>>:<<&cfg-db-port()>>:*:interlex-admin:TODO
+
+** mypass
+#+begin_src conf :noweb yes :tangle (if (not (file-exists-p (cff ".mypass-interlex"))) (cff ".mypass-interlex") "no") :tangle-mode (or #o600)
+<<&cfg-alt-db-host()>>:<<&cfg-alt-db-port()>>:*:<<&cfg-alt-db-user()>>:TODO
+#+end_src
+
+* scripts
+** queries
+#+begin_src org :tangle (pff "setup-queries.org") :noweb yes
+,#+property: header-args:sql  :engine postgresql
+,#+property: header-args:sql+ :dbhost <<&cfg-db-host()>>
+,#+property: header-args:sql+ :dbport <<&cfg-db-port()>>
+,#+property: header-args:sql+ :dbuser interlex-user
+,#+property: header-args:sql+ :database <<&cfg-db-name()>>
+#+end_src
+
+#+begin_src org :tangle (if (not (file-exists-p (pff "queries.org"))) (pff "queries.org") "no")
+,#+setupfile: queries-setup.org
+,* queries
+,#+begin_src sql
+,#+end_src
+#+end_src
+
+** host ops
+#+name: &workflow-funs
+#+begin_src bash :noweb yes :tangle (pff "workflow-funs-ilx.sh")
+#_entrypoints=<<&debug-entrypoints()>> # uncomment line for development
+
+# either
+<<&run-ilx-default>>
+<<&run-ilx-psql>>
+
+# orchestrator
+<<&run-ilx-setup>>
+<<&run-ilx-passwords>>
+<<&run-ilx-admin>>
+<<&run-ilx-api-key>>
+<<&run-ilx-ingest>>
+
+# profile host
+<<&run-ilx-curies>>
+<<&run-ilx-host-init>>
+<<&run-ilx-server>>
+<<&run-ilx-certbot>>
+#+end_src
+# TODO
+# <<&run-ilx-services>>
+# <<&run-ilx-worker>>
+
+*** default
+TODO this can run on either orch or host, so ideally we would detect
+if =/var/lib/interlex/config= is present and fail over to that because
+we are presumably on the host.
+#+name: &run-ilx-default
+#+begin_src bash :noweb yes
+function docker-run-ilx-default () {
+local entrypoint cfg dhp
+entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
+
+[ -n "${1}" ] || { echo 'config path required'; return 1; }
+
+cfg=$(realpath ${1})
+pgp=$(realpath ${2})
+{ [ -z ${pgp} ] || [ -f ${pgp} ]; } || { echo "missing pgpass ${pgp}" ; return 4; }
+
+[ -d /tmp/ilx-scratch ] || mkdir /tmp/ilx-scratch
+
+docker run \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v ${cfg}:/root/ilx-config \
+${pgp:+-v ${pgp}:/root/ilx-config/.pgpass-interlex:ro} \
+-v /etc/letsencrypt:/etc/letsencrypt \
+-v /var/log/interlex:/var/log/interlex \
+-v /var/log/nginx:/var/log/nginx \
+-v /var/log/letsencrypt:/var/log/letsencrypt \
+-v /tmp/ilx-scratch/ontologies:/tmp/ontologies \
+-v /tmp/ilx-scratch/interlex-load:/tmp/interlex-load \
+--entrypoint ${entrypoint} \
+-p 80:80 \
+-p 443:443 \
+--rm -it \
+tgbugs/musl:interlex
+}
+function docker-run-ilx-default-orch () { docker-run-ilx-default "${@}"; }
+function docker-run-ilx-default-host () { docker-run-ilx-default /var/lib/interlex/config "${@}"; }
+#+end_src
+
+*** psql
+FIXME TODO there are 3 ways to run this, as interlex-user, interlex-admin, and postgres.
+Each can be run from a different host or with a different pgpass re pgpass security concerns.
+
+If you need to switch database use =\c dbname=.
+#+name: &run-ilx-psql
+#+begin_src bash :noweb yes
+function docker-run-ilx-psql () {
+local cfg dhp
+
+[ -n "${1}" ] || { echo 'config path required'; return 1; }
+[ -n "${2}" ] || { echo 'pgpass path required'; return 2; }
+
+cfg=$(realpath ${1})
+pgp=$(realpath ${2})
+[ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 3; }
+[ -f ${pgp} ] || { echo "missing pgpass ${pgp}" ; return 4; }
+
+dbuser=${3:-interlex-admin}
+
+[ -d /tmp/ilx-scratch ] || mkdir /tmp/ilx-scratch
+
+docker run \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v ${cfg}:/root/ilx-config \
+-v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
+--entrypoint /bin/bash \
+--rm -it \
+tgbugs/musl:interlex \
+-c '/etc/entrypoints/config.sh; source /etc/conf.d/interlex; runuser -u interlex -- psql -U '"${dbuser}"' -h ${DB_HOST} -p ${DB_PORT} -d ${DATABASE}'
+}
+#+end_src
+
+*** setup
+Run on orchestrator needs postgres pass.
+#+name: &run-ilx-setup
+#+begin_src bash :noweb yes
+function docker-run-ilx-setup () {
+local entrypoint cfg pgp
+entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
+[ -n "${1}" ] || { echo 'config path required'; return 1; }
+[ -n "${2}" ] || { echo 'pgpass path required'; return 2; }
+
+cfg=$(realpath ${1})
+pgp=$(realpath ${2})
+[ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 3; }
+[ -f ${pgp} ] || { echo "missing pgpass ${pgp}" ; return 4; }
+
+docker run \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v ${cfg}:/root/ilx-config \
+-v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
+-e PGCONNECT_TIMEOUT=10 \
+--entrypoint ${entrypoint} \
+--rm \
+tgbugs/musl:interlex
+}
+#+end_src
+
+*** passwords
+Run on orchestrator needs postgres pass.
+#+name: &run-ilx-passwords
+#+begin_src bash :noweb yes
+function docker-run-ilx-passwords () {
+local entrypoint cfg pgp
+entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
+[ -n "${1}" ] || { echo 'config path required'; return 1; }
+[ -n "${2}" ] || { echo 'pgpass path required'; return 2; }
+# if ${3} is provided then passwords can be reset even if set
+
+cfg=$(realpath ${1})
+pgp=$(realpath ${2})
+[ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 3; }
+[ -f ${pgp} ] || { echo "missing pgpass ${pgp}" ; return 4; }
+
+docker run \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v ${cfg}:/root/ilx-config \
+-v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
+--entrypoint ${entrypoint} \
+--rm \
+-it \
+tgbugs/musl:interlex ${3}
+}
+#+end_src
+
+*** admin
+Run on orchestrator needs interlex-admin pass.
+#+name: &run-ilx-admin
+#+begin_src bash :noweb yes
+function docker-run-ilx-admin () {
+local entrypoint cfg pgp
+entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
+[ -n "${1}" ] || { echo 'config path required'; return 1; }
+[ -n "${2}" ] || { echo 'pgpass path required'; return 2; }
+[ -n "${3}" ] || { echo 'admin user required'; return 3; }
+[ -n "${4}" ] || { echo 'admin email required'; return 4; }
+[ -n "${5}" ] || { echo 'admin orcid required'; return 5; }
+[ -n "${6}" ] || { echo 'admin orcid-name required'; return 6; }
+{ [ -z "${7}" ] || [ "${7}" = --reserved ]; } || { echo 'must be --reserved or nothing'; return 7; }
+
+cfg=$(realpath ${1})
+pgp=$(realpath ${2})
+[ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 8; }
+[ -f ${pgp} ] || { echo "missing pgpass ${pgp}" ; return 9; }
+
+docker run \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v ${cfg}:/root/ilx-config \
+-v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
+-v /home/tom/git/interlex/interlex/dbstuff.py:/usr/lib/python3.14/site-packages/interlex/dbstuff.py \
+-v /home/tom/git/interlex/interlex/dbstuff.py:/usr/lib/pypy3.11/site-packages/interlex/dbstuff.py \
+-v /home/tom/git/interlex/interlex/dangerops.py:/usr/lib/python3.14/site-packages/interlex/dangerops.py \
+-v /home/tom/git/interlex/interlex/dangerops.py:/usr/lib/pypy3.11/site-packages/interlex/dangerops.py \
+--entrypoint ${entrypoint} \
+--rm \
+-it \
+tgbugs/musl:interlex ${3} ${4} ${5} "${6}" ${7}
+}
+#+end_src
+
+*** api-key
+#+name: &run-ilx-api-key
+#+begin_src bash :noweb yes
+function docker-run-ilx-api-key () {
+local entrypoint cfg sec
+entrypoint=/etc/entrypoints/api-key.sh
+[ -n "${1}" ] || { echo 'config path required'; return 1; }
+[ -n "${2}" ] || { echo 'user config path required'; return 2; }
+[ -n "${3}" ] || { echo 'secrets path required'; return 3; }
+[ -n "${4}" ] || { echo 'api-key user required'; return 4; }
+
+cfg=$(realpath ${1})
+ucf=$(realpath ${2})
+sec=$(realpath ${3})
+[ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 5; }
+[ -f ${ucf} ] || { echo "missing user config ${ucf}" ; return 6; }
+[ -f ${sec} ] || { echo "missing secrets ${sec}" ; return 7; }
+
+docker run \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v ${cfg}:/root/ilx-config \
+-v ${ucf}:/root/ilx-config/extra-user-config.yaml:ro \
+-v ${sec}:/root/ilx-config/secrets-interlex.sxpr:ro \
+-v /home/tom/git/interlex/interlex/cli.py:/usr/lib/python3.14/site-packages/interlex/cli.py \
+-v /home/tom/git/interlex/interlex/cli.py:/usr/lib/pypy3.11/site-packages/interlex/cli.py \
+--entrypoint ${entrypoint} \
+--rm \
+tgbugs/musl:interlex ${4}
+}
+#+end_src
+
+*** ingest
+This can be run on the orchestrator, remote host, or another powerful worker.
+#+name: &run-ilx-ingest
+#+begin_src bash :noweb yes
+function docker-run-ilx-ingest () {
+local entrypoint cfg dhp
+entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
+
+[ -n "${1}" ] || { echo 'config path required'; return 1; }
+
+cfg=$(realpath ${1})
+shift
+
+[ -d /tmp/ilx-scratch ] || mkdir /tmp/ilx-scratch
+
+docker run \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v ${cfg}:/root/ilx-config \
+-v /var/log/interlex:/var/log/interlex \
+-v /tmp/ilx-scratch/ontologies:/tmp/ontologies \
+-v /tmp/ilx-scratch/interlex-load:/tmp/interlex-load \
+--entrypoint ${entrypoint} \
+--rm \
+tgbugs/musl:interlex "${@}"
+}
+#+end_src
+
+*** curies :host:
+#+name: &run-ilx-curies
+#+begin_src bash :noweb yes
+function docker-run-ilx-curies () {
+local entrypoint cfg dhp
+entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
+cfg=/var/lib/interlex/config
+
+docker run \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v ${cfg}:/root/ilx-config \
+--entrypoint ${entrypoint} \
+--rm \
+tgbugs/musl:interlex
+}
+#+end_src
+
+*** host-init :host:
+This one is a bit different because we need to make sure that the
+directories that we will need are present on the host system.
+#+name: &run-ilx-host-init
+#+begin_src bash :noweb yes
+function docker-run-ilx-host-init () {
+docker run \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v /var/log:/tmp/var/log \
+--entrypoint /bin/bash \
+tgbugs/musl:interlex -c 'chown -R interlex:interlex /var/lib/interlex; cp -a /var/log/nginx /tmp/var/log/; cp -a /var/log/interlex /var/tmp/log/; mkdir /tmp/var/log/letsencrypt; chmod 0700 /tmp/var/log/letsencrypt'
+}
+#+end_src
+
+*** server :host:
+A point about profile host =/var/lib/interlex= vs the container =/var/lib/interlex=.
+We use the host =/var/lib/interlex= as a standard location for saving configuration
+files however it should NEVER be mounted to the container directly.
+
+#+name: &run-ilx-server
+#+begin_src bash :noweb yes
+function docker-run-ilx-server () {
+local entrypoint cfg dhp lessl
+entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
+cfg=/var/lib/interlex/config
+dhp=/etc/ssl/certs/dhparam.pem
+lessl=/etc/letsencrypt/live/<<&profile-hostname()>>
+[ -d ${cfg} ]   || { echo "missing config directory ${cfg}" ; return 1; }
+[ -d ${lessl} ] || { echo "missing ssl certs ${lessl}"; }  # can't error here because we need to be able to test w/ self signed
+[ -f ${dhp} ]   || { echo "missing ${dhp} run openssl dhparam -out /tmp/dhparam.pem 4096 and scp it over" ; return 3; }
+
+[ -d /tmp/ilx-scratch ] || mkdir /tmp/ilx-scratch
+
+chmod 0770 ${cfg}
+
+docker run \
+-d \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v ${cfg}:/root/ilx-config \
+-v ${dhp}:/etc/ssl/certs/dhparam.pem \
+-v /etc/letsencrypt:/etc/letsencrypt \
+-v /var/log/interlex:/var/log/interlex \
+-v /var/log/nginx:/var/log/nginx \
+-v /var/log/letsencrypt:/var/log/letsencrypt \
+-v /tmp/ilx-scratch/ontologies:/tmp/ontologies \
+-v /tmp/ilx-scratch/interlex-load:/tmp/interlex-load \
+--entrypoint ${entrypoint} \
+-p 80:80 \
+-p 443:443 \
+tgbugs/musl:interlex
+
+_cid_new=$(docker ps -lqf ancestor=tgbugs/musl:interlex)
+docker logs -f ${_cid_new}
+}
+#+end_src
+
+*** certbot :host:
+#+name: &run-ilx-certbot
+#+begin_src bash :noweb yes
+function docker-run-ilx-certbot () {
+_cid=$(docker ps -qf ancestor=tgbugs/musl:interlex)
+[ -n "${_cid}" ] || { echo interlex container with nginx not running; return 1; }
+docker exec ${_cid} /etc/entrypoints/certbot.sh <<&profile-hostname()>>
+}
+#+end_src

@@ -1,3 +1,6 @@
+# locally modified config files
+docs/config.org
+
 # temp files
 *.bak
 
