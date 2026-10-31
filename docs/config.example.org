@@ -39,7 +39,7 @@ src_elisp{(find-file (pff "setup-ssh.sh"))}
 
 Lines to be run on the remote profile host are prefixed with ~:~.
 #+name: &setup-ssh
-#+begin_src bash :noweb yes :noweb-prefix yes :eval never :tangle (pff "setup-ssh.sh")
+#+begin_src bash :noweb yes :noweb-prefix yes :eval never :tangle (pff "setup-ssh.sh") :mkdirp yes
 # remote profile host specific setup
 profile_host=$(emacs --batch --eval "(require 'org)" --eval '(progn (with-temp-buffer (insert-file-contents (pop argv)) (org-mode) (princ (org-babel-ref-resolve "&profile-ssh-host"))))' <<&this-dir()>>/config.org)
 : <<&ilx-setup-host-0-host>>
