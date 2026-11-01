@@ -66,6 +66,7 @@ This block should be run as if with =set -e= enabled.
 # reminder: before running this make sure there isn't already another pod that is using the nested-docker-data volume
 #+name: &setup-podman
 #+begin_src bash :noweb yes :noweb-prefix yes :tangle (pff "setup-podman.sh")
+set -ex
 # podman specific setup
 <<&ilx-setup-podman-0-orch>>
 podman exec -i ${container_id} <<&ilx-setup-podman-1-host>>
@@ -1136,6 +1137,7 @@ lessl=/etc/letsencrypt/live/<<&profile-hostname()>>
 
 chmod 0770 ${cfg}
 
+_cid_new=$(
 docker run \
 -d \
 ${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
@@ -1151,9 +1153,11 @@ ${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
 -p 80:80 \
 -p 443:443 \
 tgbugs/musl:interlex
-
-_cid_new=$(docker ps -lqf ancestor=tgbugs/musl:interlex)
-docker logs -f ${_cid_new}
+)
+echo ilx server container ${_cid_new}
+sleep 10
+docker logs ${_cid_new}
+docker exec ${_cid_new} sh -c 'rc-service interlex status && rc-service nginx status'
 }
 #+end_src
 
