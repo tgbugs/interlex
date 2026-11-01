@@ -1021,10 +1021,6 @@ docker run \
 ${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
 -v ${cfg}:/root/ilx-config \
 -v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
--v /home/tom/git/interlex/interlex/dbstuff.py:/usr/lib/python3.14/site-packages/interlex/dbstuff.py \
--v /home/tom/git/interlex/interlex/dbstuff.py:/usr/lib/pypy3.11/site-packages/interlex/dbstuff.py \
--v /home/tom/git/interlex/interlex/dangerops.py:/usr/lib/python3.14/site-packages/interlex/dangerops.py \
--v /home/tom/git/interlex/interlex/dangerops.py:/usr/lib/pypy3.11/site-packages/interlex/dangerops.py \
 --entrypoint ${entrypoint} \
 --rm \
 -it \
@@ -1055,8 +1051,6 @@ ${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
 -v ${cfg}:/root/ilx-config \
 -v ${ucf}:/root/ilx-config/extra-user-config.yaml:ro \
 -v ${sec}:/root/ilx-config/secrets-interlex.sxpr:ro \
--v /home/tom/git/interlex/interlex/cli.py:/usr/lib/python3.14/site-packages/interlex/cli.py \
--v /home/tom/git/interlex/interlex/cli.py:/usr/lib/pypy3.11/site-packages/interlex/cli.py \
 --entrypoint ${entrypoint} \
 --rm \
 tgbugs/musl:interlex ${4}
