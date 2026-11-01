@@ -26,8 +26,9 @@ Only one section can be active at a time. If multiple sections are active the
 exact value for a variable is usually the one that appears first in the file.
 
 The setup process expects to run on two systems, one orchestrator (orch) and
-the remote profile host (host). The orchestrator expects to have
-bash, docker, podman, emacs, cat, and tar.
+the remote profile host (host). The orchestrator needs gnu coreutils, bash,
+docker, podman, emacs, cat, and tar. The host needs gnu coreutils, docker,
+cat, and tar.
 
 ** code :noexport:
 register helper funs
@@ -122,15 +123,21 @@ docker pull tgbugs/musl:interlex
 mkdir /var/lib/interlex
 #+end_src
 
+# fix for mv that creates a directory being non-idempotent
+#+name: &idemp-mv
+#+begin_src bash
+{ [ -d "${TARGET}" ] || mkdir "${TARGET}"; } && mv "${TMP_DIR}" "${TARGET}-will-be-old" && mv --no-target-directory --exchange "${TARGET}-will-be-old" "${TARGET}" && rm -rf "${TARGET}-will-be-old"
+#+end_src
+
 #+name: &ilx-setup-2-orch
-#+begin_src bash :var orch=t
-tar -czf - -C ${config_profile}/config .   | ssh -T ${profile_host} 'umask 077 && TMP_DIR=$(mktemp -d /tmp/transfer.XXXXXX) && tar -xzf - -C "${TMP_DIR}"  && mv "${TMP_DIR}"  /var/lib/interlex/config'
+#+begin_src bash :var orch=t :noweb yes
+tar -czf - -C ${config_profile}/config .   | ssh -T ${profile_host} 'umask 077 && TMP_DIR=$(mktemp -d /tmp/transfer.XXXXXX) && tar -xzf - -C "${TMP_DIR}"  && TARGET=/var/lib/interlex/config; <<&idemp-mv>>'
 cat ${config_profile}/workflow-funs-ilx.sh | ssh -T ${profile_host} 'umask 077 && TMP_FILE=$(mktemp /tmp/transfer.XXXXXX)   && cat >         "${TMP_FILE}" && mv "${TMP_FILE}" /var/lib/interlex/workflow-funs-ilx.sh'
 #+end_src
 
 #+name: &ilx-setup-2-orch-podman
-#+begin_src bash :var orch=t
-tar -czf - -C ${config_profile}/config .   | podman exec -i ${container_id} sh -c 'umask 077 && TMP_DIR=$(mktemp -d /tmp/transfer.XXXXXX) && tar -xzf - -C "${TMP_DIR}"  && mv "${TMP_DIR}"  /var/lib/interlex/config'
+#+begin_src bash :var orch=t :noweb yes
+tar -czf - -C ${config_profile}/config .   | podman exec -i ${container_id} sh -c 'umask 077 && TMP_DIR=$(mktemp -d /tmp/transfer.XXXXXX) && tar -xzf - -C "${TMP_DIR}"  && TARGET=/var/lib/interlex/config; <<&idemp-mv>>'
 cat ${config_profile}/workflow-funs-ilx.sh | podman exec -i ${container_id} sh -c 'umask 077 && TMP_FILE=$(mktemp /tmp/transfer.XXXXXX)   && cat >         "${TMP_FILE}" && mv "${TMP_FILE}" /var/lib/interlex/workflow-funs-ilx.sh'
 #+end_src
 
@@ -160,15 +167,15 @@ sh -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-curies'
 #+end_src
 
 #+name: &ilx-setup-5-orch
-#+begin_src bash
+#+begin_src bash :var orch=t :noweb yes
 while [ ! -f ${config_profile}/dhparam.pem ]; do sleep 1; done  # wait for the background dhparam generation to finish
-cat ${config_profile}/dhparam.pem          | ssh -T ${profile_host} 'umask 077 && TMP_FILE=$(mktemp /tmp/transfer.XXXXXX)   && cat >         "${TMP_FILE}" && mv "${TMP_FILE}" /tmp/dhparam.pem'
+cat ${config_profile}/dhparam.pem | ssh -T ${profile_host} 'umask 077 && TMP_FILE=$(mktemp /tmp/transfer.XXXXXX) && cat > "${TMP_FILE}" && mv "${TMP_FILE}" /tmp/dhparam.pem'
 #+end_src
 
 #+name: &ilx-setup-5-orch-podman
-#+begin_src bash
+#+begin_src bash :var orch=t :noweb yes
 while [ ! -f ${config_profile}/dhparam.pem ]; do sleep 1; done  # wait for the background dhparam generation to finish
-cat ${config_profile}/dhparam.pem          | podman exec -i ${container_id} sh -c 'umask 077 && TMP_FILE=$(mktemp /tmp/transfer.XXXXXX)   && cat >         "${TMP_FILE}" && mv "${TMP_FILE}" /tmp/dhparam.pem'
+cat ${config_profile}/dhparam.pem | podman exec -i ${container_id} sh -c 'umask 077 && TMP_FILE=$(mktemp /tmp/transfer.XXXXXX) && cat > "${TMP_FILE}" && mv "${TMP_FILE}" /tmp/dhparam.pem'
 #+end_src
 
 In the ssh case most of these need to be run as root.
@@ -230,7 +237,7 @@ apt install docker.io podman emacs-nox
 **** alpine
 #+name: &ssh-setup-alpine
 #+begin_src bash
-apk add docker podman emacs
+apk add coreutils docker podman emacs
 #+end_src
 
 *** setup podman
@@ -248,7 +255,7 @@ container_id=$(podman run --privileged ${_entrypoints:+-v ${_entrypoints}:${_ent
 
 #+name: &ilx-setup-podman-1-host
 #+begin_src sh :var host=t
-apk add docker
+apk add coreutils docker
 #+end_src
 
 separate so it can run as a daemon
