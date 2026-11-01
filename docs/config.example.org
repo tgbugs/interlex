@@ -247,10 +247,26 @@ Change =user= to match your system, do not use =~/= because it expands different
 #+name: &debug-entrypoints
 : /home/user/git/dockerfiles/musl/interlex/entrypoints
 
+Entrypoint so that podman stop will stop nested containers and properly clean up database connections.
+#+header: :shebang "#!/usr/bin/env sh"
+#+begin_src bash :tangle ./podputer.sh
+function cleanup() {
+command -v docker && {
+  running=$(docker ps -qf ancestor=tgbugs/musl:interlex)
+  for cid in ${running}; do
+    docker stop --timeout 10 ${cid};
+  done
+  }
+}
+trap cleanup SIGTERM SIGINT
+sleep infinity &
+wait $!
+#+end_src
+
 #+name: &ilx-setup-podman-0-orch
 #+begin_src bash orch=t :noweb yes
 #_entrypoints=<<&debug-entrypoints()>> # uncomment line for development
-container_id=$(podman run --privileged ${_entrypoints:+-v ${_entrypoints}:${_entrypoints}} -v nested-docker-data:/var/lib/docker --rm -di alpine:latest)
+container_id=$(podman run --privileged ${_entrypoints:+-v ${_entrypoints}:${_entrypoints}} -v nested-docker-data:/var/lib/docker -v <<&this-dir()>>/podputer.sh:/etc/entrypoints/podputer.sh --entrypoint /etc/entrypoints/podputer.sh --rm -di alpine:latest)
 #+end_src
 # contaier_id=$(podman ps -lqf ancestor=alpine:latest)
 
