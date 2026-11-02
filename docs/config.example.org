@@ -970,6 +970,7 @@ local entrypoint cfg pgp
 entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
 [ -n "${1}" ] || { echo 'config path required'; return 1; }
 [ -n "${2}" ] || { echo 'pgpass path required'; return 2; }
+{ [ -z "${3}" ] || [ "${3}" = --force ]; } || { echo 'must be --force or nothing'; return 3; }
 
 cfg=$(realpath ${1})
 pgp=$(realpath ${2})
@@ -983,7 +984,7 @@ ${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
 -e PGCONNECT_TIMEOUT=10 \
 --entrypoint ${entrypoint} \
 --rm \
-tgbugs/musl:interlex
+tgbugs/musl:interlex ${3}
 }
 #+end_src
 
