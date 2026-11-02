@@ -2,11 +2,11 @@
 # permissions on this file should be set to 0600
 
 # postgres ssl connection mode set to disable if e.g. connecting via ssh port forwarding
-PGSSLMODE=require
+PGSSLMODE=
 # gunicorn log level
 LOG_LEVEL=
 # access log format
-LOG_FORMAT='%(h)s - - %(t)s "%(r)s" %(s)s -'
+LOG_FORMAT=
 # database server host
 DB_HOST=localhost
 # database server port
@@ -20,6 +20,6 @@ LOG_LOC=/var/log/interlex
 # development settings
 PYTHONPATH=
 # gunicorn workers
-WORKERS=6
+WORKERS=
 # gunicorn worker class
-WORKER_CLASS=sync
+WORKER_CLASS=

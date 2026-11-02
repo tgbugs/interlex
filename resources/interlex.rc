@@ -2,11 +2,15 @@
 # Copyright 1999-2018 Gentoo Foundation
 # Distributed under the terms of the GNU General Public License v2
 
+: ${PGSSLMODE:=require}
 : ${LOG_LEVEL:=info}
 : ${SVCGROUP:=interlex}
 : ${SVCUSER:=interlex}
 : ${LOG_LOC:="/var/log/${SVCNAME}"}
 : ${PYTHONPATH:=""}
+: ${WORKERS:=4}
+: ${WORKER_CLASS:=sync}
+: ${LOG_FORMAT:='%(h)s - - %(t)s "%(r)s" %(s)s -'}
 
 run_dir=${run_dir:-/run}
 LOG="${LOG_LOC}/uri.log"
