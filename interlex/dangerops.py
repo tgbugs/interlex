@@ -30,6 +30,10 @@ def make_test_user(username, password, db_kwargs, email=None,
     _port = f':{port}' if port else ''
     prefix = f'{scheme}://{host}{_port}'
 
+    if password is None:
+        # set a long random password
+        password = 'none-provided-' + secrets.token_hex(20)
+
     if email is None:
         diff = secrets.token_hex(6)
         email = f'email-{diff}@example.org'
@@ -104,17 +108,24 @@ def register_first_admin():
         raise ValueError(msg)
 
     reserved = False
-    if len(sys.argv) == 6 and sys.argv[5] == '--reserved':
+    if len(sys.argv) >= 6 and '--reserved' in sys.argv[5:]:
         reserved = True
 
-    msg = f'\nSet password for new admin user {username}'
-    print(msg)
-    a = getpass()
-    b = getpass()
-    if a == b:
-        password = a
+    dopass = True
+    if len(sys.argv) >= 6 and '--no-password' in sys.argv[5:]:
+        dopass = False
+
+    if dopass:
+        msg = f'\nSet password for new admin user {username}'
+        print(msg)
+        a = getpass()
+        b = getpass()
+        if a == b:
+            password = a
+        else:
+            raise ValueError('passwords do not match')
     else:
-        raise ValueError('passwords do not match')
+        password = None
 
     kls = idlib.systems.orcid.OrcidSandbox if config.orcid_sandbox else idlib.Orcid
     try:
