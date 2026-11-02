@@ -22,6 +22,13 @@ def make_test_user(username, password, db_kwargs, email=None,
     """ you probably shouldn't be using this """
     log.info(db_kwargs)
     app = run_uri(echo=True, test=True, db_kwargs=db_kwargs)
+    if 'SECRET_KEY' not in app.config or not app.config['SECRET_KEY']:
+        # this is ok because no other client process will ever see this key
+        # is if for some reason this gets run when there is user config that
+        # specifies fl-session-secret-key then generate and discard on here
+        # we also don't need to clean up because app doesn't escape this fun
+        app.config['SECRET_KEY'] = 'totally-temp-key-never-used-again-' + secrets.token_hex(20)
+
     client = app.test_client()
     scheme = 'http'
     host = test_http_host
