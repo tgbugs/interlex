@@ -3,6 +3,7 @@
 # Distributed under the terms of the GNU General Public License v2
 
 : ${PGSSLMODE:=require}
+: ${PROXY_N:=1}
 : ${LOG_LEVEL:=info}
 : ${SVCGROUP:=interlex}
 : ${SVCUSER:=interlex}
@@ -23,6 +24,7 @@ start_stop_daemon_args="
 --user ${SVCUSER}
 --wait 1500
 --env PGSSLMODE=${PGSSLMODE}
+--env INTERLEX_PROXY_N=${PROXY_N}
 --env INTERLEX_DB_HOST=${DB_HOST}
 --env INTERLEX_DB_PORT=${DB_PORT}
 --env INTERLEX_DATABASE=${DATABASE}

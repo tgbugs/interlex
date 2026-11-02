@@ -3,6 +3,8 @@
 
 # postgres ssl connection mode set to disable if e.g. connecting via ssh port forwarding
 PGSSLMODE=
+# wsgi proxy level
+PROXY_N=
 # gunicorn log level
 LOG_LEVEL=
 # access log format
