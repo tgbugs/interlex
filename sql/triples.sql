@@ -1163,6 +1163,7 @@ CREATE TABLE triples(
 );
 CREATE INDEX triples__s__index ON triples (s);
 CREATE INDEX triples__p__index ON triples (p);  -- needed accelerate transitive queries (watch out for the memory usage if creating after the fact)
+CREATE INDEX triples__o__index ON triples (o);  -- needed to accelerate the obj_to_sub = true direction of transitive queries (without it every recursion level full-scans triples)
 
 CREATE INDEX triples__subgraph_identity__index
        ON triples (subgraph_identity);
@@ -1326,37 +1327,73 @@ CREATE INDEX view_lift_sco_res_onp_svf__p__index ON view_lift_sco_res_onp_svf (p
 
 CREATE OR REPLACE FUNCTION connected_predicates_ilx(s_starts uri[], predicates uri[], obj_to_sub boolean = FALSE, max_depth integer = -1)
 RETURNS TABLE (s uri, p uri, o uri, ident bytea) AS $$
+-- with recursive uses UNION instead of UNION ALL so that nodes recursed
+-- on only once per walk instead of once per recursion level (oof)
 BEGIN
 
 IF obj_to_sub THEN
 
-  RETURN QUERY
-  WITH RECURSIVE tree(s, p, o, ident, dpth) AS (
-    SELECT t.s, t.p, t.o, t.triple_identity as ident, 0 as dpth FROM triples AS t
-    JOIN UNNEST(predicates) AS ps ON t.p = ps
-    JOIN UNNEST(s_starts) AS ss ON t.o = ss -- object
-  UNION ALL
-    SELECT t.s, t.p, t.o, t.triple_identity as ident, tr.dpth + 1 as dpth FROM triples AS t
-    JOIN tree AS tr ON t.o = tr.s -- object -> subject
-    JOIN UNNEST(predicates) AS ps ON t.p = ps
-    WHERE max_depth < 0 OR tr.dpth < max_depth
-  )
-  SELECT DISTINCT tro.s, tro.p, tro.o, tro.ident FROM tree as tro;
+  IF max_depth < 0 THEN
+
+    RETURN QUERY
+    WITH RECURSIVE reach(node) AS (
+      SELECT ss.node FROM UNNEST(s_starts) AS ss(node)
+      UNION
+        SELECT t.s FROM triples AS t
+        JOIN reach AS r ON t.o = r.node -- object -> subject
+        WHERE t.p = ANY (predicates)
+    )
+    SELECT DISTINCT t.s, t.p, t.o, t.triple_identity as ident FROM triples AS t
+    JOIN (SELECT DISTINCT node FROM reach) AS r ON t.o = r.node
+    WHERE t.p = ANY (predicates);
+
+  ELSE
+
+    RETURN QUERY
+    WITH RECURSIVE reach(node, dpth) AS (
+      SELECT ss.node, 0 as dpth FROM UNNEST(s_starts) AS ss(node)
+      UNION
+        SELECT t.s, r.dpth + 1 as dpth FROM triples AS t
+        JOIN reach AS r ON t.o = r.node -- object -> subject
+        WHERE t.p = ANY (predicates) AND r.dpth < max_depth
+    )
+    SELECT DISTINCT t.s, t.p, t.o, t.triple_identity as ident FROM triples AS t
+    JOIN (SELECT DISTINCT node FROM reach) AS r ON t.o = r.node
+    WHERE t.p = ANY (predicates);
+
+  END IF;
 
 ELSE
 
-  RETURN QUERY
-  WITH RECURSIVE tree(s, p, o, ident, dpth) AS (
-    SELECT t.s, t.p, t.o, t.triple_identity as ident, 0 as dpth FROM triples AS t
-    JOIN UNNEST(predicates) AS ps ON t.p = ps
-    JOIN UNNEST(s_starts) AS ss ON t.s = ss -- subject
-  UNION ALL
-    SELECT t.s, t.p, t.o, t.triple_identity as ident, tr.dpth + 1 as dpth FROM triples AS t
-    JOIN tree AS tr ON t.s = tr.o -- subject -> object
-    JOIN UNNEST(predicates) AS ps ON t.p = ps
-    WHERE max_depth < 0 OR tr.dpth < max_depth
-  )
-  SELECT DISTINCT tro.s, tro.p, tro.o, tro.ident FROM tree as tro;
+  IF max_depth < 0 THEN
+
+    RETURN QUERY
+    WITH RECURSIVE reach(node) AS (
+      SELECT ss.node FROM UNNEST(s_starts) AS ss(node)
+      UNION
+        SELECT t.o FROM triples AS t
+        JOIN reach AS r ON t.s = r.node -- subject -> object
+        WHERE t.p = ANY (predicates)
+    )
+    SELECT DISTINCT t.s, t.p, t.o, t.triple_identity as ident FROM triples AS t
+    JOIN (SELECT DISTINCT node FROM reach) AS r ON t.s = r.node
+    WHERE t.p = ANY (predicates);
+
+  ELSE
+
+    RETURN QUERY
+    WITH RECURSIVE reach(node, dpth) AS (
+      SELECT ss.node, 0 as dpth FROM UNNEST(s_starts) AS ss(node)
+      UNION
+        SELECT t.o, r.dpth + 1 as dpth FROM triples AS t
+        JOIN reach AS r ON t.s = r.node -- subject -> object
+        WHERE t.p = ANY (predicates) AND r.dpth < max_depth
+    )
+    SELECT DISTINCT t.s, t.p, t.o, t.triple_identity as ident FROM triples AS t
+    JOIN (SELECT DISTINCT node FROM reach) AS r ON t.s = r.node
+    WHERE t.p = ANY (predicates);
+
+  END IF;
 
 END IF;
 
@@ -1735,10 +1772,12 @@ CREATE TRIGGER pers_log_heads AFTER INSERT OR UPDATE ON perspective_heads
 
 CREATE OR REPLACE FUNCTION pers_log_heads_delete() RETURNS trigger as $$
 BEGIN
-INSERT INTO perspective_reflog (perspective_id, subject, head_identity) VALUES (OLD.perspective_id, OLD.subject, ''::bytea);
+INSERT INTO perspective_reflog (perspective_id, subject, head_identity) VALUES (OLD.perspective_id, OLD.subject, digest('', 'sha256'));
+RETURN OLD;
 END;
 $$ language plpgsql;
 
 drop trigger if exists pers_log_heads_delete on perspective_heads;
 CREATE TRIGGER pers_log_heads_delete AFTER DELETE ON perspective_heads
        FOR EACH ROW EXECUTE PROCEDURE pers_log_heads_delete();
+
