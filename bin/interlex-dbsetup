@@ -72,6 +72,7 @@ psql -U postgres -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/extensions.sql"
 psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/schemas.sql" -v ON_ERROR_STOP=on
 psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/groups.sql" -v ON_ERROR_STOP=on
 psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/triples.sql" -v ON_ERROR_STOP=on
+psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/es.sql" -v ON_ERROR_STOP=on
 psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/user-uris.sql" -v ON_ERROR_STOP=on
 psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/pulls.sql" -v ON_ERROR_STOP=on
 psql -U interlex-admin -h ${HOST} -p ${PORT} -d ${DATABASE} -f "${SQL}/comments.sql" -v ON_ERROR_STOP=on
