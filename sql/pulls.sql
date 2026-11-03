@@ -194,6 +194,10 @@ SET acting_user = uid_acting,
     status = 'merged'
 WHERE id = pull_id;
 
+-- changes to perspective head require updating the elasticsearch doc for a term
+-- however no new triples are added so we need an alternate hook for reindexing
+PERFORM es_queue_subject(pr_subject, expected_from_id, 'mergepull');
+
 ELSE
   RAISE EXCEPTION 'pull request was not merged for some reason pull id is %', pull_id;
 END IF;

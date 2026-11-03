@@ -23,3 +23,5 @@ GRANT UPDATE (spec_head_identity) ON interlex.ontologies TO "interlex-user";
 GRANT UPDATE (head_identity) ON interlex.perspective_heads TO "interlex-user";
 GRANT UPDATE (acting_user, status) ON interlex.pull_requests TO "interlex-user";
 GRANT UPDATE (config) ON interlex.display_configuration TO "interlex-user";
+
+GRANT UPDATE, DELETE ON interlex.subjects_changed TO "interlex-user";
