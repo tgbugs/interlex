@@ -234,6 +234,9 @@ emerge -avn app-containers/docker app-containers/docker-cli app-containers/podma
 #+name: &ssh-setup-ubuntu
 #+begin_src bash
 apt install docker.io podman emacs-nox
+# TODO add the ssh user (e.g. ubuntu) to docker group in /etc/group otherwise we wind up with sudo madness in our configs
+# FIXME we actually still wind up with all sorts of failures due to the user running the commands
+# ubuntu user already has passwordless sudo so this isn't really an issue, in other environments we would definitely use podman
 #+end_src
 
 **** alpine
@@ -829,6 +832,11 @@ For the host
 )
 #+end_src
 
+session secret key
+#+begin_src bash
+python -c 'import secrets; print(secrets.token_hex(32))'
+#+end_src
+
 For the orchestrator you will likely want to generate api keys yourself to put in your secrets file.
 #+begin_src bash
 docker run --rm --entrypoint /usr/bin/python tgbugs/musl:interlex -c 'import logging; logging.DEBUG = 0; from interlex.auth import gen_key; [print(gen_key()) for _ in range(4)]'
@@ -904,7 +912,7 @@ entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
 [ -n "${1}" ] || { echo 'config path required'; return 1; }
 
 cfg=$(realpath ${1})
-pgp=$(realpath ${2})
+[ -n "${2}" ] && pgp=$(realpath ${2})
 { [ -z ${pgp} ] || [ -f ${pgp} ]; } || { echo "missing pgpass ${pgp}" ; return 4; }
 
 [ -d /tmp/ilx-scratch ] || mkdir /tmp/ilx-scratch
@@ -1130,7 +1138,7 @@ docker run \
 ${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
 -v /var/log:/tmp/var/log \
 --entrypoint /bin/bash \
-tgbugs/musl:interlex -c 'chown -R interlex:interlex /var/lib/interlex; cp -a /var/log/nginx /tmp/var/log/; cp -a /var/log/interlex /var/tmp/log/; mkdir /tmp/var/log/letsencrypt; chmod 0700 /tmp/var/log/letsencrypt'
+tgbugs/musl:interlex -c 'chown -R interlex:interlex /var/lib/interlex; cp -a /var/log/nginx /tmp/var/log/; cp -a /var/log/interlex /tmp/var/log/; mkdir /tmp/var/log/letsencrypt; chmod 0700 /tmp/var/log/letsencrypt'
 }
 #+end_src
 
