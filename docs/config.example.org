@@ -27,7 +27,7 @@ exact value for a variable is usually the one that appears first in the file.
 
 The setup process expects to run on two systems, one orchestrator (orch) and
 the remote profile host (host). The orchestrator needs gnu coreutils, bash,
-docker, podman, emacs, cat, and tar. The host needs gnu coreutils, docker,
+docker, podman, emacs, cat, and tar. The host needs gnu coreutils, bash, docker,
 cat, and tar.
 
 ** code :noexport:
@@ -165,7 +165,7 @@ container (which is kind of weird and probably a FIXME).
 # FIXME there's got to be a better way than sh source && ...
 #+name: &ilx-setup-4-host
 #+begin_src bash :var host=t
-sh -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-curies'
+bash -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-curies'
 #+end_src
 
 #+name: &ilx-setup-5-orch
@@ -187,8 +187,8 @@ In the ssh case most of these need to be run as root.
 chown root:root /tmp/dhparam.pem
 chmod 644 /tmp/dhparam.pem
 mv /tmp/dhparam.pem /etc/ssl/certs/dhparam.pem
-sh -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-host-init'
-sh -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-server'  # FIXME need a way to not follow logs by default here
+bash -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-host-init'
+bash -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-server'
 #+end_src
 
 #+name: &ilx-setup-8-orch
@@ -199,7 +199,7 @@ docker run --network host --rm --entrypoint /usr/bin/curl tgbugs/musl:interlex -
 
 #+name: &ilx-setup-9-host
 #+begin_src bash :var host=t
-sh -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-certbot'
+bash -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-certbot'
 #+end_src
 
 ingest of external ontologies (usually this should be run from the orchestrator or some powerful worker host)
@@ -242,7 +242,7 @@ apt install docker.io podman emacs-nox
 **** alpine
 #+name: &ssh-setup-alpine
 #+begin_src bash
-apk add coreutils docker podman emacs
+apk add bash coreutils docker podman emacs
 #+end_src
 
 *** setup podman
@@ -276,7 +276,7 @@ container_id=$(podman run --privileged ${_entrypoints:+-v ${_entrypoints}:${_ent
 
 #+name: &ilx-setup-podman-1-host
 #+begin_src sh :var host=t
-apk add coreutils docker
+apk add bash coreutils docker
 #+end_src
 
 separate so it can run as a daemon
@@ -678,7 +678,7 @@ server {
 
 server {
 	listen 443 ssl;
-	listen [::]:443;
+	listen [::]:443 ssl;
 	server_name <<&profile-hostname()>>;
 
 	ssl_certificate /etc/letsencrypt/live/<<&profile-hostname()>>/fullchain.pem;
