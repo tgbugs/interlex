@@ -115,6 +115,7 @@ profile=$(emacs --batch --eval "(require 'org)" --eval '(progn (with-temp-buffer
 sentinel=$(emacs --batch --eval "(require 'org)" --eval '(progn (with-temp-buffer (insert-file-contents (pop argv)) (org-mode) (princ (org-babel-ref-resolve "&cfg-db-name"))))' <<&this-dir()>>/config.org)
 [ -z "${sentinel}" ] && echo "the sentinel value for this process &cfg-db-name is not set do not continue"
 config_profile=<<&this-dir()>>/${profile}
+[ "${PS1#*${profile}}" = "${PS1}" ] && { PS1="$(echo ${PS1} | sed 's/\$/('"${profile}"') \$/') "; }
 [ -f ${config_profile}/dhparam.pem ] || docker run -v ${config_profile}:/output --entrypoint /usr/bin/openssl -d --rm tgbugs/musl:interlex dhparam -out /output/dhparam.pem 4096
 #+end_src
 
