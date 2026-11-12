@@ -32,7 +32,7 @@ cat, and tar.
 
 ** code :noexport:
 register helper funs
-#+begin_src elisp :tangle (let () (defun pff (str) (concat (org-babel-ref-resolve "&config-profile") "/" str)) (defun cff (str) (concat (org-babel-ref-resolve "&config-profile") "/config/" str)) "./.hack.el")
+#+begin_src elisp :tangle (let () (defun pff (str) (concat (org-babel-ref-resolve "&config-profile") "/" str)) (defun cff (str) (concat (org-babel-ref-resolve "&config-profile") "/config/" str)) "no")
 #+end_src
 ** remote profile host
 Use =C-c C-v C-v=  to view the expanded form in buffer or view =${config_profile}/setup-ssh.sh=.
