@@ -1166,6 +1166,8 @@ chmod 0770 ${cfg}
 _cid_new=$(
 docker run \
 -d \
+--name ilx-server \
+--restart unless-stopped \
 ${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
 -v ${cfg}:/root/ilx-config \
 -v ${dhp}:/etc/ssl/certs/dhparam.pem \
@@ -1196,3 +1198,19 @@ _cid=$(docker ps -qf ancestor=tgbugs/musl:interlex)
 docker exec ${_cid} /etc/entrypoints/certbot.sh <<&profile-hostname()>>
 }
 #+end_src
+
+*** upgrade :host:
+#+name: &upgrade-ilx
+#+begin_src bash :noweb yes
+function docker-upgrade-ilx () {
+_image=tgbugs/musl:interlex
+_image_new=${_image}
+_image_date=$(date -I --date $(docker inspect ${_image} --format '{{.Created}}'))
+_cid_old=$(docker ps -lqf ancestor=${_image} -f status=running -f name=ilx-server)
+docker tag ${_image} ${_image}-${_image_date}
+docker pull ${_image_new} || return $?
+docker stop ${_cid_old} || return $?
+docker-run-ilx-server
+}
+#+end_src
+
