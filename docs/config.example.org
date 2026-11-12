@@ -1183,6 +1183,8 @@ ${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
 -p 443:443 \
 tgbugs/musl:interlex
 )
+code=$?
+[ ${code} = 0 ] || return ${code}
 echo ilx server container ${_cid_new}
 sleep 10
 docker logs ${_cid_new}
@@ -1211,6 +1213,7 @@ _cid_old=$(docker ps -lqf ancestor=${_image} -f status=running -f name=ilx-serve
 docker tag ${_image} ${_image}-${_image_date}
 docker pull ${_image_new} || return $?
 docker stop ${_cid_old} || return $?
+docker container rename ${_cid_old} ilx-server-$(date "+%Y-%m-%dT%H%M%S")
 docker-run-ilx-server
 }
 #+end_src
