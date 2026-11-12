@@ -894,6 +894,7 @@ interlex-admin should be run from the orchestrator.
 <<&run-ilx-host-init>>
 <<&run-ilx-server>>
 <<&run-ilx-certbot>>
+<<&upgrade-ilx>>
 #+end_src
 # TODO
 # <<&run-ilx-services>>
