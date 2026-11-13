@@ -75,6 +75,7 @@ synonym_types = {'abbrev':ilxtr['synonyms/abbreviation'],
                  'oboInOwl:hasExactSynonym': ilxtr['synonyms/exact'],
                  'oboInOwl:hasNarrowSynonym': ilxtr['synonyms/narrow'],
                  'oboInOwl:hasRelatedSynonym': ilxtr['synonyms/related'],
+                 'obo:hasExactSynonym': ilxtr['synonyms/exact'],  # sigh
                  'fma:synonym': fma.synonym,  # perserved for prov
                  'NIFRID:synonym': NIFRID.synonym,
                  'vocab:synonym': NIFRID.synonym,  # FIXME probably normalize this internally?

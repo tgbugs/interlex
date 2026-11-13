@@ -60,6 +60,7 @@ def fix_laex(self, data, eid_duplicate_of, eid_values):
     deprecated = set()  # FIXME TODO
     deleted = set()
     derp_tid = {}
+    # reminder pi -> (prefix, identifier)
     pi_type = {}  # needed to deal with duplicates that are termsets i think
     pi_type_raw = {}
     pi_ouid = {}
@@ -117,7 +118,7 @@ def fix_laex(self, data, eid_duplicate_of, eid_values):
     for row in data['synonyms']:
         #synid, tid, literal, type, version, time = row  # FIXME there are definitely duplicates in here
         if row.tid not in derp_tid:
-            log.error(f'sigh no term with tid {row.tid} {row.literal} {row.type}')
+            log.log(9, f'sigh no term with tid {row.tid} {row.literal} {row.type}')
             continue
         pi = derp_tid[row.tid]
         _pisyn[pi].append(row.literal)
@@ -136,7 +137,7 @@ def fix_laex(self, data, eid_duplicate_of, eid_values):
 
     #pido = {getpi(s): getpi(o) for s, p, o in duplicateOfs}
     pido = {a: b for a, b in eid_duplicate_of}
-    pidonc = {k: v for k, v in pido.items() if v[0] != 'cde'}
+    pidonc = {k: v for k, v in pido.items() if v[0] in ('cde', 'fde', 'pde')}
     #pieid = {(p, i): getpi(e) for p, i, e in eid_values if 'uri.interlex.org' in e}  # empty
 
     _pieid = defaultdict(list)
@@ -181,7 +182,9 @@ def fix_laex(self, data, eid_duplicate_of, eid_values):
     }
     ilx_special_cases = {
         # actually a pde
-        ('ilx', '0739361'): pi_lab[('ilx', '0739361')] + f' (user {existing_user_map[pi_ouid[("ilx", "0739361")]][0]})',
+        #('ilx', '0739361'): pi_lab[('ilx', '0739361')] + f' (user {existing_user_map[pi_ouid[("ilx", "0739361")]][0]})',
+        ('ilx', '0739361'): 'handedness (user old-ilx-9185c)',
+        ('ilx', '0770196'): 'SEX (user old-ilx-9185c)',
 
         # http://terminologia-anatomica.org/en/Terms/View?sitemapItemId=100
         # TODO merge these probably despite the difference in the hierachy also can ingest TA98 hierarchy maybe?
@@ -451,7 +454,21 @@ def fix_laex(self, data, eid_duplicate_of, eid_values):
                         #log.debug(f'bbbbbbbbbbb {l} {pi} {ao}')
                     elif i < oi:
                         xdupes.add(pi)
+                        if pi in repl:  # lowest is the reference
+                            repl.pop(pi)
+                    elif i > oi:
+                        tilx = op.upper() + ':' + oi
+                        sighlx = p.upper() + ':' + i + ' '
+                        repl[pi] = l + f' {sighlx}(duplicateOf {tilx})'
+                        label_duplicate_of.append((pi, opi))
+                        not_xdupes_because_not_min.add(pi)
                     else:
+                        # there are two cases where we can hit this branch
+                        # both happen when the replace direction was wrong
+                        # the first is when pi is the middle of 3 values
+                        # the second is when pi is the max of 3 values
+                        # if you hit this you may be able to fix it by adding
+                        # the term that should be retained to self.ignore_depdel
                         raise NotImplementedError('correctly')
 
                     continue
@@ -593,12 +610,23 @@ def fix_laex(self, data, eid_duplicate_of, eid_values):
 
     actually_multi = {pi: v for pi, v in maybe_multi.items() if pi in repl and '(deprecated)' not in repl[pi] and '(deleted)' not in repl[pi]}
     not_multi = {pi: v for pi, v in maybe_multi.items() if pi not in repl or '(deprecated)' in repl[pi] or '(deleted)' in repl[pi]}
+    oops = defaultdict(list)
+    for pi, v in not_multi.items():
+        oops[v].append(pi)
+    for l, _pis in oops.items():
+        if len(_pis) > 1:
+            for pi in _pis:
+                p, i = pi
+                before, after = l.rsplit('(', 1)
+                sighlx = p.upper() + ':' + i
+                repl[pi] =  f'{before} {sighlx} ({after}'
+
     #multimapped = sorted([r for r in repl.values() if '(deprecated)' in r and '(duplicateOf' in r])
     from pprint import pformat
     log.debug('\n' + pformat(sorted([(l, n, [(f'http://uri.olympiangods.org/base/{p}_{i}.html', (p, i)) for p, i in sorted(pis)]) for l, n, pis in re_derp]), width=240))
     nlabs = [v for v in repl.values()]
     assert len(nlabs) == len(set(nlabs))
-    return repl, label_duplicate_of, maybe_newsyns, rem_duplicate_of
+    return repl, label_duplicate_of, maybe_newsyns, rem_duplicate_of, pi_lab
 
 
 # get interlex
@@ -836,6 +864,8 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
         #self.remote_load()
 
     def ids(self):
+        # must include all ids so that we set current correctly even
+        # if we will not insert them
         with self.engine.connect() as conn:
             rows = conn.execute(sql_text('SELECT DISTINCT ilx, label FROM terms ORDER BY ilx ASC'))
 
@@ -854,7 +884,8 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
             else:
                 fixed_values.append((p, i, l))
 
-        values = fixed_values
+        all_values = fixed_values
+        values = all_values if self.do_cdes else [v for v in all_values if v[0] not in ('cde', 'fde', 'pde')]
 
         self.ilx_sql = []
         self.ilx_params = []
@@ -871,8 +902,8 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
             self.label_exact_sql.append(lsql)
             self.label_exact_params.append({**params, 'pred': 'label'})
 
-        prefixes = set(v[0] for v in values)
-        self.current = {p:int([v for v in values if v[0] == p][-1][1]) for p in prefixes}
+        prefixes = set(v[0] for v in all_values)
+        self.current = {p:int([v for v in all_values if v[0] == p][-1][1]) for p in prefixes}
         #self.current = int(values[-1][1].strip('0'))
         log.info(self.current)
 
@@ -954,6 +985,7 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
             ('ilx', '0106349'),  # long qt syndrome
             ('ilx', '0108300'),  # overlay planes
             ('ilx', '0738373'),  # Internal branch of superior laryngeal nerve XXX incorrect deprecation procedure
+            ('ilx', '0797517'),  # Superior cardiac nerve # XXX incorrect deprecation procedure
         )
         merge_label_priority = (  # in the event that newer takes priority over older
             ('ilx', '0739010'),  # long qt syndrome
@@ -969,6 +1001,8 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
             ('ilx', '0793233', 'http://purl.org/sig/ont/fma/fma6944'),  # Interganglionic branch of inferior cervical ganglion to first thoracic ganglion -> ILX:0738291
             ('ilx', '0741726', 'https://taviewer.openanatomy.org/?id=A02.1.03.010'),  # frontal notch (TA98)
             ('ilx', '0741680', 'https://taviewer.openanatomy.org/?id=A02.2.05.014'),  # median sacral crest (TA98)
+            ('ilx', '0797522', 'http://purl.org/sig/ont/fma/fma6578'),  # Superior cardiac nerve
+            ('ilx', '0797530', 'http://uri.interlex.org/base/ilx_1'),  # broken testing term pointing to a non-existent id
         )
         flip = ((('ilx', '0738373'), ('ilx', '0793561')),)
         for iri, _stat_pis in any_mult.items():
@@ -1032,7 +1066,7 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
         bads = sorted(bads, key=lambda ab:ab[1])
         # XXX reminder: values comes from start_values and already excludes self referential external ids
         sbads, sskips, sbad_versions = set(bads), set(skips), set(bad_versions)
-        _ins_values = [
+        _ins_values_0 = [
             (pref, ilx, (fixes[iri] if iri in fixes else iri)) for pref, ilx, iri, ver in values if
             (pref, ilx, iri) not in sbads and
             (pref, ilx, iri) not in sskips and
@@ -1041,21 +1075,21 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
             #(pref, ilx, iri, ver) not in duplicate_ex_rec
         ]
 
-        sigh = set(a for a, b in Counter(_ins_values).most_common() if b > 1)
+        sigh = set(a for a, b in Counter(_ins_values_0).most_common() if b > 1)
 
-        _a = set(_ins_values)
+        _a = set(_ins_values_0)
         _b = set([(p, i, r) for p, i, r, v in duplicate_ex_rec])
         _a & _b == _b
         sigh == _b
         self_ref = _b - sigh
         assert not [(p, i, r) for p, i, r in self_ref if r != f'http://uri.interlex.org/base/{p}_{i}']
-        _i = set(r for p, i, r in _ins_values)
+        _i = set(r for p, i, r in _ins_values_0)
         _s = set(r for p, i, r in skips)
         hrm = _s - _i
         rtm = [h for h in hrm if 'neurolex' not in h]
         assert not rtm, 'removed too much'
         # we are ok to clean up _ins_values to remove duplicates at this point
-        _ins_values = sorted(set(_ins_values))
+        _ins_values_1 = sorted(set(_ins_values_0))
 
         def morefix(p, i, iri):
             if iri.endswith(';'):  # yes fix it in the source but
@@ -1074,24 +1108,24 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
 
             return out
 
-        _ins_values = [(p, i, morefix(p, i, r)) for p, i, r in _ins_values]
+        _ins_values_2 = [(p, i, morefix(p, i, r)) for p, i, r in _ins_values_1]
         skips = [(p, i, morefix(p, i, r)) for p, i, r in skips]
 
         # however we have a non-injective problem still
         dd = defaultdict(list)
-        for p, i, r in _ins_values:
+        for p, i, r in _ins_values_2:
             dd[r].append((p, i))
         ohno_v = {r:pis for r, pis in dd.items() if len(pis) > 1}
         if ohno_v:
             assert False, 'non-injective'
 
-        ins_values = []  # [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' not in iri]
-        for pref, ilx, iri in _ins_values:
+        ins_values = []  # [(pref, ilx, iri) for pref, ilx, iri in _ins_values_2 if 'interlex.org' not in iri]
+        for pref, ilx, iri in _ins_values_2:
             if 'interlex.org' not in iri:
                 ins_values.append((pref, ilx, iri))
 
-        user_iris = []  # [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' in iri and 'org/base/' not in iri]
-        for pref, ilx, iri in _ins_values:
+        user_iris = []  # [(pref, ilx, iri) for pref, ilx, iri in _ins_values_2 if 'interlex.org' in iri and 'org/base/' not in iri]
+        for pref, ilx, iri in _ins_values_2:
             if 'interlex.org' in iri and 'org/base/' not in iri:
                 user_iris.append((pref, ilx, iri))
 
@@ -1107,8 +1141,8 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
         # sometimes there will be for this iteration as well ... but the question of how to
         # to it needs significantly more though, so for how we are going to stick the info
         # in the triples table and LET THE QUERIER SORT EM OUT
-        base_iris = [] #  [(pref, ilx, iri) for pref, ilx, iri in _ins_values if 'interlex.org' in iri and 'org/base/' in iri]
-        for pref, ilx, iri in _ins_values:
+        base_iris = [] #  [(pref, ilx, iri) for pref, ilx, iri in _ins_values_2 if 'interlex.org' in iri and 'org/base/' in iri]
+        for pref, ilx, iri in _ins_values_2:
             if 'interlex.org' in iri and 'org/base/' in iri:
                 base_iris.append((pref, ilx, iri))
         # FIXME replacedBys non-unique
@@ -1162,7 +1196,7 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
             qq = [(a, b) for a, b in Counter(sarb).most_common() if b > 1]
             log.error('duplicate replacedBy mappings for some terms!')
 
-        assert len(ins_values) + len(user_iris) + len(base_iris) == len(_ins_values)
+        assert len(ins_values) + len(user_iris) + len(base_iris) == len(_ins_values_2)
 
         #ins_values += [(v[0], k) for k, v in mult_curies.items()]  # add curies back now fixed
         if self.debug:
@@ -1194,7 +1228,8 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
                     sql_text(
                         'SELECT * FROM term_existing_ids as teid '
                         'JOIN terms as t '
-                        'ON t.id = teid.tid WHERE t.type != "cde" and t.type != "fde" and t.type != "pde"'))
+                        'ON t.id = teid.tid WHERE t.ilx LIKE "ilx_%"'
+                    ))
 
         #data = query.fetchall()
         #cdata = list(zip(*data))
@@ -1318,7 +1353,7 @@ SELECT pers.pid, v.* FROM ( VALUES {values_template} ) AS v (p, i, r) JOIN pers 
         header_subClassOf = [d['name'] for d in insp.get_columns('term_superclasses')]
         header_terms = [d['name'] for d in insp.get_columns('terms')]
         queries = dict(
-            terms = f'SELECT * from terms WHERE type != "cde"',
+            terms = f'SELECT * from terms WHERE ilx LIKE "ilx_%"',
             synonyms = "SELECT * from term_synonyms WHERE literal != ''",  # FIXME these things have versions too :/
             subClassOf = 'SELECT * from term_superclasses',
             object_properties = "SELECT * from term_relationships WHERE withdrawn != '1'",  # FIXME also curation status
@@ -1327,7 +1362,7 @@ SELECT pers.pid, v.* FROM ( VALUES {values_template} ) AS v (p, i, r) JOIN pers 
         if self.do_cdes:
             queries['terms'] = 'SELECT * FROM terms'  # FIXME TODO status ??? also deleted/deprecated dection ??? iirc i do that elsewhere ???
         else:
-            queries['cde_ids'] = 'SELECT id, ilx FROM terms where type = "cde"'  # FIXME fde pde etc.
+            queries['cde_ids'] = 'SELECT id, ilx FROM terms WHERE ilx NOT LIKE "ilx_%"'  # FIXME fde pde etc.
 
         with engine.connect() as conn:
             data = {name:conn.execute(sql_text(query)).fetchall()  # FIXME yeah this is gonna be big right?
@@ -1400,7 +1435,8 @@ SELECT pers.pid, v.* FROM ( VALUES {values_template} ) AS v (p, i, r) JOIN pers 
             return o_strip
 
 
-        repl_label, label_duplicate_of, maybe_newsyns, rem_duplicate_of = fix_laex(self, data, self.eid_duplicate_of, self.eid_values)
+        (repl_label, label_duplicate_of, maybe_newsyns, rem_duplicate_of,
+         pi_lab) = fix_laex(self, data, self.eid_duplicate_of, self.eid_values)
 
         duplicate_ofs = sorted(((set(self.eid_duplicate_of) | set(label_duplicate_of)) - set(rem_duplicate_of)))
 

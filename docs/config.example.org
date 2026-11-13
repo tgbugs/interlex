@@ -1104,8 +1104,9 @@ entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
 
 cfg=$(realpath ${1})
 
+[ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 3; }
+
 <<&drun-1>>
--v /var/log/interlex:/var/log/interlex \
 --entrypoint ${entrypoint} \
 --rm \
 tgbugs/musl:interlex
@@ -1125,10 +1126,10 @@ entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
 cfg=$(realpath ${1})
 shift
 
+[ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 2; }
 [ -d /tmp/ilx-scratch ] || mkdir /tmp/ilx-scratch
 
 <<&drun-1>>
--v /var/log/interlex:/var/log/interlex \
 -v /tmp/ilx-scratch/ontologies:/tmp/ontologies \
 -v /tmp/ilx-scratch/interlex-load:/tmp/interlex-load \
 --entrypoint ${entrypoint} \
@@ -1144,6 +1145,8 @@ function docker-run-ilx-curies () {
 local entrypoint cfg dhp
 entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
 cfg=/var/lib/interlex/config
+
+[ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 1; }
 
 docker run <<&cfg-nh()>> \
 ${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
