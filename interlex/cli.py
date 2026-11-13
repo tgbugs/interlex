@@ -38,7 +38,7 @@ Commands:
     server alt      start a server for alternate interlex webservices
 
     dbsetup         step through creation of a user (currently tgbugs)
-    sync            drop into a debug repl with a database connection
+    shell           drop into a debug repl with a database connection
     sync            run sync with the old mysql database
 
     post ontology   post an ontology file by uploading directly to interlex

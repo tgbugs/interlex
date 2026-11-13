@@ -1194,7 +1194,7 @@ ex.prefix != 'tmp' and fps.prefix = ex.prefix and ex.id <= LPAD(cast(fps.suffix_
                     sql_text(
                         'SELECT * FROM term_existing_ids as teid '
                         'JOIN terms as t '
-                        'ON t.id = teid.tid WHERE t.type != "cde"'))
+                        'ON t.id = teid.tid WHERE t.type != "cde" and t.type != "fde" and t.type != "pde"'))
 
         #data = query.fetchall()
         #cdata = list(zip(*data))
