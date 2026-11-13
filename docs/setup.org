@@ -88,10 +88,10 @@ term_versions > "interlex-dump-$(date -Is).sql"
 
 On your target database run the following
 #+begin_src sql :eval never
-CREATE DATABASE nif_eelg;
-CREATE USER nif_eelg_secure;
-SET PASSWORD FOR nif_eelg_secure = PASSWORD('lolpassword');
-GRANT ALL PRIVILEGES ON nif_eelg.* TO nif_eelg_secure;
+CREATE DATABASE scicrunch_portal;
+CREATE USER rin_reader;
+SET PASSWORD FOR rin_reader = PASSWORD('lolpassword');
+GRANT ALL PRIVILEGES ON scicrunch_portal.* TO rin_reader;
 #+end_src
 
 Assuming you have set up port forwarding over ssh to your development mysql instance on port 33067.
@@ -103,7 +103,7 @@ mysql \
 --password \
 --host=127.0.0.1 \
 --port=33067 \
---database=nif_eelg \
+--database=scicrunch_portal \
  < ~/files/interlex/interlex-dump-2026-*.sql
 #+end_src
 
