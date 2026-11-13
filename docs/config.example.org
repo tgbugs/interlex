@@ -12,7 +12,7 @@ src_elisp[:results raw]{(directory-file-name (file-name-directory (buffer-file-n
 #+name: &this-dir
 : .
 
-Quick links [[*variables]] [[&cfg-orch-sec-path]] [[&debug-entrypoints]] [[&podman-user]]
+Quick links [[*variables]] [[&cfg-orch-sec-path]] [[&cfg-nh]] [[&debug-entrypoints]] [[&podman-user]]
 
 * ops
 See [[*core flow][core flow]] or copy this ~config.example.org~ file to ~config.org~
@@ -202,10 +202,13 @@ docker run --network host --rm --entrypoint /usr/bin/curl tgbugs/musl:interlex -
 bash -c 'source /var/lib/interlex/workflow-funs-ilx.sh && docker-run-ilx-certbot'
 #+end_src
 
+sync old interlex (see [[file:./setup.org::*Dump mysql for load from dev or local][mariadb-dump]]) and then
 ingest of external ontologies (usually this should be run from the orchestrator or some powerful worker host)
 #+name: &ilx-setup-10-orch
 #+begin_src bash :var orch=t :noweb yes
 docker run --rm --entrypoint /usr/bin/curl tgbugs/musl:interlex -Iv https://<<&profile-hostname()>> | grep -i 'issuer:'  # TODO proper cert validation
+# TODO mariadb-dump -> dev mariadb
+docker-run-ilx-sync ${config_profile}/config
 docker-run-ilx-ingest ${config_profile}/config
 #+end_src
 
@@ -338,6 +341,13 @@ su - <<&podman-user()>>
 If you need secrets to be different per instance move the variable into the sections below.
 #+name: &cfg-orch-sec-path
 : /dev/null
+
+During development we often access a database on a port forwarded
+through an ssh tunnel in which case we need host networking.  There
+isn't really a sane way to auto-detect this because there are cases
+where localhost might be the container not the host. ~: --network host~
+#+name: &cfg-nh
+:
 
 ** COMMENT local
 #+name: &config-profile
@@ -887,6 +897,7 @@ interlex-admin should be run from the orchestrator.
 <<&run-ilx-passwords>>
 <<&run-ilx-admin>>
 <<&run-ilx-api-key>>
+<<&run-ilx-sync>>
 <<&run-ilx-ingest>>
 
 # profile host
@@ -899,6 +910,13 @@ interlex-admin should be run from the orchestrator.
 # TODO
 # <<&run-ilx-services>>
 # <<&run-ilx-worker>>
+
+#+name: &drun-1
+#+begin_src bash :noweb yes
+docker run <<&cfg-nh()>> \
+${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
+-v ${cfg}:/root/ilx-config \
+#+end_src
 
 *** default
 TODO this can run on either orch or host, so ideally we would detect
@@ -918,9 +936,7 @@ cfg=$(realpath ${1})
 
 [ -d /tmp/ilx-scratch ] || mkdir /tmp/ilx-scratch
 
-docker run \
-${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
--v ${cfg}:/root/ilx-config \
+<<&drun-1>>
 ${pgp:+-v ${pgp}:/root/ilx-config/.pgpass-interlex:ro} \
 -v /etc/letsencrypt:/etc/letsencrypt \
 -v /var/log/interlex:/var/log/interlex \
@@ -960,9 +976,7 @@ dbuser=${3:-interlex-admin}
 
 [ -d /tmp/ilx-scratch ] || mkdir /tmp/ilx-scratch
 
-docker run \
-${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
--v ${cfg}:/root/ilx-config \
+<<&drun-1>>
 -v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
 --entrypoint /bin/bash \
 --rm -it \
@@ -987,9 +1001,7 @@ pgp=$(realpath ${2})
 [ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 3; }
 [ -f ${pgp} ] || { echo "missing pgpass ${pgp}" ; return 4; }
 
-docker run \
-${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
--v ${cfg}:/root/ilx-config \
+<<&drun-1>>
 -v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
 -e PGCONNECT_TIMEOUT=10 \
 --entrypoint ${entrypoint} \
@@ -1014,9 +1026,7 @@ pgp=$(realpath ${2})
 [ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 3; }
 [ -f ${pgp} ] || { echo "missing pgpass ${pgp}" ; return 4; }
 
-docker run \
-${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
--v ${cfg}:/root/ilx-config \
+<<&drun-1>>
 -v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
 --entrypoint ${entrypoint} \
 --rm \
@@ -1045,9 +1055,7 @@ pgp=$(realpath ${2})
 [ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 8; }
 [ -f ${pgp} ] || { echo "missing pgpass ${pgp}" ; return 9; }
 
-docker run \
-${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
--v ${cfg}:/root/ilx-config \
+<<&drun-1>>
 -v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
 --entrypoint ${entrypoint} \
 --rm \
@@ -1074,14 +1082,33 @@ sec=$(realpath ${3})
 [ -f ${ucf} ] || { echo "missing user config ${ucf}" ; return 6; }
 [ -f ${sec} ] || { echo "missing secrets ${sec}" ; return 7; }
 
-docker run \
-${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
--v ${cfg}:/root/ilx-config \
+<<&drun-1>>
 -v ${ucf}:/root/ilx-config/extra-user-config.yaml:ro \
 -v ${sec}:/root/ilx-config/secrets-interlex.sxpr:ro \
 --entrypoint ${entrypoint} \
 --rm \
 tgbugs/musl:interlex ${4}
+}
+#+end_src
+
+*** sync
+This can be run on the orchestrator, remote host, or another powerful worker.
+
+#+name: &run-ilx-sync
+#+begin_src bash :noweb yes
+function docker-run-ilx-sync () {
+local entrypoint cfg dhp
+entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
+
+[ -n "${1}" ] || { echo 'config path required'; return 1; }
+
+cfg=$(realpath ${1})
+
+<<&drun-1>>
+-v /var/log/interlex:/var/log/interlex \
+--entrypoint ${entrypoint} \
+--rm \
+tgbugs/musl:interlex
 }
 #+end_src
 
@@ -1100,9 +1127,7 @@ shift
 
 [ -d /tmp/ilx-scratch ] || mkdir /tmp/ilx-scratch
 
-docker run \
-${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
--v ${cfg}:/root/ilx-config \
+<<&drun-1>>
 -v /var/log/interlex:/var/log/interlex \
 -v /tmp/ilx-scratch/ontologies:/tmp/ontologies \
 -v /tmp/ilx-scratch/interlex-load:/tmp/interlex-load \
@@ -1120,7 +1145,7 @@ local entrypoint cfg dhp
 entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
 cfg=/var/lib/interlex/config
 
-docker run \
+docker run <<&cfg-nh()>> \
 ${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
 -v ${cfg}:/root/ilx-config \
 --entrypoint ${entrypoint} \
@@ -1165,12 +1190,10 @@ lessl=/etc/letsencrypt/live/<<&profile-hostname()>>
 chmod 0770 ${cfg}
 
 _cid_new=$(
-docker run \
--d \
+<<&drun-1>>
+--detach \
 --name ilx-server \
 --restart unless-stopped \
-${_entrypoints:+-v ${_entrypoints}:/etc/entrypoints} \
--v ${cfg}:/root/ilx-config \
 -v ${dhp}:/etc/ssl/certs/dhparam.pem \
 -v /etc/letsencrypt:/etc/letsencrypt \
 -v /var/log/interlex:/var/log/interlex \
