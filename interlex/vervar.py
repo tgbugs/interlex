@@ -13,7 +13,7 @@ log = _log.getChild('vervar')
 te = TripleExporter()
 
 
-def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=True):
+def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=False):
     """ subject source_named tripset_to_source tripsets triples """
     # TODO missing the query that joints these to perspectives to say
     # which ones are variants etc. but since we don't have variants
