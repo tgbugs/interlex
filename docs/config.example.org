@@ -716,7 +716,7 @@ server {
 LOG_LEVEL=info
 LOG_LOC=/var/log/interlex
 LOG_FORMAT='%(h)s - - %(t)s "%(r)s" %(s)s -'
-PROXY_N=1
+PROXY_N=2
 DATABASE=<<&cfg-db-name()>>
 PGSSLMODE=<<&cfg-pgsslmode()>>
 DB_HOST=<<&cfg-db-host()>>
@@ -762,7 +762,7 @@ auth-variables: &<<&config-profile()>>
   interlex-api-key:
   test-api-user:
   interlex-test-api-key:
-  proxy-n: 1
+  proxy-n: 2
   alt-db-user: <<&cfg-alt-db-user()>>
   alt-db-host: <<&cfg-alt-db-host()>>
   alt-db-port: <<&cfg-alt-db-port()>>
