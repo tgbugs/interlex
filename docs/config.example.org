@@ -208,7 +208,7 @@ ingest of external ontologies (usually this should be run from the orchestrator 
 #+begin_src bash :var orch=t :noweb yes
 docker run --rm --entrypoint /usr/bin/curl tgbugs/musl:interlex -Iv https://<<&profile-hostname()>> | grep -i 'issuer:'  # TODO proper cert validation
 # TODO mariadb-dump -> dev mariadb
-docker-run-ilx-sync ${config_profile}/config
+docker-run-ilx-sync ${config_profile}/config ~/.pgpass
 docker-run-ilx-ingest ${config_profile}/config
 #+end_src
 
@@ -1101,12 +1101,16 @@ local entrypoint cfg dhp
 entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
 
 [ -n "${1}" ] || { echo 'config path required'; return 1; }
+[ -n "${2}" ] || { echo 'pgpass path required'; return 2; }
 
 cfg=$(realpath ${1})
+pgp=$(realpath ${2})
 
 [ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 3; }
+[ -f ${pgp} ] || { echo "missing pgpass ${pgp}" ; return 4; }
 
 <<&drun-1>>
+-v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
 --entrypoint ${entrypoint} \
 --rm \
 tgbugs/musl:interlex
