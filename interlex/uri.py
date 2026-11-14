@@ -17,6 +17,7 @@ from interlex.tasks import cel
 from interlex.config import ilx_pattern
 
 log = makeSimpleLogger('setup')
+debug_routes = False
 
 
 class DocsApi(Api):
@@ -437,9 +438,9 @@ def route_methods(nodes, node_methods, path_names):
              (nodes[idx] in path_names and path_names[nodes[idx]] not in _known_default))):
             if extra:
                 extra = (' ' * (24 - len(nodes[idx]))) + extra
-            msg = f'using default methods GET HEAD for {nodes[idx]}{extra}'
-            log.warning(msg)
-
+            if debug_routes:
+                msg = f'using default methods GET HEAD for {nodes[idx]}{extra}'
+                log.warning(msg)
 
     if 'diff' not in nodes and 'version' not in nodes and 'versions' not in nodes:
         if nodes[idx] in node_methods:
@@ -641,7 +642,8 @@ def server_uri(db=None, mq=None, lm=None, structure=uriStructure,
             name, path = k, ''
 
         if path:
-            log.debug(f'{name:<40}{path:<140}{v}')
+            if debug_routes:
+                log.debug(f'{name:<40}{path:<140}{v}')
 
         #printD(k, v)
 
