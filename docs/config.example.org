@@ -1105,12 +1105,15 @@ entrypoint=/etc/entrypoints/${FUNCNAME##*-}.sh
 
 cfg=$(realpath ${1})
 pgp=$(realpath ${2})
+[ -n "${3}" ] && myp=$(realpath ${3})
 
 [ -d ${cfg} ] || { echo "missing config directory ${cfg}" ; return 3; }
 [ -f ${pgp} ] || { echo "missing pgpass ${pgp}" ; return 4; }
+{ [ -z ${myp} ] || [ -f ${myp} ]; } || { echo "missing mypass ${myp}" ; return 5; }
 
 <<&drun-1>>
 -v ${pgp}:/root/ilx-config/.pgpass-interlex:ro \
+${myp:+-v ${myp}:/root/ilx-config/.mypass-interlex:ro} \
 --entrypoint ${entrypoint} \
 --rm \
 tgbugs/musl:interlex
