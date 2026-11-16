@@ -750,6 +750,7 @@ def process_triple_seq(triple_seq, serialization_identity=None,
         record_count,
         metadata_to_fetch,
         metadata_not_to_fetch,
+        batchsize=batchsize,
         dout=dout)
     yield None, None
 
@@ -877,7 +878,7 @@ def process_prepared(path, serialization_identity, metadata_to_fetch, metadata_n
     local_conventions_identity = dout['local_conventions_identity']
     yield from process_post(graph_bnode_identity, graph_named_identity, triple_count_internal,
                             local_conventions_identity, serialization_identity, record_count,
-                            dout=dout)
+                            batchsize=batchsize, dout=dout)
     yield None, None
 
 
@@ -1146,7 +1147,11 @@ def process_post(
         record_count=None,
         metadata_to_fetch=None,
         metadata_not_to_fetch=None,
+        batchsize=None,
         dout=None,):
+
+    if batchsize is None:
+        batchsize = _batchsize
 
     if dout is None:
         dout = {}
@@ -1200,8 +1205,12 @@ def process_post(
     irels += ((graph_combined_local_conventions_identity, 'hasGraph', graph_combined_identity),
               (graph_combined_local_conventions_identity, 'hasLocalConventions', local_conventions_identity),)
 
-    yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */', idents, (ociut if temp_fix else ocdn))
-    yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
+    if idents:
+        for chunk in chunk_list(idents, batchsize):
+            yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */', chunk, (ociut if temp_fix else ocdn))
+    if irels:
+        for chunk in chunk_list(irels, batchsize):
+            yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
 
     if serialization_identity is None:
         yield from process_name_metadata(
