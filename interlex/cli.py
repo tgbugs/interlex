@@ -210,7 +210,8 @@ class Shell(clif.Dispatcher):
         # runonce is called ...
         app.config['SQLALCHEMY_ECHO'] = self.options.debug
         db = app.extensions['sqlalchemy']
-        endpoints = Endpoints(db)
+        rules_req_auth = set()
+        endpoints = Endpoints(db, rules_req_auth)
         session = db.session
         queries = endpoints.queries
 

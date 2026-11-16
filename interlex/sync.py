@@ -1582,9 +1582,17 @@ SELECT pers.pid, v.* FROM ( VALUES {values_template} ) AS v (p, i, r) JOIN pers 
         multi_type = {tid_to_ilx[id]:types for id, types in id_type.items()
                       if len(types) > 1}
 
+        class KeepGoingError(Exception):
+            """ not today! """
+
         def baseUri(e):
             # FIXME this is wrong for fde cde pde
             frag_pref, ilx = tid_to_ilx[e]
+            if not self.do_cdes and frag_pref != 'ilx':
+                msg = f'skip because {{c,f,p}}de: {frag_pref} {ilx}'
+                #log.debug(msg)
+                raise KeepGoingError(msg)
+
             return rdflib.URIRef(f'http://uri.interlex.org/base/{frag_pref}_{ilx}')
 
         log.debug('synonyms ingest starting')
@@ -1600,7 +1608,11 @@ SELECT pers.pid, v.* FROM ( VALUES {values_template} ) AS v (p, i, r) JOIN pers 
                 synWTF_ids.append(row)
             else:
                 # FIXME somehow possible to get tids that aren't in terms?
-                t = baseUri(tid), ilxr.synonym, rdflib.Literal(literal)  # FIXME TODO whitespace cleanup
+                try:
+                    t = baseUri(tid), ilxr.synonym, rdflib.Literal(literal)  # FIXME TODO whitespace cleanup
+                except KeepGoingError as e:
+                    continue
+
                 # FIXME TODO ilxr.exactSynonym is needed in order to more sanely detect and enforce uniqueness beyond just labels
                 if t not in done_sy:
                     done_sy.add(t)
@@ -1639,7 +1651,11 @@ SELECT pers.pid, v.* FROM ( VALUES {values_template} ) AS v (p, i, r) JOIN pers 
             _, s_id, o_id, p_id, *rest = row
             ids_triple = s_id, p_id, o_id
             try:
-                t = tuple(baseUri(e) for e in ids_triple)
+                try:
+                    t = tuple(baseUri(e) for e in ids_triple)
+                except KeepGoingError as e:
+                    continue
+
                 if t in done_op:
                     continue
                 done_op.add(t)
@@ -1697,7 +1713,10 @@ SELECT pers.pid, v.* FROM ( VALUES {values_template} ) AS v (p, i, r) JOIN pers 
         for row in data['annotation_properties']:  # oof knocks total triples to 12.5 mil
             _, s_id, p_id, o_value, comment, *rest = row
             try:
-                s = baseUri(s_id)
+                try:
+                    s = baseUri(s_id)
+                except KeepGoingError as e:
+                    continue
                 o = normalize_annotation_property_object(s, o_value)
                 t = s, baseUri(p_id), o
                 if t in done_ap:
@@ -1732,7 +1751,11 @@ SELECT pers.pid, v.* FROM ( VALUES {values_template} ) AS v (p, i, r) JOIN pers 
                 continue
             done_sc.add((s_id, o_id))
             try:
-                s, o = baseUri(s_id), baseUri(o_id)
+                try:
+                    s, o = baseUri(s_id), baseUri(o_id)
+                except KeepGoingError as e:
+                    continue
+
             except KeyError as e:
                 WTF2.append(row)
                 continue
