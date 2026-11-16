@@ -235,6 +235,21 @@ def get_latest_group_subject_hack(queries, group, subject_base):
         if not trr:
             return None, None
 
+        if not snr and not ttsr and not tsr:
+            # metadata is not in the database yet, only triples
+            # so we return the bare graph and move on
+            # TODO probably want to include some metadata to indicate there is no metadata ...
+            te = TripleExporter()
+            graph_ex = OntGraph(bind_namespaces='none')
+            for i, *r, f in trr:
+                graph_ex.add(te.triple(*r, None, f))
+
+            # OntGraph.subjectIdentity produces the same value that
+            # identity_named_triples_ingest named_embedded_identity
+            # will have after the first sync ingest
+            rci_ex = graph_ex.subjectIdentity(rdflib.URIRef(subject_base))
+            return graph_ex, rci_ex.identity
+
         vv, uniques, metagraphs, ugraph, vvgraphs, resp = process_vervar(subject_base, snr, ttsr, tsr, trr)
         # XXX ignore vvgraphs that don't include s rdf:type also if there is not metagraph things are
         # complicated, so yes, we likely want a metagraph record but actually not strictly necessary because
@@ -293,6 +308,7 @@ def get_latest_group_subject_hack(queries, group, subject_base):
                 # because this is nonsense
                 gclc_to_start = {r.identity: r.gstart for r in ttsr}
                 nfs, rci_ex, _g, ngclc = newest
+                rci_ex = bytes.fromhex(rci_ex)  # FIXME sigh
                 nstart = gclc_to_start[ngclc]
                 fst = None
                 for fst, u in uniques.items():
@@ -307,7 +323,6 @@ def get_latest_group_subject_hack(queries, group, subject_base):
         else:
             graph_ex = OntGraph(bind_namespaces='none')
 
-        rci_ex = bytes.fromhex(rci_ex)  # FIXME sigh
     else:
         # FIXME make it a single query
         rci_rows = queries.getRecordHeadForGroupSubject(group, subject_base)
