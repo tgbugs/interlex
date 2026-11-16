@@ -208,7 +208,7 @@ ingest of external ontologies (usually this should be run from the orchestrator 
 #+begin_src bash :var orch=t :noweb yes
 docker run --rm --entrypoint /usr/bin/curl tgbugs/musl:interlex -Iv https://<<&profile-hostname()>> | grep -i 'issuer:'  # TODO proper cert validation
 # TODO mariadb-dump -> dev mariadb
-docker-run-ilx-sync ${config_profile}/config ~/.pgpass
+docker-run-ilx-sync ${config_profile}/config ~/.pgpass ~/.mypass
 docker-run-ilx-ingest ${config_profile}/config
 #+end_src
 
