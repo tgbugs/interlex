@@ -1245,8 +1245,11 @@ _image_date=$(date -I --date $(docker inspect ${_image} --format '{{.Created}}')
 _cid_old=$(docker ps -lqf ancestor=${_image} -f status=running -f name=ilx-server)
 docker tag ${_image} ${_image}-${_image_date}
 docker pull ${_image_new} || return $?
-docker stop ${_cid_old} || return $?
-docker container rename ${_cid_old} ilx-server-$(date "+%Y-%m-%dT%H%M%S")
+[ -n "${_cid_old}" ] && {
+    docker stop ${_cid_old} || return $?;
+    docker container rename ${_cid_old} ilx-server-$(date "+%Y-%m-%dT%H%M%S");
+}
+# FIXME this will fail if there was a stopped container that has the ilx-server name
 docker-run-ilx-server
 }
 #+end_src
