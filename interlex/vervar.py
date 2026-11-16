@@ -143,6 +143,9 @@ def process_vervar(s, snr, ttsr, tsr, trr, *args, debug=False):
     if oops:
         breakpoint()
 
+    # FIXME this can happen when ingesting or syncing when triples
+    # have arrived by the metadata for them has not, ideally this
+    # would not be fatal to rendering
     assert not oops, oops
 
     # the frozensets that are they keys for uniques make links as follows
