@@ -207,21 +207,23 @@ def makeParamsValues(*value_sets, constants=tuple(), types=tuple(), vsplit=tuple
         if vsplit:
             for start, stop in vsplit:
                 vt = ', '.join('(' + ', '.join(constants +
-                                                tuple(':' + name
-                                                        for name in names[start:stop])) + ')'
-                                for names, _ in proto_params)
+                                               tuple('NULL' if value is None else ':' + name
+                                                     for name, value in zip(names[start:stop], _row[start:stop]))) + ')'
+                                for names, _row in proto_params)
                 yield vt
 
         else:
             values_template = ', '.join('(' + ', '.join(constants +
-                                                        tuple(':' + name
-                                                              for name in names)) + ')'
-                                        for names, _ in proto_params)
+                                                        tuple('NULL' if value is None else ':' + name
+                                                              for name, value in zip(names, _row))) + ')'
+                                        for names, _row in proto_params)
 
             yield values_template
 
         for names, values in proto_params:
             for name, value in zip(names, values):
+                if value is None:
+                    continue
                 params[name] = value
                 if types:
                     maybe_type = next(itertypes)
