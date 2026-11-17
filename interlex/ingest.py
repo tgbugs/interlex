@@ -1150,6 +1150,7 @@ def process_post(
         batchsize=None,
         dout=None,):
 
+    log.debug('start process_post')
     if batchsize is None:
         batchsize = _batchsize
 
@@ -1208,9 +1209,10 @@ def process_post(
     if idents:
         for chunk in chunk_list(idents, batchsize):
             yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */', chunk, (ociut if temp_fix else ocdn))
+
     if irels:
         for chunk in chunk_list(irels, batchsize):
-            yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', irels, ocdn)
+            yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', chunk, ocdn)
 
     if serialization_identity is None:
         yield from process_name_metadata(
