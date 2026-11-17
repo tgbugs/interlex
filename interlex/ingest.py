@@ -28,7 +28,7 @@ from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import owl, rdf
 from pyontutils.identity_bnode import IdentityBNode, toposort, idf, it as ibn_it, split_named_bnode
 from . import exceptions as exc
-from .core import getScopedSession, makeParamsValues, metadata_type_marker_priority, identity_relation
+from .core import dbUri, getScopedSession, makeParamsValues, metadata_type_marker_priority, identity_relation
 from .dump import Queries, TripleExporter
 from .utils import log
 
