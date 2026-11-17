@@ -744,14 +744,15 @@ class Queries:
     def getGroupIds(self, *group_names):
         # have to type group_names as list because postgres doesn't know what to do with a tuple
         return {r.g:r[1] for r in self.session_execute('SELECT g, idFromGroupname(g) '
-                                                        'FROM unnest(ARRAY[:group_names]) '
+                                                        'FROM unnest(CAST(:group_names AS text[])) '
                                                         'WITH ORDINALITY g',
                                                         dict(group_names=list(group_names)))}
 
     def getGroupPers(self, *group_names):
         # have to type group_names as list because postgres doesn't know what to do with a tuple
+        #breakpoint()
         return {r.g:r[1] for r in self.session_execute('SELECT g, persFromGroupname(g) '
-                                                        'FROM unnest(ARRAY[:group_names]) '
+                                                        'FROM unnest(CAST(:group_names AS text[])) '
                                                         'WITH ORDINALITY g',
                                                         dict(group_names=list(group_names)))}
 
@@ -870,7 +871,7 @@ class Queries:
 
     def getExistingIrisForIlxId(self, *ilx_ids):
         args = dict(ilx_ids=list(ilx_ids))
-        sql = ('SELECT i, iri FROM unnest(ARRAY[:ilx_ids]) WITH ORDINALITY i '
+        sql = ('SELECT i, iri FROM unnest(CAST(:ilx_ids AS text[])) WITH ORDINALITY i '
                'JOIN existing_iris ON i = ilx_id')
         resp = list(self.session_execute(sql, args))
         return resp
@@ -1656,10 +1657,10 @@ WHERE tn.s IS NOT NULL AND tn.p = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#ty
         yield from self.session_execute('SELECT * FROM triples WHERE id IN :triples_ids',
                                         dict(triples_ids=triples_ids))
 
-    def tripleIdentity(self, *triples_ids):
+    def tripleIdentityOld(self, *triples_ids):
         """ light wrapper around built in function """
-        for (identity,) in self.session_execute('SELECT tripleIdentity(id)'
-                                                'FROM unnest(ARRAY[:triples_ids]) '
+        for (identity,) in self.session_execute('SELECT tripleIdentityOld(id)'
+                                                'FROM unnest(CAST(:triples_ids AS integer[])) '
                                                 'WITH ORDINALITY id',
                                                 dict(triples_ids=list(triples_ids))):
             yield identity

@@ -1052,7 +1052,7 @@ CREATE OR REPLACE FUNCTION tripleIdentityOld(id integer, OUT identity bytea) RET
                   coalesce(t.datatype, '') || -- this is not what is being done here right now
                   coalesce(t.language, '') || ' ' ||  -- FIXME this trailing space causes mismatch with python
                   coalesce(t.subgraph_identity::text, ''), 'sha256')
-           FROM triples as t WHERE tripleIdentity.id = t.id INTO identity;
+           FROM triples as t WHERE tripleIdentityOld.id = t.id INTO identity;
        END;
 $tripleIdentityOld$ language plpgsql;
 

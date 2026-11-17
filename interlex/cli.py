@@ -143,7 +143,8 @@ class Main(clif.Dispatcher):
         kwargs['dbuser'] = kwargs.pop('user')
         dburi = dbUri(**kwargs, dialect='psycopg')
         log.info(dburi)
-        _session = getScopedSession(dburi=dburi, query_cache_size=0)
+        _session = getScopedSession(
+            dburi=dburi, echo=self.options.echo, query_cache_size=0)
         class db:
             session = _session
 
