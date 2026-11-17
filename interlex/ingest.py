@@ -32,6 +32,10 @@ from .core import getScopedSession, makeParamsValues, metadata_type_marker_prior
 from .dump import Queries, TripleExporter
 from .utils import log
 
+import psycopg
+from psycopg.types.string import BytesBinaryDumper
+psycopg.adapters.register_dumper(bytes, BytesBinaryDumper)
+
 try:
     from desc.prof import profile_me
 except ModuleNotFoundError as e:
@@ -1768,9 +1772,20 @@ def process_bnode(
                         constant_dict={'nt': 'bnode_conn_free_seq'})
 
     if irels:
+        bps = (bindparam('s_arr', type_=ARRAY(LargeBinary())),
+               bindparam('p_arr', type_=ARRAY(identity_relation())),
+               bindparam('o_arr', type_=ARRAY(LargeBinary())),)
+        sql = 'INSERT INTO identity_relations (s, p, o) SELECT * FROM unnest(:s_arr, :p_arr, :o_arr)'
         for chunk in chunk_list(irels, batchsize):
-            yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES', chunk, ocdn,
-                                constant_dict={'p': 'hasBnodeRecord', 's': graph_bnode_identity})
+            s_arr = [graph_bnode_identity for _ in chunk]
+            p_arr = ['hasBnodeRecord' for _ in chunk]
+            o_arr = chunk
+            consts = {'s_arr': s_arr, 'p_arr': p_arr, 'o_arr': o_arr}
+            yield prepare_batch(sql, tuple(), ocdn, consts, bps, expect_values=False)
+
+        #for chunk in chunk_list(irels, batchsize):
+            #yield prepare_batch('INSERT INTO identity_relations (p, s, o) VALUES', chunk, ocdn,
+                                #constant_dict={'p': 'hasBnodeRecord', 's': graph_bnode_identity})
 
     if replica_helper:
         # ;_: we can't get rid of single replica cases becuase we use
@@ -2115,7 +2130,7 @@ def do_process_into_session(session, process, *args, commit=False, batchsize=Non
 
 
 def recons_uri(uri_string, name_type='pointer', debug=True):
-    session = getScopedSession(echo=False, query_cache_size=0)
+    session = getScopedSession(dburi=dbUri(dialect='psycopg'), echo=False, query_cache_size=0)
     q = Queries(session)
     te = TripleExporter()
     out_graph = OntGraph(bind_namespaces='none')
@@ -2171,7 +2186,7 @@ def recons_uri(uri_string, name_type='pointer', debug=True):
 def reingest_gclc(gclc_identity, session=None, debug=False, commit=False, force=False, no_fail=False, dout=None):
     # TODO will also want reingest_ser
     if session is None:
-        session = getScopedSession(echo=False, query_cache_size=0)
+        session = getScopedSession(dburi=dbUri(dialect='psycopg'), echo=False, query_cache_size=0)
 
     q = Queries(session)
     te = TripleExporter()
@@ -2644,7 +2659,7 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
     # is unique and mostly params, the issue is so bad in fact that I'm considering
     # changing our defaults to avoid memory issues
     if session is None:
-        session = getScopedSession(echo=False, query_cache_size=0)
+        session = getScopedSession(dburi=dbUri(dialect='psycopg'), echo=False, query_cache_size=0)
 
     try:
         q = Queries(session)

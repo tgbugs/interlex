@@ -121,11 +121,13 @@ class identity_relation(types.UserDefinedType):
         return process
 
 
-def dbUri(dbuser=config.user, host=config.database_host, port=config.database_port, database=config.database):
-    if hasattr(sys, 'pypy_version_info'):
-        dialect = 'psycopg2cffi'
-    else:
-        dialect = 'psycopg2'
+def dbUri(dbuser=config.user, host=config.database_host, port=config.database_port, database=config.database, dialect=None):
+    if dialect is None:
+        if hasattr(sys, 'pypy_version_info'):
+            dialect = 'psycopg2cffi'
+        else:
+            dialect = 'psycopg2'
+
     return f'postgresql+{dialect}://{dbuser}@{host}:{port}/{database}'
     # engine = create_engine
     # return engine, inspect(engine)
