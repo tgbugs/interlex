@@ -106,6 +106,21 @@ class uri(types.UserDefinedType):
         return process
 
 
+class identity_relation(types.UserDefinedType):
+    def get_col_spec(self, **kw):
+        return 'identity_relation'
+
+    def bind_processor(self, dialect):
+        def process(value):
+            return value
+        return process
+
+    def result_processor(self, dialect, coltype):
+        def process(value):
+            return value
+        return process
+
+
 def dbUri(dbuser=config.user, host=config.database_host, port=config.database_port, database=config.database):
     if hasattr(sys, 'pypy_version_info'):
         dialect = 'psycopg2cffi'

@@ -20,6 +20,7 @@ import rdflib
 import requests
 from rdflib.exceptions import ParserError as ParseError
 from rdflib.plugins.parsers import ntriples as nt
+from sqlalchemy import LargeBinary, bindparam, ARRAY
 from sqlalchemy.sql import text as sql_text
 from ttlser.serializers import natsort, CustomTurtleSerializer
 from pyontutils.core import OntGraph, OntMeta, OntMetaIri, OntResIri, OntResPath
@@ -27,7 +28,7 @@ from pyontutils.utils_fast import chunk_list
 from pyontutils.namespaces import owl, rdf
 from pyontutils.identity_bnode import IdentityBNode, toposort, idf, it as ibn_it, split_named_bnode
 from . import exceptions as exc
-from .core import getScopedSession, makeParamsValues, metadata_type_marker_priority
+from .core import getScopedSession, makeParamsValues, metadata_type_marker_priority, identity_relation
 from .dump import Queries, TripleExporter
 from .utils import log
 
@@ -1211,8 +1212,16 @@ def process_post(
             yield prepare_batch('INSERT INTO identities (type, identity, record_count) VALUES /* 2 */', chunk, (ociut if temp_fix else ocdn))
 
     if irels:
+        bps = (bindparam('s_arr', type_=ARRAY(LargeBinary())),
+               bindparam('p_arr', type_=ARRAY(identity_relation())),
+               bindparam('o_arr', type_=ARRAY(LargeBinary())),)
+        sql = 'INSERT INTO identity_relations (s, p, o) SELECT * FROM unnest(:s_arr, :p_arr, :o_arr)'
+        log.debug('start big irels')
         for chunk in chunk_list(irels, batchsize):
-            yield prepare_batch('INSERT INTO identity_relations (s, p, o) VALUES', chunk, ocdn)
+            s_arr, p_arr, o_arr = zip(*chunk)
+            consts = {'s_arr': s_arr, 'p_arr': p_arr, 'o_arr': o_arr}
+            yield prepare_batch(sql, tuple(), ocdn, consts, bps, expect_values=False)
+        log.debug('end big irels')
 
     if serialization_identity is None:
         yield from process_name_metadata(
@@ -1794,8 +1803,8 @@ def str_None(thing):
     return thing if thing is None else str(thing)
 
 
-def prepare_batch(sql, values, suffix='', constant_dict=None):
-    if not values:
+def prepare_batch(sql, values, suffix='', constant_dict=None, bindparams=tuple(), expect_values=True):
+    if not values and expect_values:
         msg = 'something has gone very wrong because there are no values'
         raise Exception(msg)
 
@@ -1808,7 +1817,13 @@ def prepare_batch(sql, values, suffix='', constant_dict=None):
     if constant_dict:
         params.update(constant_dict)
 
-    return sql_text(' '.join((sql, values_template, suffix))), params
+    text = sql_text(' '.join((sql, values_template, suffix)))
+    if bindparams:
+        statement = text.bindparams(*bindparams)
+    else:
+        statement = text
+
+    return statement, params
 
 
 def prepare_batch_named(uri_rows, lit_rows, batch_idents, batch_idni):
