@@ -43,7 +43,10 @@ rapper \
 rm "${lbnode}" &
 
 if [ -f "${fn}".prev.sha256 ]; then
-    if diff -q "${fn}".sha256 "${fn}".prev.sha256; then
+    if ! diff -q "${fn}".sha256 "${fn}".prev.sha256; then
+        if [ -f mv "${fn}".xz ]; then
+            mv "${fn}".xz "${fn}".$(awk '{ print $1 }' < "${fn}".prev.sha256).xz
+        fi
         xz -e -9 "${fn}" &
     else
         unlink "${fn}"
