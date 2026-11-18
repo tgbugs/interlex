@@ -451,6 +451,11 @@ def gunzip_path(path, logfile):
     cwd = path.parent.as_posix()
     run_cmd(argv, cwd, logfile)
 
+cmd_xz = shutil.which('xz')
+def xz_decompress_path(path, logfile):
+    argv = [cmd_xz, '--decompress', '--keep', path.as_posix()]
+    cwd = path.parent.as_posix()
+    run_cmd(argv, cwd, logfile)
 
 def path_to_ntriples_and_xz(path, rapper_input_type, logfile):
     argv = [cmd_sh, ilxbin('make-ntriples-xz.sh'), path.as_posix(), rapper_input_type]
@@ -515,11 +520,11 @@ def shellout(iri, path, rapper_input_type, logfile, only_local=False):
     return sort_ntriples_files(path)
 
 
-def shellout_from_xz(xz_path):
+def shellout_from_xz(xz_path, logfile):
     # this is two phase, first is to
     # xz --decompress ${fn}
     # the second is to run make-ntriples.xz with with no_xz set
-    raise NotImplementedError('TODO')
+    xz_decompress_path(xz_path, logfile)
 
 
 def sort_ntriples_files(path):
@@ -2500,8 +2505,8 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
         msg = f'ingesting {name_to_fetch} to {path} as {rapper_input_type}'
         log.debug(msg)
         (_, checksum_sha256, *_, raw_sord_path, _pen, _peb) = get_paths(path)
+        only_local = final_file.exists() and force
         if not final_file.exists() or force:
-            only_local = final_file.exists() and force
             log.debug(f'{name_to_fetch} starting shellout with only_local {only_local}')
             raw_sord = shellout(name_to_fetch, path, rapper_input_type, logfile, only_local=only_local)
             # FIXME may want to write raw_sord to disk given the time it can take
@@ -2516,12 +2521,13 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
                     msg = f'{final_file} exists but {ntrip_name_file} does not and no xz at {xz_file}'
                     raise NotImplementedError(msg)
 
-                shellout_from_xz(xz_file)
-
-            with open(raw_sord_path, 'rt') as f:
-                # since we write this from python instead of e.g. grep
-                # there is no trailing newline to discard so no [:-1]
-                raw_sord = f.read().split('\n')
+                shellout_from_xz(xz_file, logfile)
+                raw_sord = shellout(name_to_fetch, path, rapper_input_type, logfile, only_local=only_local)
+            else:
+                with open(raw_sord_path, 'rt') as f:
+                    # since we write this from python instead of e.g. grep
+                    # there is no trailing newline to discard so no [:-1]
+                    raw_sord = f.read().split('\n')
 
         sha256hex = getstr(checksum_sha256)
         serialization_identity = bytes.fromhex(sha256hex)
@@ -2574,8 +2580,12 @@ def ingest_uri(uri_string, user, localfs=None, commit=False, batchsize=None, deb
                 assert rs_lc == dout['local_conventions_identity'], 'urg'
                 assert rs_gclc == dout['graph_combined_local_conventions_identity'], 'urg'
 
-            if parsedTo is not None and oridc.identity != parsedTo.tobytes():
-                ptb = parsedTo.tobytes()
+            if parsedTo is not None:
+                if isinstance(parsedTo, bytes):
+                    ptb = parsedTo
+                elif oridc.identity != parsedTo.tobytes():
+                    ptb = parsedTo.tobytes()
+
                 breakpoint()
 
         if IdentityBNode._if_cache:

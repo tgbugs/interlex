@@ -10,6 +10,9 @@ rapper_input_type=${2}
 pushd "${wd}"
 
 stat --format='%s' "${fn}" > "${fn}".size-bytes
+if [ -f "${fn}".sha256 ]; then # rerun from xz case
+    mv "${fn}".sha256 "${fn}".prev.sha256
+fi
 sha256sum "${fn}" > "${fn}".sha256
 if [ "${rapper_input_type}" = "rdfxml" ]; then
     sed 's/rdf:nodeID="genid/rdf:nodeID="lgenid/g' "${fn}" > "${lbnode}"
@@ -39,4 +42,12 @@ rapper \
 
 rm "${lbnode}" &
 
+if [ -f "${fn}".prev.sha256 ]; then
+    if diff -q "${fn}".sha256 "${fn}".prev.sha256; then
+        xz -e -9 "${fn}" &
+    else
+        unlink "${fn}"
+    fi
+else
 xz -e -9 "${fn}" &
+fi
