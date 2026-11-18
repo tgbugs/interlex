@@ -187,7 +187,7 @@ class getName:
             return name
 
 
-def makeParamsValues(*value_sets, constants=tuple(), types=tuple(), vsplit=tuple()):
+def makeParamsValues(*value_sets, constants=tuple(), types=tuple(), vsplit=tuple(), column_types=tuple()):
     # TODO variable sized records and
     # common value names
     if constants and not all(':' in c for c in constants):
@@ -199,10 +199,14 @@ def makeParamsValues(*value_sets, constants=tuple(), types=tuple(), vsplit=tuple
     if types:
         bindparams = []
         itertypes = (t for ts in types for t in ts)
+
     for i, values in enumerate(value_sets):
         # proto_params doesn't need to be a dict
         # values will be reduced when we create params as a dict
-        proto_params = [(tuple(getname(value) for value in row), row) for row in values]
+        if column_types:
+            proto_params = [(tuple(getname(value, type) for value, type in zip(row, column_types)), row) for row in values]
+        else:
+            proto_params = [(tuple(getname(value) for value in row), row) for row in values]
 
         if vsplit:
             for start, stop in vsplit:

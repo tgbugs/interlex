@@ -1818,7 +1818,7 @@ def str_None(thing):
     return thing if thing is None else str(thing)
 
 
-def prepare_batch(sql, values, suffix='', constant_dict=None, bindparams=tuple(), expect_values=True):
+def prepare_batch(sql, values, suffix='', constant_dict=None, bindparams=tuple(), expect_values=True, column_types=tuple()):
     if not values and expect_values:
         msg = 'something has gone very wrong because there are no values'
         raise Exception(msg)
@@ -1828,7 +1828,8 @@ def prepare_batch(sql, values, suffix='', constant_dict=None, bindparams=tuple()
     else:
         constants = tuple()
 
-    values_template, params = makeParamsValues(values, constants=constants)
+    values_template, params = makeParamsValues(values, constants=constants, column_types=column_types)
+
     if constant_dict:
         params.update(constant_dict)
 
@@ -1846,7 +1847,8 @@ def prepare_batch_named(uri_rows, lit_rows, batch_idents, batch_idni):
     if uri_rows:
         yield prepare_batch('INSERT INTO triples (s, p, o, triple_identity) VALUES', uri_rows, ocdn)
     if lit_rows:
-        yield prepare_batch('INSERT INTO triples (s, p, o_lit, datatype, language, triple_identity) VALUES', lit_rows, ocdn)
+        yield prepare_batch('INSERT INTO triples (s, p, o_lit, datatype, language, triple_identity) VALUES', lit_rows, ocdn,
+                            column_types=('uri', 'uri', 'text', 'text', 'text', 'bytea'))
 
     yield prepare_batch('INSERT INTO identity_named_triples_ingest (named_embedded_identity, triple_identity) VALUES', batch_idni, ocdn)
 
