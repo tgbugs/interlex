@@ -5,7 +5,7 @@ from interlex.dump import Queries
 from interlex.utils import log
 
 
-#@pytest.mark.skip('manual test')
+@pytest.mark.skip('manual test')
 def test_psycopg_compat(test=False):
     kwargs = {k:auth.get(f'test-{k}'
                         if test and k != 'user' else
@@ -28,7 +28,7 @@ def test_psycopg_compat(test=False):
     #breakpoint()
 
 
-#@pytest.mark.skip('manual test')
+@pytest.mark.skip('manual test')
 def test_vervar(test=False):
     kwargs = {k:auth.get(f'test-{k}'
                         if test and k != 'user' else
