@@ -1170,6 +1170,228 @@ select distinct * from subgraphs
         return resp
 
     def getVerVarBySubject(self, subject):
+        triples_sql = '''
+WITH RECURSIVE subgraphs(
+    triple_identity, s, s_blank, p, o, o_lit, datatype, language,
+    o_blank, subgraph_identity, next_subgraph_identity
+) AS (
+    -- Non-recursive anchor term
+    SELECT
+        sg.triple_identity, sg.s, sg.s_blank, sg.p, sg.o,
+        sg.o_lit, sg.datatype, sg.language,
+        sg.o_blank, sg.subgraph_identity,
+        sd.object_subgraph_identity
+    FROM triples AS sg
+    LEFT JOIN subgraph_deduplication AS sd
+        ON sg.subgraph_identity = sd.subject_subgraph_identity
+       AND sg.o_blank = sd.o_blank
+    WHERE sg.s = :uri
+
+    UNION
+
+    -- Single recursive term using LATERAL to split the two index paths cleanly
+    SELECT
+        tsg.triple_identity, tsg.s, tsg.s_blank, tsg.p, tsg.o,
+        tsg.o_lit, tsg.datatype, tsg.language,
+        tsg.o_blank, tsg.subgraph_identity,
+        sd.object_subgraph_identity
+    FROM subgraphs AS sgs
+    CROSS JOIN LATERAL (
+        -- Branch A: follow deduplicated object subgraphs
+        SELECT t.*
+        FROM triples AS t
+        WHERE sgs.next_subgraph_identity IS NOT NULL
+          AND t.subgraph_identity = sgs.next_subgraph_identity
+          AND t.s IS NULL
+
+        UNION ALL
+
+        -- Branch B: follow blank nodes within the same subgraph
+        SELECT t.*
+        FROM triples AS t
+        WHERE sgs.o_blank IS NOT NULL
+          AND t.subgraph_identity = sgs.subgraph_identity
+          AND t.s_blank >= sgs.o_blank
+          AND t.s IS NULL
+    ) AS tsg
+    LEFT JOIN subgraph_deduplication AS sd
+        ON tsg.subgraph_identity = sd.subject_subgraph_identity
+       AND tsg.o_blank = sd.o_blank
+)
+SELECT
+    triple_identity, s, s_blank, p, o, o_lit, datatype, language,
+    o_blank, subgraph_identity, next_subgraph_identity
+FROM subgraphs
+ORDER BY subgraph_identity, o_blank, p;'''
+        combined_sql = '''
+WITH RECURSIVE
+base_triples AS (
+    -- Materialize the subject's direct triples once
+    SELECT triple_identity
+    FROM triples
+    WHERE s = :uri
+),
+tripsets AS (
+    SELECT DISTINCT
+        bt.triple_identity AS ident,
+        irs1.s,
+        irs1.p
+    FROM base_triples AS bt
+    JOIN identity_named_triples_ingest AS inti
+        ON bt.triple_identity = inti.triple_identity
+    JOIN identity_relations AS irs
+        ON irs.o = inti.named_embedded_identity
+    JOIN identity_relations AS irs1
+        ON irs1.o = irs.s
+    WHERE irs1.p != 'hasMetadataGraph'
+),
+seed_nodes AS (
+    SELECT DISTINCT s FROM tripsets
+),
+id_parent(s, o) AS (
+    SELECT DISTINCT
+        irs0.s,
+        irs0.o
+    FROM identity_relations AS irs0
+    JOIN seed_nodes AS sn
+        ON irs0.o = sn.s
+
+    UNION
+
+    SELECT
+        irs.s,
+        ip.o
+    FROM identity_relations AS irs
+    JOIN id_parent AS ip
+        ON irs.o = ip.s
+),
+valid_sources AS (
+    SELECT DISTINCT
+        idp.o AS gstart,
+        ids.identity,
+        ids.type,
+        ids.first_seen,
+        irsf0.o AS meta_graph
+    FROM id_parent AS idp
+    JOIN identities AS ids
+        ON ids.identity = idp.s
+    JOIN identity_relations AS irsf0
+        ON irsf0.s = idp.s
+       AND irsf0.p = 'hasMetadataGraph'
+    WHERE ids.type IN ('serialization', 'graph_combined_local_conventions')
+),
+-- Crucial: deduplicate (identity, meta_graph) BEFORE traversing metadata records
+distinct_sources AS (
+    SELECT DISTINCT
+        identity,
+        meta_graph
+    FROM valid_sources
+),
+source_named AS (
+    SELECT DISTINCT
+        ds.identity,
+        t.s,
+        t.s_blank,
+        t.p,
+        t.o,
+        t.o_lit,
+        t.datatype,
+        t.language,
+        t.o_blank,
+        t.subgraph_identity
+    FROM distinct_sources AS ds
+    JOIN identity_relations AS irsf1
+        ON irsf1.s = ds.meta_graph
+       AND irsf1.p = 'hasNamedGraph'
+    JOIN identity_relations AS irsf2
+        ON irsf2.s = irsf1.o
+       AND irsf2.p = 'hasNamedRecord'
+    JOIN identity_named_triples_ingest AS inti
+        ON inti.named_embedded_identity = irsf2.o
+    JOIN triples AS t
+        ON t.triple_identity = inti.triple_identity
+),
+ts_to_source AS (
+    SELECT DISTINCT
+        gstart,
+        identity,
+        type,
+        first_seen
+    FROM valid_sources
+)
+SELECT
+    kinds.kind,
+    ts.ident,
+    ts.s AS id_s,
+    ts.p AS ir_p,
+    t2s.gstart,
+    t2s.identity AS t2s_identity,
+    t2s.type,
+    t2s.first_seen,
+    sn.identity AS sn_identity,
+    sn.s AS t_s,
+    sn.s_blank,
+    sn.p AS t_p,
+    sn.o,
+    sn.o_lit,
+    sn.datatype,
+    sn.language,
+    sn.o_blank,
+    sn.subgraph_identity
+FROM (VALUES ('tripset'), ('ts_to_source'), ('source_named')) AS kinds(kind)
+LEFT JOIN tripsets AS ts
+    ON kinds.kind = 'tripset'
+LEFT JOIN ts_to_source AS t2s
+    ON kinds.kind = 'ts_to_source'
+LEFT JOIN source_named AS sn
+    ON kinds.kind = 'source_named';'''
+        TripsetRow = namedtuple('rowthing', ['ident', 's', 'p'])
+        TsToSourceRow = namedtuple('rowthing', ['gstart', 'identity', 'type', 'first_seen'])
+        SourceNamedRow = namedtuple('rowthing', [
+            'identity', 's', 's_blank', 'p', 'o', 'o_lit',
+            'datatype', 'language', 'o_blank', 'subgraph_identity'
+        ])
+
+        def _norm(val):
+            return val.tobytes().hex() if isinstance(val, memoryview) else val
+
+        source_named_resp, ts_to_source_resp, tripsets_resp = [], [], []
+
+        args = dict(uri=subject)
+        #exp_c = '\n'.join([_ for _, in self.session_execute(f'explain {combined_sql}', args)])
+        #exp_t = '\n'.join([_ for _, in self.session_execute(f'explain {triples_sql}', args)])
+        #print(exp_c), print(exp_t)
+        for r in self.session_execute(combined_sql, args):
+            kind = r[0]
+            if kind == 'tripset':
+                tripsets_resp.append(TripsetRow(_norm(r[1]), _norm(r[2]), _norm(r[3])))
+            elif kind == 'ts_to_source':
+                ts_to_source_resp.append(TsToSourceRow(_norm(r[4]), _norm(r[5]), _norm(r[6]), _norm(r[7])))
+            elif kind == 'source_named':
+                source_named_resp.append(SourceNamedRow(
+                    _norm(r[8]), _norm(r[9]), _norm(r[10]), _norm(r[11]), _norm(r[12]),
+                    _norm(r[13]), _norm(r[14]), _norm(r[15]), _norm(r[16]), _norm(r[17])
+                ))
+
+        tripsets_resp.sort(key=lambda x: (x.p, x.ident, x.s))
+
+        def f(g):
+            sigh = []
+            for r in g:
+                args = tuple(c.tobytes().hex() if isinstance(c, memoryview) else c for c in r)
+                sigh.append(args)
+
+            if not sigh:
+                return []
+
+            nt = namedtuple('rowthing', r._fields)
+            out = [nt(*s) for s in sigh]
+            return out
+
+        triples_resp = f(self.session_execute(triples_sql, args))
+        return source_named_resp, ts_to_source_resp, tripsets_resp, triples_resp
+
+    def _getVerVarBySubject(self, subject):
         # get metadata for all sources that contain a subject
         args = dict(uri=subject)
         # FIXME we need a variant of the sources query that starts

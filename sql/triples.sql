@@ -691,6 +691,8 @@ CREATE TABLE identity_named_triples_ingest(
        CONSTRAINT pk__id_nti__named_embedded_identity_triple_identity PRIMARY KEY (named_embedded_identity, triple_identity)
 );
 
+CREATE INDEX inti_triple_identity_index ON identity_named_triples_ingest (triple_identity) INCLUDE (named_embedded_identity);
+
 -- name and identity functions that use inti to reconstruct the named embedded identity
 
 CREATE OR REPLACE FUNCTION namedEmbeddedSubject(named_embedded_identity bytea) RETURNS uri AS
@@ -1175,6 +1177,10 @@ CREATE INDEX triples__s_p_subgraph_identity__index
        -- the index
        WHERE s IS NOT NULL AND subgraph_identity IS NOT NULL;
 
+CREATE INDEX triples__subgraph_identity_s_blank__index -- needed to accelerate vervar queries
+       ON triples (subgraph_identity, s_blank)
+       WHERE s IS NULL;
+
 CREATE UNIQUE INDEX un__triples__s_p_o
        -- assume uri_hash is safe since it is based on
        -- XXX that was a bad assumption, uri_hash has collisions
@@ -1539,6 +1545,10 @@ CREATE INDEX subgraph_deduplication__ssi_srep__index
 
 CREATE INDEX subgraph_deduplication__ssi___index
        ON subgraph_deduplication (subject_subgraph_identity);
+
+CREATE INDEX subgraph_deduplication__ssi_o_blank___index
+       ON subgraph_deduplication (subject_subgraph_identity, o_blank)
+       INCLUDE (object_subgraph_identity);
 
 /*
 (9997 null 0 rdf:type           null null owl:Restriction null null ASDF87SDF7A6SD75A5)
