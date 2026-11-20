@@ -328,6 +328,9 @@ def combinatorics():
 
     _group = '<group>'
     scen_auth = [
+        dict(nodes=('', _group, 'priv', 'settings'),   auth_user=mtest_user, own_role='owner', other_group=mtest_user, group=mother_group, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second', missing=set()),
+        dict(nodes=('', _group, 'priv', 'settings'),   auth_user=mtest_user, own_role='owner', other_group=mtest_user, group=mother_group, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-second', missing=set()),
+        dict(nodes=('', _group, 'priv', 'settings'),   auth_user=mtest_user, own_role='owner', other_group=mtest_user, group=mother_group, user_role=None, method='GET', scope='user-only', auth='token', register='orcid-second', missing=set()),
         dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner', other_group=mtest_user, group=mother_group, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second', missing=set()),
         dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner', other_group=mtest_user, group=mother_group, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-second', missing=set()),
         dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner', other_group=mtest_user, group=mother_group, user_role=None, method='GET', scope='user-only', auth='token', register='orcid-second', missing=set()),

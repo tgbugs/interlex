@@ -452,7 +452,7 @@ class Auth:
         request._auth_datetime = now
 
         write_requires_auth = request.method in ('POST', 'PATCH', 'PUT', 'DELETE')
-        read_requires_auth = 'priv' in request.url_rule.rule  # FIXME not the best way to do it
+        requires_adown_auth = 'priv' in request.url_rule.rule  # FIXME not the best way to do it
         read_might_require_auth = (
             request.method in ('GET', 'HEAD', 'OPTIONS') and
             request.url_rule.rule in self.rules_req_auth)
@@ -460,7 +460,7 @@ class Auth:
         # because it means the system is not safe by default for the scratch
         # space, read never requires auth, we just won't return any values if
         # auth user is not provided for the scratch space
-        request_needs_auth_or_auth_user = write_requires_auth or read_requires_auth or read_might_require_auth
+        request_needs_auth_or_auth_user = write_requires_auth or requires_adown_auth or read_might_require_auth
 
         logged_in_user = fl.current_user
         if logged_in_user is not None and logged_in_user.is_authenticated:
@@ -546,7 +546,7 @@ class Auth:
                 msg = f'{request.method} requires authorization, but none was provided'
                 raise self.MissingTokenError(request, msg)
 
-        elif read_requires_auth:
+        elif requires_adown_auth:
             if li_user:
                 msg = f'{request.url_rule.rule} requires token authorization, but login was provided'
                 # just allow session access, don't require api key, it is needless complexity
@@ -657,20 +657,24 @@ class Auth:
             # mismatch (i.e. we never get here), all requests are allowed
             # so we only have to check mismatched cases
             resp = dbstuff.getUserRoleForGroups(auth_user, need_group_perms + ['empty'])
+            adown_roles = {'admin', 'owner'}
             write_roles = {'admin', 'owner', 'contributor'}
             read_roles = {'admin', 'owner', 'contributor', 'curator', 'view'}
             if resp:
                 for row in resp:
-                    if write_requires_auth:
+                    if requires_adown_auth:
+                        if row.user_role not in adown_roles:
+                            msg = 'user lacks authorization for this operation'
+                            raise self.NotAuthorizedError(request, msg)
+                    elif write_requires_auth:
                         if row.own_role == 'org':
                             # if request.url_rule.rule not in merge /ops/:
                             msg = 'TODO /<org>/pulls/<number>/ops/ or something'
-                            raise NotImplementedError(msg)
+                            raise NotImplementedError(request, msg)
 
                         if row.user_role not in write_roles:
                             msg = 'user lacks authorization for this operation'
-                            raise self.NotAuthorizedError(msg)
-
+                            raise self.NotAuthorizedError(request, msg)
                     elif read_might_require_auth:
                         if row.user_role in read_roles:
                             _read_private = _read_private and True
@@ -681,8 +685,14 @@ class Auth:
                         msg = 'should not happen'
                         raise NotImplementedError(msg)
             else:
-                if write_requires_auth:
-                    msg = (f'requested group does not exist or user lacks authorization for this operation')
+                if requires_adown_auth:
+                    if (auth_user != request_group or
+                        request_group_other      is not None and auth_user != request_group_other or
+                        request_group_other_diff is not None and auth_user != request_group_other_diff):
+                        msg = 'requested group does not exist or user lacks authorization for this operation'
+                        raise self.NotAuthorizedError(request, msg)
+                elif write_requires_auth:
+                    msg = 'requested group does not exist or user lacks authorization for this operation'
                     # if someone sends us a non-existent group we don't
                     # differentiate that here
                     raise self.NotAuthorizedError(request, msg)
@@ -692,7 +702,6 @@ class Auth:
                     msg = 'should not happen'
                     raise NotImplementedError(msg)
 
-        # FIXME TODO priv endpoints
         read_private = _read_private or not need_group_perms
         group = None
         token = None

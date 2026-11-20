@@ -77,6 +77,8 @@ def getBasicDB(self, group, request):
         abort(401, {'message': e.extra_info})
     except (self.auth.MalformedRequestHeader, self.auth.MangledTokenError) as e:
         abort(400, {'message': e.extra_info})
+    except self.auth.NotAuthorizedError as e:
+        abort(403, {'message': e.extra_info})
     except self.auth.AuthError as e:
         log.exception(e)
         abort(400, {'message': 'something went wrong on your end'})
