@@ -131,13 +131,18 @@ def combinatorics():
 
     current_auth_user = None
     def is_user(g):
+        # XXX WARNING this should only ever be used on the auth_user slot
         nonlocal current_auth_user
         user = list(_session.execute(sql_text('select * from users as u join groups as g on u.id = g.id where g.groupname = :g'), params=dict(g=g)))
         current_auth_user = g if user else None
         return current_auth_user
 
-    def same_user(g): return is_user(g) and g == current_auth_user
-    def diff_user(g): return is_user(g) and g != current_auth_user
+    def is_user_noset(g):
+        user = list(_session.execute(sql_text('select * from users as u join groups as g on u.id = g.id where g.groupname = :g'), params=dict(g=g)))
+        return g if user else None
+
+    def same_user(g): return is_user_noset(g) and g == current_auth_user
+    def diff_user(g): return is_user_noset(g) and g != current_auth_user  # FIXME this is broken because is_user sets itself
     def is_org(g):
         return list(_session.execute(sql_text('select * from orgs as o join groups as g on o.id = g.id where g.groupname = :g'), params=dict(g=g)))
     def not_group(g):
@@ -207,7 +212,7 @@ def combinatorics():
         dict(nodes=priv,      auth_user=null,                                                                                            outcome=fail),
         dict(nodes=priv,      auth_user=is_user, own_role=admin,     group=diff_user, user_role=true,      method=true, scope=admin,     outcome=success),
         dict(nodes=priv,      auth_user=is_user, own_role=admin,     group=diff_user, user_role=true,      method=true, scope=not_admin, outcome=fail),
-        dict(nodes=priv,      auth_user=is_user, own_role=not_admin, group=diff_user, user_role=not_null,  method=true, scope=not_null,  outcome=fail),
+        dict(nodes=priv,      auth_user=is_user, own_role=not_admin, group=diff_user, user_role=true,      method=true, scope=true,      outcome=fail),  # non-admin access another user's priv should fail regardless of user_role, method, or scope
 
         dict(nodes=priv,      auth_user=is_user, own_role=owner,     group=same_user, user_role=null,      method=true, scope=not_null,  outcome=success),
         dict(nodes=sw_apitok, auth_user=is_user, own_role=not_owner, group=same_user, user_role=null,      method=true, scope=not_null,  outcome=fail),  # correctly does not match scen_auth-XXX-1 missing user, email -> the user is not in the users table so is_user fails directly and in same_user
@@ -305,7 +310,7 @@ def combinatorics():
         # i.e. successful login with orcid by someone, and then someone tries to log in to their account and fails
         dict(auth_user=mtest_user, register='orcid-first',  auth='orcid', fault='code-unknown',  missing={'user', 'email'}),
         dict(auth_user=mtest_user, register='orcid-first',  auth='orcid', fault='token-expired', missing={'user', 'email'}),
-        dict(auth_user=mtest_user,    register=None,           auth='orcid', fault='no-reg',        missing={'user', 'email'}),  # login with orcid but didn't register that orcid
+        dict(auth_user=mtest_user, register=None,           auth='orcid', fault='no-reg',        missing={'user', 'email'}),  # login with orcid but didn't register that orcid
 
         dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='pass-empty', missing=set()),
         dict(auth_user=mtest_user, register='orcid-second', auth='login', fault='pass-trunc', missing=set()),
@@ -323,6 +328,10 @@ def combinatorics():
 
     _group = '<group>'
     scen_auth = [
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner', other_group=mtest_user, group=mother_group, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second', missing=set()),
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner', other_group=mtest_user, group=mother_group, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-second', missing=set()),
+        dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='owner', other_group=mtest_user, group=mother_group, user_role=None, method='GET', scope='user-only', auth='token', register='orcid-second', missing=set()),
+
         dict(nodes=('', _group, 'priv', 'role'), auth_user=mtest_user, own_role='pending', other_group=mtest_org, group=mother_group, user_role=None, method='GET', scope='user-only', auth='orcid', register='orcid-second',   missing={'email'}),  # xfail
         #dict(nodes=('', _group, 'priv', 'role'), auth_user=mtest_user, own_role='pending', other_group=mtest_org, group=mother_group, user_role='owner', method='GET', scope='user-only', auth='orcid', register='orcid-second',   missing={'email'}),  # FIXME impossible
         # but invars check only the scenario not the actual value in the database, so that needs to be fixed so we can test for impossible scenarios rather than maksing them out
@@ -597,7 +606,7 @@ def combinatorics():
         if 'nodes' in scen:
             route = '/'.join(remove_terminals([path_to_route(n) for n in scen['nodes']]))
             filled = route.replace('<group>', scen['group'])
-            url = url_prefix + filled
+            url_to_test = url_prefix + filled
 
         if app is None:
             app = run_uri(db_kwargs=dict(dbuser='interlex-user', host=test_db_host, port=test_db_port, database=db))
@@ -623,10 +632,6 @@ def combinatorics():
         session = app.extensions['sqlalchemy'].session
         try:
             client = app.test_client()
-
-            if 'method' in scen:
-                method = getattr(client, scen['method'].lower())
-
             headers = {}
             if scen_type == 'reg' and scen['register'] is not None:
                 # FIXME TODO test with aspopup=true
@@ -635,14 +640,14 @@ def combinatorics():
                     # 1
                     #start = url_quote(f'{scheme}://{host}{port}/base/ilx_0101431')
                     start = url_quote(f'{scheme}://{host}{port}/{scen["auth_user"]}/priv/settings')  # XXX hack since brain doesn't exist atm
-                    url = url_prefix + '/u/ops/orcid-new' + '?freiri=' + start
+                    url_reg = url_prefix + '/u/ops/orcid-new' + '?freiri=' + start
                     code = endpoints.Ops._make_orcid_code()
                     endpoints._orcid_mock = code
                     endpoints._orcid_mock_codes[code] = orcid_meta
                     # somehow the cookie isn't being read or something?
                     # checking flask.session it is clear that the cookie is present and has what we need
                     # XXX because we were missing a call to session.commit() (duh)
-                    resp1 = do_get(client, url)
+                    resp1 = do_get(client, url_reg)
                     if resp1.status_code == 302:
                         url_next = url_prefix + resp1.headers['Location']
                     elif resp1.status_code == 200:
@@ -659,7 +664,7 @@ def combinatorics():
                             ''
 
                     # 2
-                    url = (url_prefix + f'/u/priv/user-new') if url_next is None else url_next  # resp1 is the get to this endpoint, now we post
+                    url_un = (url_prefix + f'/u/priv/user-new') if url_next is None else url_next  # resp1 is the get to this endpoint, now we post
                     user = scen['auth_user']
                     email = test_email_f.format(n=sid)
                     # ok, don't need to pass headers because the client does maintain the session
@@ -671,7 +676,7 @@ def combinatorics():
                     data = {'username': user, 'email': email}
                     if scen['register'] == 'orcid-first-pass':
                         data['password'] = test_password
-                    resp2 = fixresp(client.post(url, data=data, headers=headers))
+                    resp2 = fixresp(client.post(url_un, data=data, headers=headers))
                     if resp1.status_code == 303:
                         url_next = url_prefix + resp1.headers['Location']
                     else:
@@ -687,8 +692,8 @@ def combinatorics():
                     if config.email_verify:
                         client2 = client if ever_same else app.test_client()
                         token = endpoints._email_mock_tokens[email]
-                        url = url_prefix + '/u/ops/email-verify?t=' + token
-                        resp3 = do_get(client2, url)
+                        url_ev = url_prefix + '/u/ops/email-verify?t=' + token
+                        resp3 = do_get(client2, url_ev)
                         if not resp3.ok:
                             with app.app_context():
                                 breakpoint()
@@ -698,11 +703,11 @@ def combinatorics():
                     # 1
                     #start = url_quote(f'{scheme}://{host}{port}/base/ilx_0101431')
                     start = url_quote(f'{scheme}://{host}{port}/{scen["auth_user"]}/priv/settings')  # XXX hack since brain doesn't exist atm
-                    url = url_prefix + '/u/ops/user-new' + '?freiri=' + start
+                    url_os_un = url_prefix + '/u/ops/user-new' + '?freiri=' + start
                     user = scen['auth_user']
                     email = test_email_f.format(n=sid)
                     data = {'username': user, 'email': email, 'password': test_password}
-                    resp1 = fixresp(client.post(url, data=data))
+                    resp1 = fixresp(client.post(url_os_un, data=data))
                     if resp1.status_code == 303:
                         url_next = url_prefix + resp1.headers['Location']
                     else:
@@ -714,13 +719,13 @@ def combinatorics():
                             ''
 
                     # 2
-                    url = (url_prefix + f'/{user}/priv/orcid-assoc') if url_next is None else url_next
+                    url_os_oa = (url_prefix + f'/{user}/priv/orcid-assoc') if url_next is None else url_next
                     #headers = {}
                     #headers['Cookie'] = resp1.headers['Set-Cookie']
                     code = endpoints.Ops._make_orcid_code()
                     endpoints._orcid_mock = code
                     endpoints._orcid_mock_codes[code] = orcid_meta
-                    resp2 = do_get(client, url)
+                    resp2 = do_get(client, url_os_oa)
 
                     if not resp2.ok:
                         with app.app_context():
@@ -732,10 +737,10 @@ def combinatorics():
                     if config.email_verify:
                         client2 = client if ever_same else app.test_client()
                         token = endpoints._email_mock_tokens[email]
-                        url = url_prefix + '/u/ops/email-verify?t=' + token
+                        url_os_ev = url_prefix + '/u/ops/email-verify?t=' + token
                         # TODO inserting random delays between steps is fun if you
                         # do it here the 10 second mock lifetime will trigger!
-                        resp3 = do_get(client2, url)
+                        resp3 = do_get(client2, url_os_ev)
                         if not resp3.ok:
                             with app.app_context():
                                 breakpoint()
@@ -744,17 +749,17 @@ def combinatorics():
                 # start common flow
 
                 # 4
-                url = url_prefix + f'/{user}/priv/api-token-new'  # FIXME TODO api-token-web-new ?
+                url_atn = url_prefix + f'/{user}/priv/api-token-new'  # FIXME TODO api-token-web-new ?
                 data = {'token-type': 'personal', 'scope': 'settings-all', 'note': 'testing token'}
-                resp4 = fixresp(client.post(url, data=data, headers=headers))
+                resp4 = fixresp(client.post(url_atn, data=data, headers=headers))
                 if not resp4.ok:
                     with app.app_context():
                         breakpoint()
                         ''
 
                 # 5
-                url = url_prefix + f'/{user}/priv/settings'
-                resp5 = do_get(client, url)
+                url_ps = url_prefix + f'/{user}/priv/settings'
+                resp5 = do_get(client, url_ps)
                 if not resp5.ok:
                     with app.app_context():
                         breakpoint()
@@ -819,26 +824,26 @@ def combinatorics():
                     if 'Set-Cookie' in lresp.headers:
                         headers['Cookie'] = lresp.headers['Set-Cookie']
 
-                elif scen['auth'] == 'orcid':
+                elif scen['auth'] == 'orcid' or scen['auth'] == 'token':
                     code = endpoints.Ops._make_orcid_code()
                     endpoints._orcid_mock = code
                     if 'fault' not in scen or scen['fault'] != 'code-unknown':
                         endpoints._orcid_mock_codes[code] = orcid_meta
 
-                    lurl = url_prefix + '/u/ops/orcid-login'
+                    lurl_o = url_prefix + '/u/ops/orcid-login'
                     lresps = []
                     lheaders = {}
-                    lresp = fixresp(client.get(lurl, headers=lheaders))
+                    lresp = fixresp(client.get(lurl_o, headers=lheaders))
                     # XXX have to manually resolve location
                     lresps.append(lresp)
                     while lresp.status_code == 302:
                         loc = lresp.headers['Location']
                         if loc.startswith('/'):
-                            lurl = url_prefix + loc
+                            lurl_next = url_prefix + loc
                         else:
-                            lurl = loc
+                            lurl_next = loc
 
-                        lresp = fixresp(client.get(lurl))
+                        lresp = fixresp(client.get(lurl_next))
                         if 'Set-Cookie' in lresp.headers:
                             lheaders['Cookie'] = lresp.headers['Set-Cookie']
                         lresps.append(lresp)
@@ -846,10 +851,28 @@ def combinatorics():
                     if 'Cookie' in lheaders:
                         headers['Cookie'] = lheaders['Cookie']
 
+                    # start token auth case
+                    if scen['auth'] == 'token':
+                        url_tok_atn = url_prefix + f'/{_user}/priv/api-token-new'  # FIXME TODO api-token-web-new ?
+                        data = {'token-type': 'personal', 'scope': 'settings-all', 'note': 'testing token'}
+                        resp4 = fixresp(client.post(url_tok_atn, data=data, headers=headers))
+                        if not resp4.ok:
+                            with app.app_context():
+                                breakpoint()
+                                ''
+
+                        assert resp4.ok, 'should not have failed here'
+                        token = resp4.json['key']
+                        headers = {'Authorization': 'Bearer ' + token}
+                        old_client = client
+                        client = app.test_client()
+                else:
+                    raise NotImplementedError(scen['auth'])
+
             if scen_type == 'log':
                 scen['lresp'] = lresp
                 user = scen['auth_user']
-                url = url_prefix + f'/{user}/priv/settings'
+                url_log_ps = url_prefix + f'/{user}/priv/settings'
                 if 'register' in scen and scen['register'] is None:
                     # FIXME this is a special case test that is not in
                     # the general scenario/invariants because it is a
@@ -874,13 +897,13 @@ def combinatorics():
                     # XXX the test client removes the Cookie header if it is provided ...
                     # so we have to do it this way
                     [client2.set_cookie(k, v) for k, v in resp2.request.cookies.items()]
-                    resp3 = do_get(client2, url)
+                    resp3 = do_get(client2, url_log_ps)
                     if resp3.status_code != 401:
                         breakpoint()
 
                     assert resp3.status_code == 401, f'should have 401ed but {resp3.status_code}'
 
-                resp = do_get(client, url)
+                resp = do_get(client, url_log_ps)
                 scen['resp'] = resp
 
                 bad = check_invars_log(scen)
@@ -889,7 +912,10 @@ def combinatorics():
 
                 return bad
 
-            resp = fixresp(method(url, headers=headers))
+            if 'method' in scen:
+                method = getattr(client, scen['method'].lower())
+
+            resp = fixresp(method(url_to_test, headers=headers))
             scen['outcome'] = _success if resp.ok else _fail  # FIXME
             with app.app_context():
                 _session = session
