@@ -1,3 +1,4 @@
+import pytest
 from time import time
 from interlex.config import auth
 from interlex.core import getScopedSession, dbUri
