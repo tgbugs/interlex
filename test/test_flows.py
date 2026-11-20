@@ -356,10 +356,10 @@ def combinatorics():
         dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second',     missing={'orcid'}),
         dict(nodes=('', _group, 'priv', 'api-tokens'), auth_user=mtest_user, own_role='pending', group=msame_user, user_role=None, method='GET', scope='user-only', auth='login', register='orcid-second',     missing={'email'}),
         ]
+    scen_other = [
+        dict(auth_user=mtest_user, own_role='owner', other_group=mtest_user, user_role=None, scope='user-only', auth='login', register='orcid-second', missing=set()),
+    ]
     more = [
-
-
-
     ]
 
     scnid = iter(range(len(scen_auth) * 10))
@@ -377,6 +377,7 @@ def combinatorics():
     orcid_kls = idlib.systems.orcid.OrcidSandbox if config.orcid_sandbox else idlib.Orcid
     def prepare_scen(scen, scen_type):
         this_scen_id = next(scnid)
+        other_user_stuff = tuple()
         # validate scen
         if 'scope' in scen and scen['scope'] and auth is None:
             # FIXME other stuff can slip by this e.g. scopes that cannot be achieved via login
@@ -425,7 +426,7 @@ def combinatorics():
 
             orcid_meta = endpoints.Ops._make_orcid_meta(expires_in_seconds=expires_in_seconds)
             if scen_type in 'reg':
-                return database, orcid_meta, this_scen_id
+                return database, orcid_meta, this_scen_id, other_user_stuff
 
             orcid = orcid_kls._id_class(prefix='orcid', suffix=orcid_meta['orcid']).iri
             if scen['register'] is None:
@@ -532,6 +533,7 @@ def combinatorics():
                     other_orcid = orcid_kls._id_class(prefix='orcid', suffix=other_orcid_meta['orcid']).iri
                     endpoints.Ops._insert_orcid_meta(session, other_orcid_meta)
                     dbstuff.user_new(other_user, other_test_email, other_test_argon, other_orcid, email_verify=False)
+                    other_user_stuff = other_user, other_test_password, other_test_email, other_orcid_meta, other_orcid
 
                 session.commit()
 
@@ -544,7 +546,7 @@ def combinatorics():
             conn.close()
             conn.engine.dispose()
 
-        return database, orcid_meta, this_scen_id
+        return database, orcid_meta, this_scen_id, other_user_stuff
 
     # FIXME probably better to do each test sequentially and not make all dbs first ...
     scendbs = [
@@ -552,7 +554,9 @@ def combinatorics():
     ] + [
         (scen, prepare_scen(scen, 'log'), 'log') for scen in scen_log
     ] + [
-        (scen, prepare_scen(scen, 'auth'), 'auth') for scen in scen_auth]
+        (scen, prepare_scen(scen, 'auth'), 'auth') for scen in scen_auth
+    ] + [
+        (scen, prepare_scen(scen, 'other'), 'other') for scen in scen_other]
 
     # FIXME source appropriately
     parent_child, node_methods, path_to_route, path_names = uriStructure()
@@ -602,7 +606,7 @@ def combinatorics():
         return resp
 
     app = None
-    def run_scen(scen, scen_type, sid, db, orcid_meta):
+    def run_scen(scen, scen_type, sid, db, orcid_meta, other_user_stuff):
         invars, log_invars  # needed for access in debug
         nonlocal _session
         nonlocal app
@@ -636,6 +640,150 @@ def combinatorics():
         try:
             client = app.test_client()
             headers = {}
+            if scen_type == 'other':
+                from http.cookies import SimpleCookie
+                from itsdangerous import BadTimeSignature
+                def get_session(cookie, app=app, BadTimeSignature=BadTimeSignature):
+                    with app.app_context():
+                        serializer = app.session_interface.get_signing_serializer(app)
+                        try:
+                            session_data = serializer.loads(cookie)
+                        except BadTimeSignature as e:
+                            print(e.payload)
+                            session_data = serializer.load_payload(e.payload)
+
+                    return session_data
+
+                def get_scook(cookie, SimpleCookie=SimpleCookie, get_session=get_session):
+                    ncook = SimpleCookie()
+                    ncook.load(cookie)
+                    session_cookie = ncook["session"].value
+                    return get_session(session_cookie)
+
+                client_1 = client
+                client_2 = app.test_client()
+
+                mheaders = []
+                forms = []
+                lresps = []
+                lurl = url_prefix + '/u/ops/user-login'
+
+                _test_user, _test_password = scen['auth_user'], test_password
+                other_user, other_test_password, *_ = other_user_stuff
+                for client, _user, _passwd in ((client_1, _test_user, _test_password),
+                                               (client_2, other_user, other_test_password)):
+
+                    form = {'username': _user, 'password': _passwd}
+                    forms.append(form)
+                    lresp = fixresp(client.post(lurl, data=form))
+                    lresps.append(lresp)
+                    headers ={}
+                    if 'Set-Cookie' in lresp.headers:
+                        headers['Cookie'] = lresp.headers['Set-Cookie']
+                    mheaders.append(headers)
+
+
+                # can't log in again if you are already logged in, definitely not as another user
+                some_url = url_prefix + '/u/ops/user-login'
+                esd = get_scook(mheaders[0]['Cookie'])
+                resp1 = client_1.post(some_url, data=forms[1])
+                if 'Set-Cookie' in resp1.headers:
+                    sd = get_scook(resp1.headers['Set-Cookie'])
+                    if esd['_user_id'] != sd['_user_id']:
+                        breakpoint()
+
+                    assert esd['_user_id'] == sd['_user_id'], (esd, sd)
+
+                # TODO api key user does not match session user
+                pass
+
+                # cross user assoc
+                # the only current flow that works is to
+                # 1. create a new login user
+                # 2. orcid-assoc
+                # 3. save the code
+                # 4. get another user who is not completed assoc to use the code while their orcid-only session cookie is set
+                # however if we actually allow change to work that is different
+
+                client_3 = app.test_client()
+                client_4 = app.test_client()
+                new_users = []
+                new_passes = []
+                new_orcid_metas = []
+                new_orcids = []
+                for _client in (client_3, client_4):
+                    _ufrag = base64.urlsafe_b64encode(secrets.token_bytes(6)).decode()
+                    new_user = 'tgbugs-test-' + _ufrag
+                    new_test_password = base64.b64encode(secrets.token_bytes(15)).decode()
+                    new_test_argon = hash_password(new_test_password)
+                    new_test_email = test_email_f.format(n=f'new-{sid}-{_ufrag}')
+                    new_orcid_meta = endpoints.Ops._make_orcid_meta()
+                    new_orcid = orcid_kls._id_class(prefix='orcid', suffix=new_orcid_meta['orcid']).iri
+
+                    new_users.append(new_user)
+                    new_passes.append(new_test_password)
+                    new_orcid_metas.append(new_orcid_meta)
+                    new_orcids.append(new_orcid)
+
+                    dbstuff = Stuff(session)
+                    with app.app_context():
+                        dbstuff.user_new(new_user, new_test_email, new_test_argon, None, email_verify=False)
+                        test_token = base64.urlsafe_b64encode(secrets.token_bytes(24)).decode()
+                        dbstuff.email_verify_start(new_user, new_test_email, test_token, delay_seconds=0)
+                        session.commit()  # must commit so that verify time is > start time, otherwise equal timestamps will prevent completion
+                        dbstuff.email_verify_complete(test_token)
+                        session.commit()
+
+                    lresp = fixresp(_client.post(lurl, data={'username': new_user, 'password': new_test_password}))
+
+                new_user, new_user_2 = new_users
+                new_orcid_meta, new_orcid_meta_2 = new_orcid_metas
+
+                url_oa = url_prefix + f'/{new_user}/priv/orcid-assoc'  # should fail if already associated with 409
+                # pretend that we only get the code via location for consistency
+                _code = endpoints.Ops._make_orcid_code()
+                endpoints._orcid_mock_codes[_code] = new_orcid_meta
+                try:
+                    endpoints._orcid_mock = _code
+                    resp_oa = fixresp(client_3.get(url_oa))
+                finally:
+                    endpoints._orcid_mock = True
+
+                code_state = resp_oa.location.split('?')[-1]
+
+                # now we set up our other user who hasn't associated yet
+                url_ola = url_prefix + f'/u/priv/orcid-land-assoc?{code_state}'
+                resp_ola = fixresp(client_4.get(url_ola))  # somehow client_3 manages to get client_4 to click the link with the code # XXX FIXME TODO this should 422
+                if resp_ola.ok:
+                    url_oops = url_prefix + f'/{new_user_2}/priv/settings'
+                    resp_oops = fixresp(client_4.get(url_oops))
+                    derp = resp_oops.json['settings']['orcid']
+                    # new_user has managed to associate their orcid to new_user_2's account
+                    assert new_orcids[0] == derp
+                    breakpoint()
+
+                assert not resp_ola.ok, f'oops {resp_ola.data}'
+
+                #url_od = url_prefix + f'/{_test_user}/priv/orcid-dissoc'  # shouldn't matter 501 atm and can't really be done ... if we really need it we will have to implement a separate mechanism so that the historical orcid association is tracked
+                url_oc = url_prefix + f'/{_test_user}/priv/orcid-change'  # this is the risky one due to reuse
+                resp_oc = client_1.post(url_oc)  # produces a 501 atm
+
+                # orcid-land-change works for users that have completed the flow which is most users most of the time
+                url_olc = url_prefix + '/u/priv/orcid-land-change'
+
+                # orcid-land-assoc will only work on users that have not completed the flow
+                url_ola = url_prefix + '/u/priv/orcid-land-assoc'
+
+                # both users are logged in
+                # client 1
+                # /u/ops/login
+                # /u/ops/user-login
+                # /u/priv/orcid-land-assoc
+                # /u/priv/orcid-land-change
+                # /u/ops/orcid-land-login
+                # /u/ops/orcid-land-new
+                return
+
             if scen_type == 'reg' and scen['register'] is not None:
                 # FIXME TODO test with aspopup=true
                 # FIXME this isn't quite set up correctly for testing these
@@ -949,8 +1097,8 @@ def combinatorics():
 
     # run_scen mutates scen in place to add outcomes outcomes
     bads = []
-    for scen, (db, orcid_meta, sid), scen_type in scendbs:
-        bad = run_scen(scen, scen_type, sid, db, orcid_meta)
+    for scen, (db, orcid_meta, sid, ous), scen_type in scendbs:
+        bad = run_scen(scen, scen_type, sid, db, orcid_meta, ous)
         if bad:
             bads.append((scen, bad, db))
 

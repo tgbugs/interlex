@@ -1,5 +1,6 @@
 import os
 import re
+import hmac
 import json
 import base64
 import random
@@ -2054,7 +2055,7 @@ class Ops(EndBase):
         url_orcid_land = url_for('Ops.orcid_landing_new /u/ops/orcid-land-new')
         return self._orcid(url_orcid_land)
 
-    def _orcid(self, url_orcid_land, refresh=False, for_login=False):
+    def _orcid(self, url_orcid_land, refresh=False, for_login=False, for_change=False):
         _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
         if fl.current_user is not None and hasattr(fl.current_user, 'orcid') and fl.current_user.orcid:
             if for_login:
@@ -2081,8 +2082,13 @@ class Ops(EndBase):
 
                     return 'orcid-login already logged in, check your cookies (use requests.Session)'
 
-            # TODO need to backstop some issue here but I don't remember what it was
-            abort(409, f'orcid already associated {fl.current_user.orcid}')  # FIXME TODO check error code on this
+            if for_change:
+                abort(501, 'changing orcid not impelmented yet')
+            else:
+                # TODO need to backstop some issue here but I don't remember what it was
+                abort(409, f'orcid already associated {fl.current_user.orcid}')  # FIXME TODO check error code on this
+        elif for_change:
+            abort(400, 'no orcid associated use')
 
         if _dopop:
             c = '&' if '?' in url_orcid_land else '?'  # XXX I'm sure this is a bad assumption ...
@@ -2098,16 +2104,19 @@ class Ops(EndBase):
                 c = '&' if '?' in url_orcid_land else '?'  # XXX I'm sure this is a bad assumption ...
                 url_orcid_land += (c + 'freiri=' + freiri)
 
+        state = secrets.token_urlsafe(32)
+        fsession['_orcid_state'] = state
+
         if _orcid_mock:
             code = _orcid_mock  # heh
             c = '&' if '?' in url_orcid_land else '?'  # XXX I'm sure this is a bad assumption ...
-            return redirect(url_orcid_land + f'{c}code={code}', code=302)
+            return redirect(url_orcid_land + f'{c}code={code}&state={state}', code=302)
 
         prompt = '&prompt=login' if refresh else ''
         scope = 'openid'  # /read-limited
         redirect_uri = f'{request.scheme}://{request.host}{url_orcid_land}'  # FIXME request.host can be spoofed ya? TODO figure out if it can be abused in combination with next= ...
         reiri = (f'https://{config.orcid_host}/oauth/authorize?client_id={config.orcid_client_id}'
-                 f'&response_type=code&scope={scope}{prompt}&redirect_uri={redirect_uri}')
+                 f'&response_type=code&state={state}&scope={scope}{prompt}&redirect_uri={redirect_uri}')
         return redirect(reiri, code=302)
 
     def orcid_login(self):
@@ -2169,6 +2178,17 @@ class Ops(EndBase):
     def _orcid_landing(self):
         if 'code' not in request.args:
             abort(400, 'missing required parameter ?code=')
+
+        if 'state' not in request.args or not request.args['state']:
+            abort(400, 'missing required parameter ?state=')
+
+        state_session = fsession.pop('_orcid_state', None)
+        state_request = request.args['state']
+        if state_session is None:
+            abort(400, 'session expects no ouath state')
+
+        if not hmac.compare_digest(state_session, state_request):
+            abort(400, 'invalid oauth state')
 
         code = request.args['code']
         orcid_meta = self._orcid_landing_exchange(code)
@@ -3190,6 +3210,16 @@ Alternately send an HTTP GET request with headers containing <br>
             else:
                 abort(422, 'POST a username and password or set Authorization header')
 
+            already_logged_in = fl.current_user is not None and hasattr(fl.current_user, 'groupname') and fl.current_user.groupname is not None
+            if already_logged_in and fl.current_user.groupname != pass_group:
+                _dopop = _param_popup in request.args and request.args[_param_popup].lower() == 'true'
+                msg = 'already logged in as a different user, log out first'
+                if _dopop:
+                    response = {'code': 409, 'message': msg}
+                    return return_page(data=response, status=409)
+                else:
+                    abort(409, msg)
+
             # FIXME TODO must also check users here to ensure actually allowed to log in
             dbstuff = Stuff(self.session)
             rows = dbstuff.getUserPassword(pass_group)
@@ -3891,7 +3921,7 @@ class Priv(EndBase):
 
         # or we do it as a dissoc and it deactivates the account ... may not want that though
         url_orcid_land = url_for('Privu.orcid_landing_change /u/priv/orcid-land-change')
-        return self._orcid(url_orcid_land)
+        return self._orcid(url_orcid_land, for_change=True)
 
     @basic
     @fl.fresh_login_required
