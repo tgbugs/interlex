@@ -1363,15 +1363,19 @@ LEFT JOIN source_named AS sn
         #print(exp_c), print(exp_t)
         for r in self.session_execute(combined_sql, args):
             kind = r[0]
+            _any = [_ for _ in r[1:] if _ is not None]
+            if not _any:
+                continue
+
             if kind == 'tripset':
-                tripsets_resp.append(TripsetRow(_norm(r[1]), _norm(r[2]), _norm(r[3])))
+                cont = [_norm(_) for _ in r[1:4]]
+                tripsets_resp.append(TripsetRow(*cont))
             elif kind == 'ts_to_source':
-                ts_to_source_resp.append(TsToSourceRow(_norm(r[4]), _norm(r[5]), _norm(r[6]), _norm(r[7])))
+                cont = [_norm(_) for _ in r[4:8]]
+                ts_to_source_resp.append(TsToSourceRow(*cont))
             elif kind == 'source_named':
-                source_named_resp.append(SourceNamedRow(
-                    _norm(r[8]), _norm(r[9]), _norm(r[10]), _norm(r[11]), _norm(r[12]),
-                    _norm(r[13]), _norm(r[14]), _norm(r[15]), _norm(r[16]), _norm(r[17])
-                ))
+                cont = [_norm(_) for _ in r[8:]]
+                source_named_resp.append(SourceNamedRow(*cont))
 
         tripsets_resp.sort(key=lambda x: (x.p, x.ident, x.s))
 
